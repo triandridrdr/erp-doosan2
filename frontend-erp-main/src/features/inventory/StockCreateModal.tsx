@@ -47,10 +47,10 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
         unit: 'EA',
         unitPrice: 0,
       });
-      alert('재고가 성공적으로 생성되었습니다.');
+      alert('Stock item created successfully.');
     },
     onError: (error: Error) => {
-      alert(`재고 생성 실패: ${error.message}`);
+      alert(`Failed to create stock item: ${error.message}`);
     },
   });
 
@@ -59,7 +59,7 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
     e.preventDefault();
     // 필수 값 검증
     if (!formData.itemCode || !formData.itemName || !formData.warehouseCode) {
-      alert('필수 정보를 입력해주세요.');
+      alert('Please fill in all required fields.');
       return;
     }
 
@@ -67,12 +67,12 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title='신규 재고 등록'>
+    <Modal isOpen={isOpen} onClose={onClose} title='Add Stock Item'>
       <form onSubmit={handleSubmit} className='space-y-4'>
         <div className='grid grid-cols-2 gap-4'>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              품목코드 <span className='text-red-500'>*</span>
+              Item Code <span className='text-red-500'>*</span>
             </label>
             <Input
               value={formData.itemCode}
@@ -83,18 +83,18 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
           </div>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              품목명 <span className='text-red-500'>*</span>
+              Item Name <span className='text-red-500'>*</span>
             </label>
             <Input
               value={formData.itemName}
               onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
-              placeholder='품목명 입력'
+              placeholder='Enter item name'
               required
             />
           </div>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              창고코드 <span className='text-red-500'>*</span>
+              Warehouse Code <span className='text-red-500'>*</span>
             </label>
             <Input
               value={formData.warehouseCode}
@@ -105,18 +105,18 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
           </div>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              창고명 <span className='text-red-500'>*</span>
+              Warehouse Name <span className='text-red-500'>*</span>
             </label>
             <Input
               value={formData.warehouseName}
               onChange={(e) => setFormData({ ...formData, warehouseName: e.target.value })}
-              placeholder='창고명 입력'
+              placeholder='Enter warehouse name'
               required
             />
           </div>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              수량 <span className='text-red-500'>*</span>
+              Quantity <span className='text-red-500'>*</span>
             </label>
             <Input
               type='number'
@@ -137,7 +137,7 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
           </div>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              단위 <span className='text-red-500'>*</span>
+              Unit <span className='text-red-500'>*</span>
             </label>
             <Input
               value={formData.unit}
@@ -148,7 +148,7 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
           </div>
           <div className='col-span-2'>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              단가 <span className='text-red-500'>*</span>
+              Unit Price <span className='text-red-500'>*</span>
             </label>
             <Input
               type='number'
@@ -171,10 +171,10 @@ export function StockCreateModal({ isOpen, onClose }: Props) {
 
         <div className='flex justify-end gap-2 pt-4'>
           <Button type='button' variant='ghost' onClick={onClose}>
-            취소
+            Cancel
           </Button>
           <Button type='submit' disabled={createMutation.isPending}>
-            {createMutation.isPending ? '처리중...' : '재고 등록'}
+            {createMutation.isPending ? 'Processing...' : 'Create'}
           </Button>
         </div>
       </form>

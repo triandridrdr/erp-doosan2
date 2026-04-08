@@ -45,10 +45,10 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
       setEntryDate(new Date().toISOString().split('T')[0]);
       setDescription('');
       setLines([initialLine, initialLine]);
-      alert('전표가 성공적으로 생성되었습니다.');
+      alert('Journal entry created successfully.');
     },
     onError: (error: Error) => {
-      alert(`전표 생성 실패: ${error.message}`);
+      alert(`Failed to create journal entry: ${error.message}`);
     },
   });
 
@@ -81,11 +81,11 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
 
     // 차대변 불일치 검증 (복식부기 원칙)
     if (totalDebit !== totalCredit) {
-      alert('차변과 대변의 합계가 일치하지 않습니다.');
+      alert('Total debit and total credit do not match.');
       return;
     }
     if (totalDebit === 0) {
-      alert('금액을 입력해주세요.');
+      alert('Please enter an amount.');
       return;
     }
 
@@ -104,24 +104,24 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title='일반 전표 입력'>
+    <Modal isOpen={isOpen} onClose={onClose} title='New Journal Entry'>
       <form onSubmit={handleSubmit} className='space-y-6'>
         {/* 상단: 전표 기본 정보 */}
         <div className='grid grid-cols-2 gap-4'>
           <div>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              전표일자 <span className='text-red-500'>*</span>
+              Entry Date <span className='text-red-500'>*</span>
             </label>
             <Input type='date' value={entryDate} onChange={(e) => setEntryDate(e.target.value)} required />
           </div>
           <div className='col-span-2'>
             <label className='block text-sm font-medium text-gray-700 mb-1'>
-              적요 <span className='text-red-500'>*</span>
+              Description <span className='text-red-500'>*</span>
             </label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder='전표에 대한 설명을 입력하세요'
+              placeholder='Enter a description for the entry'
               required
             />
           </div>
@@ -130,10 +130,10 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
         {/* 중단: 전표 라인 리스트 */}
         <div className='border-t border-gray-200 pt-4'>
           <div className='flex items-center justify-between mb-2'>
-            <h3 className='text-lg font-medium text-gray-900'>전표 라인</h3>
+            <h3 className='text-lg font-medium text-gray-900'>Entry Lines</h3>
             <Button type='button' variant='outline' size='sm' onClick={addLine}>
               <Plus className='w-4 h-4 mr-2' />
-              라인 추가
+              Add line
             </Button>
           </div>
 
@@ -143,7 +143,7 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
                 <div className='grid grid-cols-12 gap-2 flex-1'>
                   <div className='col-span-2'>
                     <Input
-                      placeholder='계정코드'
+                      placeholder='Account code'
                       value={line.accountCode}
                       onChange={(e) => handleLineChange(index, 'accountCode', e.target.value)}
                       required
@@ -151,7 +151,7 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
                   </div>
                   <div className='col-span-3'>
                     <Input
-                      placeholder='계정명'
+                      placeholder='Account name'
                       value={line.accountName}
                       onChange={(e) => handleLineChange(index, 'accountName', e.target.value)}
                       required
@@ -160,7 +160,7 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
                   <div className='col-span-2'>
                     <Input
                       type='number'
-                      placeholder='차변'
+                      placeholder='Debit'
                       value={line.debit}
                       onChange={(e) => handleLineChange(index, 'debit', e.target.value)}
                       min='0'
@@ -169,7 +169,7 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
                   <div className='col-span-2'>
                     <Input
                       type='number'
-                      placeholder='대변'
+                      placeholder='Credit'
                       value={line.credit}
                       onChange={(e) => handleLineChange(index, 'credit', e.target.value)}
                       min='0'
@@ -177,7 +177,7 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
                   </div>
                   <div className='col-span-3'>
                     <Input
-                      placeholder='적요 (선택)'
+                      placeholder='Line description (optional)'
                       value={line.description}
                       onChange={(e) => handleLineChange(index, 'description', e.target.value)}
                     />
@@ -198,15 +198,15 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
 
           {/* 차대변 합계 표시 */}
           <div className='mt-4 flex justify-between items-center bg-gray-100 p-4 rounded-lg'>
-            <div className='text-sm font-medium text-gray-600'>합계</div>
+            <div className='text-sm font-medium text-gray-600'>Total</div>
             <div className={`text-lg font-bold ${totalDebit === totalCredit ? 'text-green-600' : 'text-red-600'}`}>
-              차변: {new Intl.NumberFormat('ko-KR').format(totalDebit)} / 대변:{' '}
+              Debit: {new Intl.NumberFormat('ko-KR').format(totalDebit)} / Credit:{' '}
               {new Intl.NumberFormat('ko-KR').format(totalCredit)}
             </div>
           </div>
           {totalDebit !== totalCredit && (
             <div className='text-right text-sm text-red-500 mt-1'>
-              차대변 차이: {new Intl.NumberFormat('ko-KR').format(Math.abs(totalDebit - totalCredit))}
+              Difference: {new Intl.NumberFormat('ko-KR').format(Math.abs(totalDebit - totalCredit))}
             </div>
           )}
         </div>
@@ -214,10 +214,10 @@ export function JournalEntryCreateModal({ isOpen, onClose }: Props) {
         {/* 액션 버튼 */}
         <div className='flex justify-end gap-2 pt-4'>
           <Button type='button' variant='ghost' onClick={onClose}>
-            취소
+            Cancel
           </Button>
           <Button type='submit' disabled={createMutation.isPending}>
-            {createMutation.isPending ? '처리중...' : '전표 등록'}
+            {createMutation.isPending ? 'Processing...' : 'Create'}
           </Button>
         </div>
       </form>

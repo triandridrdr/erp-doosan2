@@ -49,10 +49,10 @@ export function SalesOrderListPage() {
     <div className='space-y-6'>
       {/* 헤더 영역: 제목 및 등록 버튼 */}
       <div className='flex items-center justify-between'>
-        <h1 className='text-2xl font-bold text-gray-900'>수주 관리</h1>
+        <h1 className='text-2xl font-bold text-gray-900'>Sales Orders</h1>
         <Button onClick={() => setIsCreateModalOpen(true)}>
           <Plus className='w-4 h-4 mr-2' />
-          신규 주문 등록
+          Create order
         </Button>
       </div>
 
@@ -60,7 +60,7 @@ export function SalesOrderListPage() {
       <div className='bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center space-x-4'>
         <div className='relative flex-1 max-w-sm'>
           <Search className='absolute left-3 top-2.5 h-4 w-4 text-gray-400' />
-          <Input placeholder='주문번호 또는 고객명 검색...' className='pl-9' />
+          <Input placeholder='Search by order number or customer...' className='pl-9' />
         </div>
       </div>
 
@@ -71,16 +71,16 @@ export function SalesOrderListPage() {
             <thead className='bg-gray-50'>
               <tr>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  주문번호
+                  Order No.
                 </th>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  고객사
+                  Customer
                 </th>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  주문일자
+                  Order Date
                 </th>
-                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>총액</th>
-                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>상태</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Total</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Status</th>
               </tr>
             </thead>
             <tbody className='bg-white divide-y divide-gray-200'>
@@ -88,7 +88,7 @@ export function SalesOrderListPage() {
               {isLoading && (
                 <tr>
                   <td colSpan={5} className='px-6 py-10 text-center text-gray-500'>
-                    로딩 중...
+                    Loading...
                   </td>
                 </tr>
               )}
@@ -96,7 +96,7 @@ export function SalesOrderListPage() {
               {error && (
                 <tr>
                   <td colSpan={5} className='px-6 py-10 text-center text-red-500'>
-                    데이터를 불러오는 중 오류가 발생했습니다.
+                    An error occurred while loading data.
                   </td>
                 </tr>
               )}
@@ -104,7 +104,7 @@ export function SalesOrderListPage() {
               {sales?.content && sales.content.length === 0 && (
                 <tr>
                   <td colSpan={5} className='px-6 py-10 text-center text-gray-500'>
-                    주문 내역이 없습니다.
+                    No sales orders.
                   </td>
                 </tr>
               )}

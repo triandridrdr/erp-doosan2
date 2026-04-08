@@ -88,7 +88,7 @@ export function OcrPage() {
         {documentTitle && (
           <div className='text-center pb-6 border-b border-gray-100'>
             <h2 className='text-2xl font-bold text-gray-800 break-words'>{documentTitle}</h2>
-            <p className='text-sm text-gray-400 mt-2'>문서 제목 (추정)</p>
+            <p className='text-sm text-gray-400 mt-2'>Document title (estimated)</p>
           </div>
         )}
 
@@ -96,7 +96,7 @@ export function OcrPage() {
         <div className='space-y-4'>
           <h3 className='font-bold text-lg text-gray-900 flex items-center'>
             <TableIcon className='w-5 h-5 mr-2' />
-            추출된 테이블 ({data.tables.length})
+            Extracted tables ({data.tables.length})
           </h3>
 
           {data.tables.length > 0 ? (
@@ -131,7 +131,7 @@ export function OcrPage() {
             </div>
           ) : (
             <div className='bg-gray-50 rounded-lg p-8 text-center text-gray-500 border border-gray-200 border-dashed'>
-              감지된 테이블이 없습니다.
+              No tables detected.
             </div>
           )}
         </div>
@@ -139,7 +139,7 @@ export function OcrPage() {
         {/* 키-값 쌍 섹션 (Form Data) */}
         <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
           <div className='bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center'>
-            <h3 className='font-semibold text-gray-900'>키-값 상세 (Key-Value Pairs)</h3>
+            <h3 className='font-semibold text-gray-900'>Key-value details (Key-Value Pairs)</h3>
             <span className='text-xs text-gray-500'>Confidence scores shown</span>
           </div>
           <div className='max-h-96 overflow-y-auto p-4'>
@@ -163,7 +163,7 @@ export function OcrPage() {
                 ))}
               </div>
             ) : (
-              <div className='text-center text-gray-500 italic py-4'>감지된 키-값 쌍이 없습니다.</div>
+              <div className='text-center text-gray-500 italic py-4'>No key-value pairs detected.</div>
             )}
           </div>
         </div>
@@ -172,7 +172,7 @@ export function OcrPage() {
         <div className='bg-gray-50 p-4 rounded-lg border border-gray-200'>
           <details className='group'>
             <summary className='flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-700'>
-              <span>전체 텍스트 보기</span>
+              <span>View full text</span>
               <span className='transition group-open:rotate-180'>
                 <svg
                   fill='none'
@@ -201,7 +201,7 @@ export function OcrPage() {
   return (
     <div className='space-y-8 max-w-screen-2xl mx-auto pb-20'>
       <div className='flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4'>
-        <h1 className='text-2xl font-bold text-gray-900'>OCR 문서 분석</h1>
+        <h1 className='text-2xl font-bold text-gray-900'>OCR Document Analysis</h1>
 
         {/* 모드 선택 탭 */}
         <div className='bg-gray-100 p-1 rounded-lg flex'>
@@ -213,7 +213,7 @@ export function OcrPage() {
           >
             <span className='flex items-center'>
               <Type className='w-4 h-4 mr-2' />
-              단순 텍스트
+              Text extraction
             </span>
           </button>
           <button
@@ -224,7 +224,7 @@ export function OcrPage() {
           >
             <span className='flex items-center'>
               <TableIcon className='w-4 h-4 mr-2' />
-              테이블/문서 분석
+              Table/document analysis
             </span>
           </button>
         </div>
@@ -235,7 +235,7 @@ export function OcrPage() {
         <div className='bg-white p-6 rounded-lg shadow-sm border border-gray-200'>
           <h2 className='text-lg font-semibold text-gray-900 mb-4 flex items-center'>
             <Upload className='w-5 h-5 mr-2' />
-            {mode === 'extract' ? '이미지 업로드 (텍스트 추출)' : '이미지 업로드 (문서 분석)'}
+            {mode === 'extract' ? 'Upload file (text extraction)' : 'Upload file (document analysis)'}
           </h2>
 
           <div className={`grid gap-6 ${selectedFile ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
@@ -251,16 +251,16 @@ export function OcrPage() {
                 {!selectedFile ? (
                   <div className='text-center text-gray-500'>
                     <FileText className='w-12 h-12 mx-auto mb-3 text-gray-400' />
-                    <p className='text-sm font-medium'>이미지를 이곳에 드래그하거나 클릭하여 선택하세요</p>
-                    <p className='text-xs mt-1 text-gray-400'>PNG, JPG, PDF (최대 10MB)</p>
+                    <p className='text-sm font-medium'>Drag a file here, or click to select</p>
+                    <p className='text-xs mt-1 text-gray-400'>PNG, JPG, PDF (max 10MB)</p>
                   </div>
                 ) : (
                   <div className='text-center'>
-                    <p className='text-sm font-medium text-gray-900 mb-2'>선택된 파일</p>
+                    <p className='text-sm font-medium text-gray-900 mb-2'>Selected file</p>
                     <p className='text-xs text-gray-500 bg-white px-3 py-1 rounded border border-gray-200 inline-block'>
                       {selectedFile.name}
                     </p>
-                    <p className='text-xs text-gray-400 mt-2'>클릭하여 다른 파일 선택</p>
+                    <p className='text-xs text-gray-400 mt-2'>Click to choose a different file</p>
                   </div>
                 )}
               </div>
@@ -288,10 +288,10 @@ export function OcrPage() {
               {isPending ? (
                 <>
                   <Loader2 className='w-5 h-5 mr-2 animate-spin' />
-                  {mode === 'extract' ? '텍스트 추출 중...' : '문서 분석 중...'}
+                  {mode === 'extract' ? 'Extracting text...' : 'Analyzing document...'}
                 </>
               ) : (
-                <>{mode === 'extract' ? '텍스트 추출하기' : '테이블 및 데이터 분석하기'}</>
+                <>{mode === 'extract' ? 'Extract text' : 'Analyze tables and data'}</>
               )}
             </Button>
           </div>
@@ -302,11 +302,11 @@ export function OcrPage() {
           <div className='bg-red-50 border border-red-200 rounded-lg p-4 flex items-start animate-in fade-in slide-in-from-top-2'>
             <AlertCircle className='w-5 h-5 text-red-500 mr-2 flex-shrink-0 mt-0.5' />
             <div>
-              <h3 className='text-sm font-medium text-red-800'>요청 처리 실패</h3>
+              <h3 className='text-sm font-medium text-red-800'>Request failed</h3>
               <p className='text-sm text-red-700 mt-1'>
                 {(extractError as Error)?.message ||
                   (analyzeError as Error)?.message ||
-                  '알 수 없는 오류가 발생했습니다.'}
+                  'An unknown error occurred.'}
               </p>
             </div>
           </div>
@@ -322,10 +322,10 @@ export function OcrPage() {
                   <div className='flex items-center justify-between mb-6'>
                     <h2 className='text-xl font-bold text-gray-900 flex items-center'>
                       <TableIcon className='w-6 h-6 mr-3 text-indigo-600' />
-                      분석 결과
+                      Results
                     </h2>
                     <span className='text-sm font-medium text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100'>
-                      평균 신뢰도: {analyzeResult.data.averageConfidence.toFixed(1)}%
+                      Avg. confidence: {analyzeResult.data.averageConfidence.toFixed(1)}%
                     </span>
                   </div>
 
@@ -340,27 +340,27 @@ export function OcrPage() {
             <div className='bg-white p-6 rounded-lg shadow-sm border border-gray-200 min-h-150'>
               <h2 className='text-lg font-semibold text-gray-900 mb-4 flex items-center'>
                 <FileText className='w-5 h-5 mr-2' />
-                추출 결과 (단순 텍스트)
+                Extracted text
               </h2>
 
               {isPending && (
                 <div className='flex flex-col items-center justify-center h-64 text-gray-500'>
                   <Loader2 className='w-8 h-8 animate-spin mb-4 text-indigo-500' />
-                  <p>텍스트를 분석하고 있습니다...</p>
+                  <p>Processing text...</p>
                 </div>
               )}
 
               {extractResult && extractResult.success && (
                 <div className='space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500'>
                   <div className='bg-indigo-50 p-4 rounded-lg flex items-center justify-between'>
-                    <span className='text-sm font-medium text-indigo-900'>평균 신뢰도</span>
+                    <span className='text-sm font-medium text-indigo-900'>Avg. confidence</span>
                     <span className='text-lg font-bold text-indigo-600'>
                       {extractResult.data.averageConfidence.toFixed(1)}%
                     </span>
                   </div>
 
                   <div>
-                    <h3 className='text-sm font-medium text-gray-700 mb-2'>전체 텍스트</h3>
+                    <h3 className='text-sm font-medium text-gray-700 mb-2'>Full text</h3>
                     <div className='bg-gray-50 p-4 rounded-lg text-sm text-gray-800 whitespace-pre-wrap border border-gray-100 max-h-96 overflow-y-auto font-mono'>
                       {extractResult.data.extractedText}
                     </div>
@@ -369,7 +369,7 @@ export function OcrPage() {
                   {/* 블록 상세 보기 */}
                   <details className='group'>
                     <summary className='text-sm font-medium text-gray-700 cursor-pointer mb-2 list-none flex items-center'>
-                      <span>감지된 블록 ({extractResult.data.blocks.length}) - 상세 보기</span>
+                      <span>Detected blocks ({extractResult.data.blocks.length}) - details</span>
                       <span className='ml-2 transition group-open:rotate-180 text-gray-400'>▼</span>
                     </summary>
 

@@ -32,15 +32,15 @@ export function StockListPage() {
     <div className='space-y-6'>
       {/* 헤더: 제목 및 액션 버튼(등록, 새로고침) */}
       <div className='flex items-center justify-between'>
-        <h1 className='text-2xl font-bold text-gray-900'>재고 관리</h1>
+        <h1 className='text-2xl font-bold text-gray-900'>Inventory</h1>
         <div className='flex gap-2'>
           <Button onClick={() => setIsCreateModalOpen(true)}>
             <Plus className='w-4 h-4 mr-2' />
-            재고 등록
+            Add stock
           </Button>
           <Button variant='outline' onClick={() => refetch()}>
             <RotateCw className='w-4 h-4 mr-2' />
-            새로고침
+            Refresh
           </Button>
         </div>
       </div>
@@ -49,7 +49,7 @@ export function StockListPage() {
       <div className='bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center space-x-4'>
         <div className='relative flex-1 max-w-sm'>
           <Search className='absolute left-3 top-2.5 h-4 w-4 text-gray-400' />
-          <Input placeholder='품목명 또는 창고 검색...' className='pl-9' />
+          <Input placeholder='Search by item name or warehouse...' className='pl-9' />
         </div>
       </div>
 
@@ -60,20 +60,20 @@ export function StockListPage() {
             <thead className='bg-gray-50'>
               <tr>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  품목코드
+                  Item Code
                 </th>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  품목명
+                  Item Name
                 </th>
-                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>창고</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Warehouse</th>
                 <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  현재고
+                  On Hand
                 </th>
                 <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  가용재고
+                  Available
                 </th>
                 <th className='px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  단위
+                  Unit
                 </th>
               </tr>
             </thead>
@@ -82,7 +82,7 @@ export function StockListPage() {
               {isLoading && (
                 <tr>
                   <td colSpan={6} className='px-6 py-10 text-center text-gray-500'>
-                    로딩 중...
+                    Loading...
                   </td>
                 </tr>
               )}
@@ -105,7 +105,7 @@ export function StockListPage() {
               {stocks && stocks.length === 0 && (
                 <tr>
                   <td colSpan={6} className='px-6 py-10 text-center text-gray-500'>
-                    재고 데이터가 없습니다.
+                    No stock data.
                   </td>
                 </tr>
               )}

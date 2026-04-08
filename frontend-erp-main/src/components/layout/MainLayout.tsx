@@ -13,11 +13,11 @@ export function MainLayout() {
   // 현재 경로에 따라 헤더 제목을 동적으로 설정합니다.
   const pageTitle =
     {
-      '/': '대시보드',
-      '/sales': '수주 관리',
-      '/inventory': '재고 관리',
-      '/accounting': '회계 관리',
-      '/ocr': 'OCR 추출',
+      '/': 'Dashboard',
+      '/sales': 'Sales Orders',
+      '/inventory': 'Inventory',
+      '/accounting': 'Accounting',
+      '/ocr': 'OCR',
     }[location.pathname] || 'Overview';
 
   return (
@@ -31,7 +31,7 @@ export function MainLayout() {
         <header className='h-20 bg-white/80 backdrop-blur-xl border-b border-gray-200 sticky top-0 z-20 px-10 flex items-center justify-between'>
           <div>
             <h2 className='text-2xl font-bold text-gray-800 tracking-tight'>{pageTitle}</h2>
-            <p className='text-sm text-gray-500 mt-1'>오늘의 업무 현황을 확인하세요</p>
+            <p className='text-sm text-gray-500 mt-1'>Check today&#39;s work status</p>
           </div>
 
           <div className='flex items-center gap-4'>

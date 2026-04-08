@@ -56,9 +56,9 @@ const Dashboard = () => (
           </div>
           <span className='text-xs font-semibold px-2.5 py-0.5 rounded-full bg-green-100 text-green-700'>+12.5%</span>
         </div>
-        <h3 className='text-gray-500 text-sm font-medium'>총 수주액</h3>
+        <h3 className='text-gray-500 text-sm font-medium'>Total Sales Orders</h3>
         <p className='text-3xl font-bold text-gray-900 mt-2'>₩ 124,500,000</p>
-        <p className='text-sm text-gray-400 mt-1'>지난달 대비 증가</p>
+        <p className='text-sm text-gray-400 mt-1'>Up from last month</p>
       </div>
 
       {/* 통계 카드 2: 재고 현황 */}
@@ -76,11 +76,11 @@ const Dashboard = () => (
           </div>
           <span className='text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600'>Stable</span>
         </div>
-        <h3 className='text-gray-500 text-sm font-medium'>재고 현황</h3>
+        <h3 className='text-gray-500 text-sm font-medium'>Inventory Status</h3>
         <p className='text-3xl font-bold text-gray-900 mt-2'>
           1,234 <span className='text-lg font-normal text-gray-400'>Items</span>
         </p>
-        <p className='text-sm text-gray-400 mt-1'>15개 품목 품절 임박</p>
+        <p className='text-sm text-gray-400 mt-1'>15 items low on stock</p>
       </div>
 
       {/* 통계 카드 3: 미처리 주문 */}
@@ -100,22 +100,22 @@ const Dashboard = () => (
             Action Req
           </span>
         </div>
-        <h3 className='text-gray-500 text-sm font-medium'>미처리 주문</h3>
+        <h3 className='text-gray-500 text-sm font-medium'>Pending Orders</h3>
         <p className='text-3xl font-bold text-gray-900 mt-2'>
-          12 <span className='text-lg font-normal text-gray-400'>건</span>
+          12 <span className='text-lg font-normal text-gray-400'>orders</span>
         </p>
-        <p className='text-sm text-gray-400 mt-1'>2건은 긴급 주문입니다</p>
+        <p className='text-sm text-gray-400 mt-1'>2 are urgent orders</p>
       </div>
     </div>
 
     {/* 최근 활동 / 차트 플레이스홀더 */}
     <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
       <div className='bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80 flex flex-col items-center justify-center text-gray-400'>
-        <p className='mb-2'>매출 추이 그래프</p>
+        <p className='mb-2'>Sales trend chart</p>
         <div className='w-full h-40 bg-gray-50 rounded-xl animate-pulse'></div>
       </div>
       <div className='bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80 flex flex-col items-center justify-center text-gray-400'>
-        <p className='mb-2'>최근 주문 내역</p>
+        <p className='mb-2'>Recent orders</p>
         <div className='w-full h-full space-y-3 mt-4'>
           {[1, 2, 3].map((i) => (
             <div key={i} className='flex items-center justify-between p-3 bg-gray-50 rounded-lg'>

@@ -28,10 +28,10 @@ export function JournalEntryListPage() {
     <div className='space-y-6'>
       {/* 헤더: 제목 및 전표 입력 버튼 */}
       <div className='flex items-center justify-between'>
-        <h1 className='text-2xl font-bold text-gray-900'>회계 전표 관리</h1>
+        <h1 className='text-2xl font-bold text-gray-900'>Journal Entries</h1>
         <Button onClick={() => setIsCreateModalOpen(true)}>
           <Plus className='w-4 h-4 mr-2' />
-          전표 입력
+          New entry
         </Button>
       </div>
 
@@ -39,7 +39,7 @@ export function JournalEntryListPage() {
       <div className='bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center space-x-4'>
         <div className='relative flex-1 max-w-sm'>
           <Search className='absolute left-3 top-2.5 h-4 w-4 text-gray-400' />
-          <Input placeholder='전표번호 검색...' className='pl-9' />
+          <Input placeholder='Search by entry number...' className='pl-9' />
         </div>
       </div>
 
@@ -50,18 +50,18 @@ export function JournalEntryListPage() {
             <thead className='bg-gray-50'>
               <tr>
                 <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  전표번호
+                  Entry No.
                 </th>
-                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>날짜</th>
-                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>적요</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Date</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>Description</th>
                 <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  차변 합계
+                  Total Debit
                 </th>
                 <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  대변 합계
+                  Total Credit
                 </th>
                 <th className='px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                  상태
+                  Status
                 </th>
               </tr>
             </thead>
@@ -69,7 +69,7 @@ export function JournalEntryListPage() {
               {isLoading && (
                 <tr>
                   <td colSpan={6} className='px-6 py-10 text-center text-gray-500'>
-                    로딩 중...
+                    Loading...
                   </td>
                 </tr>
               )}
@@ -98,7 +98,7 @@ export function JournalEntryListPage() {
               {journals?.content && journals.content.length === 0 && (
                 <tr>
                   <td colSpan={6} className='px-6 py-10 text-center text-gray-500'>
-                    전표 내역이 없습니다.
+                    No journal entries.
                   </td>
                 </tr>
               )}

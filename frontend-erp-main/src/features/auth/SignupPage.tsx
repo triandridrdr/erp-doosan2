@@ -30,13 +30,13 @@ export function SignupPage() {
 
     try {
       await signup({ userId, password, name }); // 회원가입 API 호출
-      alert('회원가입이 완료되었습니다. 로그인해주세요.');
+      alert('Sign-up completed. Please sign in.');
       navigate('/login'); // 성공 시 로그인 페이지로 이동
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('회원가입에 실패했습니다.');
+        setError('Sign-up failed.');
       }
     } finally {
       setIsLoading(false);
@@ -61,15 +61,15 @@ export function SignupPage() {
               <UserPlus className='w-8 h-8' />
             </div>
             <h1 className='text-3xl font-bold tracking-tight text-gray-900'>Sign Up</h1>
-            <p className='mt-3 text-gray-500 text-sm font-medium'>새로운 계정을 생성하세요</p>
+            <p className='mt-3 text-gray-500 text-sm font-medium'>Create a new account</p>
           </div>
 
           {/* 회원가입 폼 */}
           <form onSubmit={handleSubmit} className='space-y-6'>
             <div className='space-y-5'>
               <Input
-                label='아이디'
-                placeholder='사용할 아이디를 입력하세요'
+                label='User ID'
+                placeholder='Enter a user ID'
                 value={userId}
                 onChange={(e) => setUserId(e.target.value)}
                 required
@@ -77,8 +77,8 @@ export function SignupPage() {
                 className='bg-white/50'
               />
               <Input
-                label='이름'
-                placeholder='사용자 이름을 입력하세요'
+                label='Name'
+                placeholder='Enter your name'
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
@@ -86,9 +86,9 @@ export function SignupPage() {
                 className='bg-white/50'
               />
               <Input
-                label='비밀번호'
+                label='Password'
                 type='password'
-                placeholder='비밀번호를 입력하세요'
+                placeholder='Enter a password'
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -118,7 +118,7 @@ export function SignupPage() {
               isLoading={isLoading}
             >
               <span className='relative z-10 flex items-center justify-center gap-2'>
-                가입하기
+                Create account
                 <ArrowRight size={18} className='group-hover:translate-x-1 transition-transform' />
               </span>
             </Button>
@@ -127,13 +127,13 @@ export function SignupPage() {
           {/* 푸터 */}
           <div className='mt-8 pt-6 border-t border-gray-100 text-center'>
             <p className='text-sm text-gray-500'>
-              이미 계정이 있으신가요?{' '}
+              Already have an account?{' '}
               <button
                 type='button'
                 className='font-semibold text-primary hover:text-primary-hover transition-colors cursor-pointer hover:underline'
                 onClick={() => navigate('/login')}
               >
-                로그인하기
+                Sign in
               </button>
             </p>
           </div>

@@ -11,11 +11,11 @@ import { cn } from '../../lib/utils';
 
 // 네비게이션 메뉴 항목 정의
 const navigation = [
-  { name: '대시보드', href: '/', icon: LayoutDashboard },
-  { name: '수주 관리', href: '/sales', icon: ShoppingCart },
-  { name: '재고 관리', href: '/inventory', icon: Package },
-  { name: '회계 관리', href: '/accounting', icon: FileText },
-  { name: 'OCR 추출', href: '/ocr', icon: ScanLine },
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Sales Orders', href: '/sales', icon: ShoppingCart },
+  { name: 'Inventory', href: '/inventory', icon: Package },
+  { name: 'Accounting', href: '/accounting', icon: FileText },
+  { name: 'OCR', href: '/ocr', icon: ScanLine },
 ];
 
 export function Sidebar() {
@@ -81,7 +81,7 @@ export function Sidebar() {
           <button
             onClick={logout}
             className='p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors'
-            title='로그아웃'
+            title='Log out'
           >
             <LogOut size={18} />
           </button>

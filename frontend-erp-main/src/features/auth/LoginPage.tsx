@@ -35,7 +35,7 @@ export function LoginPage() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('로그인에 실패했습니다. ID와 비밀번호를 확인해주세요.');
+        setError('Login failed. Please check your user ID and password.');
       }
     } finally {
       setIsLoading(false);
@@ -62,15 +62,15 @@ export function LoginPage() {
               </svg>
             </div>
             <h1 className='text-3xl font-bold tracking-tight text-gray-900'>Welcome Back</h1>
-            <p className='mt-3 text-gray-500 text-sm font-medium'>ERP 시스템에 접속하여 업무를 시작하세요</p>
+            <p className='mt-3 text-gray-500 text-sm font-medium'>Sign in to access the ERP system and start working</p>
           </div>
 
           {/* 로그인 폼 */}
           <form onSubmit={handleSubmit} className='space-y-6'>
             <div className='space-y-5'>
               <Input
-                label='아이디'
-                placeholder='아이디를 입력하세요'
+                label='User ID'
+                placeholder='Enter your user ID'
                 value={userId}
                 onChange={(e) => setUserId(e.target.value)}
                 required
@@ -78,9 +78,9 @@ export function LoginPage() {
                 className='bg-white/50'
               />
               <Input
-                label='비밀번호'
+                label='Password'
                 type='password'
-                placeholder='비밀번호를 입력하세요'
+                placeholder='Enter your password'
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -110,7 +110,7 @@ export function LoginPage() {
               isLoading={isLoading}
             >
               <span className='relative z-10 flex items-center justify-center gap-2'>
-                로그인하기
+                Sign in
                 <ArrowRight size={18} className='group-hover:translate-x-1 transition-transform' />
               </span>
             </Button>
@@ -119,13 +119,13 @@ export function LoginPage() {
           {/* 푸터 섹션 */}
           <div className='mt-8 pt-6 border-t border-gray-100 text-center'>
             <p className='text-sm text-gray-500'>
-              계정이 없으신가요?{' '}
+              Don&#39;t have an account?{' '}
               <button
                 type='button'
                 className='font-semibold text-primary hover:text-primary-hover transition-colors cursor-pointer hover:underline'
                 onClick={() => navigate('/signup')}
               >
-                회원가입하기
+                Create an account
               </button>
             </p>
           </div>
