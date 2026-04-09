@@ -328,179 +328,256 @@ export function OcrPage() {
               <div className='text-sm text-gray-500 italic'>No draft data yet. Run Analyze, then click “Use parsed values”.</div>
             ) : (
               <div className='space-y-6'>
-                <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
-                <Input
-                  label='Order No'
-                  value={draft.header.orderNo}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, orderNo: e.target.value } });
-                  }}
-                />
+                <div className='overflow-auto rounded-lg border border-gray-200'>
+                  <table className='min-w-full'>
+                    <thead className='bg-gray-50'>
+                      <tr>
+                        <th className='px-4 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
+                        <th className='px-4 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
+                        <th className='px-4 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Editable</th>
+                      </tr>
+                    </thead>
+                    <tbody className='bg-white'>
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>SO Number</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.orderNo}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, orderNo: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Date of Order'
-                  value={draft.header.dateOfOrder}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, dateOfOrder: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Date (SO)</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            type='date'
+                            value={draft.header.dateOfOrder}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, dateOfOrder: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Supplier Code'
-                  value={draft.header.supplierCode}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, supplierCode: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Season</td>
+                        <td className='px-4 py-2'>
+                          <select
+                            className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                            value={draft.header.season}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, season: e.target.value } });
+                            }}
+                          >
+                            <option value=''>Select season</option>
+                            <option value='1-2026'>1-2026</option>
+                            <option value='2-2026'>2-2026</option>
+                            <option value='3-2026'>3-2026</option>
+                            <option value='4-2026'>4-2026</option>
+                            <option value={draft.header.season}>{draft.header.season}</option>
+                          </select>
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Supplier Name'
-                  value={draft.header.supplierName}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, supplierName: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Buyer Code</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.supplierCode}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, supplierCode: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Product No'
-                  value={draft.header.productNo}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, productNo: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Supplier</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.supplierName}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, supplierName: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Product Name'
-                  value={draft.header.productName}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, productName: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Article / Product No</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.productNo}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, productNo: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Option No'
-                  value={draft.header.optionNo}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, optionNo: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Product Name</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.productName}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, productName: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Development No'
-                  value={draft.header.developmentNo}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, developmentNo: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Product Type</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.productType}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, productType: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <Input
-                  label='Product Dev Name'
-                  value={draft.header.productDevName}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, productDevName: e.target.value } });
-                  }}
-                />
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Customs Customer Group</td>
+                        <td className='px-4 py-2'>
+                          <select
+                            className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                            value={draft.header.customsCustomerGroup}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, customsCustomerGroup: e.target.value } });
+                            }}
+                          >
+                            <option value=''>Select group</option>
+                            <option value='Women'>Women</option>
+                            <option value='Men'>Men</option>
+                            <option value='Kids'>Kids</option>
+                            <option value='Unisex'>Unisex</option>
+                            <option value={draft.header.customsCustomerGroup}>{draft.header.customsCustomerGroup}</option>
+                          </select>
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
 
-                <div className='w-full space-y-2'>
-                  <label className='text-sm font-semibold text-gray-700'>Season</label>
-                  <select
-                    className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
-                    value={draft.header.season}
-                    onChange={(e) => {
-                      setHasUserEditedDraft(true);
-                      setDraft({ ...draft, header: { ...draft.header, season: e.target.value } });
-                    }}
-                  >
-                    <option value=''>Select season</option>
-                    <option value='1-2026'>1-2026</option>
-                    <option value='2-2026'>2-2026</option>
-                    <option value='3-2026'>3-2026</option>
-                    <option value='4-2026'>4-2026</option>
-                    <option value={draft.header.season}>{draft.header.season}</option>
-                  </select>
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Type of Construction</td>
+                        <td className='px-4 py-2'>
+                          <select
+                            className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                            value={draft.header.typeOfConstruction}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, typeOfConstruction: e.target.value } });
+                            }}
+                          >
+                            <option value=''>Select construction</option>
+                            <option value='Woven'>Woven</option>
+                            <option value='Knit'>Knit</option>
+                            <option value='Other'>Other</option>
+                            <option value={draft.header.typeOfConstruction}>{draft.header.typeOfConstruction}</option>
+                          </select>
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Option No</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.optionNo}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, optionNo: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Development No</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.developmentNo}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, developmentNo: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Product Dev Name</td>
+                        <td className='px-4 py-2'>
+                          <Input
+                            value={draft.header.productDevName}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, productDevName: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+
+                      <tr className='border-b border-gray-100'>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Product Description</td>
+                        <td className='px-4 py-2'>
+                          <textarea
+                            className='w-full min-h-20 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                            value={draft.header.productDescription}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, productDescription: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+
+                      <tr>
+                        <td className='px-4 py-2 text-sm text-gray-700'>Remarks</td>
+                        <td className='px-4 py-2'>
+                          <textarea
+                            className='w-full min-h-20 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                            value={draft.header.remarks}
+                            onChange={(e) => {
+                              setHasUserEditedDraft(true);
+                              setDraft({ ...draft, header: { ...draft.header, remarks: e.target.value } });
+                            }}
+                          />
+                        </td>
+                        <td className='px-4 py-2 text-sm text-gray-700'>TRUE</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
 
-                <div className='w-full space-y-2'>
-                  <label className='text-sm font-semibold text-gray-700'>Customs Customer Group</label>
-                  <select
-                    className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
-                    value={draft.header.customsCustomerGroup}
-                    onChange={(e) => {
-                      setHasUserEditedDraft(true);
-                      setDraft({ ...draft, header: { ...draft.header, customsCustomerGroup: e.target.value } });
-                    }}
-                  >
-                    <option value=''>Select group</option>
-                    <option value='Women'>Women</option>
-                    <option value='Men'>Men</option>
-                    <option value='Kids'>Kids</option>
-                    <option value='Unisex'>Unisex</option>
-                    <option value={draft.header.customsCustomerGroup}>{draft.header.customsCustomerGroup}</option>
-                  </select>
-                </div>
-
-                <div className='w-full space-y-2'>
-                  <label className='text-sm font-semibold text-gray-700'>Type of Construction</label>
-                  <select
-                    className='flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
-                    value={draft.header.typeOfConstruction}
-                    onChange={(e) => {
-                      setHasUserEditedDraft(true);
-                      setDraft({ ...draft, header: { ...draft.header, typeOfConstruction: e.target.value } });
-                    }}
-                  >
-                    <option value=''>Select construction</option>
-                    <option value='Woven'>Woven</option>
-                    <option value='Knit'>Knit</option>
-                    <option value='Other'>Other</option>
-                    <option value={draft.header.typeOfConstruction}>{draft.header.typeOfConstruction}</option>
-                  </select>
-                </div>
-
-                <Input
-                  label='Product Type'
-                  value={draft.header.productType}
-                  onChange={(e) => {
-                    setHasUserEditedDraft(true);
-                    setDraft({ ...draft, header: { ...draft.header, productType: e.target.value } });
-                  }}
-                />
-
-                <div className='w-full space-y-2 md:col-span-2 lg:col-span-3'>
-                  <label className='text-sm font-semibold text-gray-700'>Product Description</label>
-                  <textarea
-                    className='w-full min-h-24 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
-                    value={draft.header.productDescription}
-                    onChange={(e) => {
-                      setHasUserEditedDraft(true);
-                      setDraft({ ...draft, header: { ...draft.header, productDescription: e.target.value } });
-                    }}
-                  />
-                </div>
-
-                <div className='w-full space-y-2 md:col-span-2 lg:col-span-3'>
-                  <label className='text-sm font-semibold text-gray-700'>Remarks</label>
-                  <textarea
-                    className='w-full min-h-24 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
-                    value={draft.header.remarks}
-                    onChange={(e) => {
-                      setHasUserEditedDraft(true);
-                      setDraft({ ...draft, header: { ...draft.header, remarks: e.target.value } });
-                    }}
-                  />
-                </div>
-                </div>
-
-                <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
+                <div className='space-y-6'>
                   <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
                     <div className='bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between'>
                       <div>
@@ -667,203 +744,207 @@ export function OcrPage() {
           </div>
         </div>
 
-        {/* Parsed sections (Sales Order / Details / BoM) */}
-        <div className='space-y-6'>
-          <h3 className='font-bold text-lg text-gray-900'>Parsed result</h3>
+        {false && (
+          <>
+            {/* Parsed sections (Sales Order / Details / BoM) */}
+            <div className='space-y-6'>
+              <h3 className='font-bold text-lg text-gray-900'>Parsed result</h3>
 
-          {/* Sales Order header */}
-          <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
-            <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
-              <h4 className='font-semibold text-gray-900'>Sales Order (Header)</h4>
+              {/* Sales Order header */}
+              <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
+                <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
+                  <h4 className='font-semibold text-gray-900'>Sales Order (Header)</h4>
+                </div>
+                <div className='p-4'>
+                  {data.classified && Object.keys(data.classified.salesOrderHeader || {}).length > 0 ? (
+                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+                      {Object.entries(data.classified.salesOrderHeader).map(([k, v]) => (
+                        <div key={k} className='space-y-1'>
+                          <div className='text-xs text-gray-500'>{k}</div>
+                          <div className='px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-900 break-words'>
+                            {v}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Sales Order detail */}
+              <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
+                <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
+                  <h4 className='font-semibold text-gray-900'>Sales Order Detail</h4>
+                </div>
+                <div className='p-4'>
+                  {data.classified && data.classified.salesOrderDetails && data.classified.salesOrderDetails.length > 0 ? (
+                    <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-auto max-h-80'>
+                      {JSON.stringify(data.classified.salesOrderDetails, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className='text-sm text-gray-500 italic'>No detail rows detected.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* BoM */}
+              <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
+                <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
+                  <h4 className='font-semibold text-gray-900'>BoM</h4>
+                </div>
+                <div className='p-4'>
+                  {data.classified && data.classified.bomItems && data.classified.bomItems.length > 0 ? (
+                    <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-auto max-h-80'>
+                      {JSON.stringify(data.classified.bomItems, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className='text-sm text-gray-500 italic'>No BoM items detected.</div>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className='p-4'>
-              {data.classified && Object.keys(data.classified.salesOrderHeader || {}).length > 0 ? (
-                <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
-                  {Object.entries(data.classified.salesOrderHeader).map(([k, v]) => (
-                    <div key={k} className='space-y-1'>
-                      <div className='text-xs text-gray-500'>{k}</div>
-                      <div className='px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-900 break-words'>
-                        {v}
+
+            {/* Raw JSON */}
+            <div className='bg-gray-50 p-4 rounded-lg border border-gray-200'>
+              <details className='group'>
+                <summary className='flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-700'>
+                  <span>View raw JSON</span>
+                  <span className='transition group-open:rotate-180'>
+                    <svg
+                      fill='none'
+                      height='24'
+                      shapeRendering='geometricPrecision'
+                      stroke='currentColor'
+                      strokeLinecap='round'
+                      strokeLinejoin='round'
+                      strokeWidth='1.5'
+                      viewBox='0 0 24 24'
+                      width='24'
+                    >
+                      <path d='M6 9l6 6 6-6'></path>
+                    </svg>
+                  </span>
+                </summary>
+                <div className='text-neutral-600 mt-3 group-open:animate-fadeIn whitespace-pre-wrap text-xs font-mono p-2 bg-white rounded border border-gray-200 overflow-auto max-h-96'>
+                  {JSON.stringify(data, null, 2)}
+                </div>
+              </details>
+            </div>
+
+            {/* 문서 제목 (추정) */}
+            {documentTitle && (
+              <div className='text-center pb-6 border-b border-gray-100'>
+                <h2 className='text-2xl font-bold text-gray-800 break-words'>{documentTitle}</h2>
+                <p className='text-sm text-gray-400 mt-2'>Document title (estimated)</p>
+              </div>
+            )}
+
+            {/* 테이블 섹션 */}
+            <div className='space-y-4'>
+              <h3 className='font-bold text-lg text-gray-900 flex items-center'>
+                <TableIcon className='w-5 h-5 mr-2' />
+                Extracted tables ({data.tables.length})
+              </h3>
+
+              {data.tables.length > 0 ? (
+                <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
+                  {data.tables.map((table: TableDto, idx: number) => (
+                    <div key={idx} className='bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm'>
+                      <div className='bg-gray-50 px-4 py-2 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                        Table {idx + 1}
+                      </div>
+                      <div className='overflow-x-auto'>
+                        <table className='min-w-full divide-y divide-gray-200'>
+                          <tbody className='bg-white divide-y divide-gray-200'>
+                            {table.rows.map((row, rIdx) => (
+                              <tr key={rIdx} className={rIdx === 0 ? 'bg-gray-50/50' : ''}>
+                                {row.map((cell, cIdx) => (
+                                  <td
+                                    key={cIdx}
+                                    className={`px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap border-r border-gray-100 last:border-r-0 ${
+                                      rIdx === 0 ? 'font-semibold text-gray-900' : ''
+                                    }`}
+                                  >
+                                    {cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
-              )}
-            </div>
-          </div>
-
-          {/* Sales Order detail */}
-          <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
-            <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
-              <h4 className='font-semibold text-gray-900'>Sales Order Detail</h4>
-            </div>
-            <div className='p-4'>
-              {data.classified && data.classified.salesOrderDetails && data.classified.salesOrderDetails.length > 0 ? (
-                <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-auto max-h-80'>
-                  {JSON.stringify(data.classified.salesOrderDetails, null, 2)}
-                </pre>
-              ) : (
-                <div className='text-sm text-gray-500 italic'>No detail rows detected.</div>
-              )}
-            </div>
-          </div>
-
-          {/* BoM */}
-          <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
-            <div className='bg-gray-50 px-4 py-3 border-b border-gray-200'>
-              <h4 className='font-semibold text-gray-900'>BoM</h4>
-            </div>
-            <div className='p-4'>
-              {data.classified && data.classified.bomItems && data.classified.bomItems.length > 0 ? (
-                <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-auto max-h-80'>
-                  {JSON.stringify(data.classified.bomItems, null, 2)}
-                </pre>
-              ) : (
-                <div className='text-sm text-gray-500 italic'>No BoM items detected.</div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Raw JSON */}
-        <div className='bg-gray-50 p-4 rounded-lg border border-gray-200'>
-          <details className='group'>
-            <summary className='flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-700'>
-              <span>View raw JSON</span>
-              <span className='transition group-open:rotate-180'>
-                <svg
-                  fill='none'
-                  height='24'
-                  shapeRendering='geometricPrecision'
-                  stroke='currentColor'
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  strokeWidth='1.5'
-                  viewBox='0 0 24 24'
-                  width='24'
-                >
-                  <path d='M6 9l6 6 6-6'></path>
-                </svg>
-              </span>
-            </summary>
-            <div className='text-neutral-600 mt-3 group-open:animate-fadeIn whitespace-pre-wrap text-xs font-mono p-2 bg-white rounded border border-gray-200 overflow-auto max-h-96'>
-              {JSON.stringify(data, null, 2)}
-            </div>
-          </details>
-        </div>
-
-        {/* 문서 제목 (추정) */}
-        {documentTitle && (
-          <div className='text-center pb-6 border-b border-gray-100'>
-            <h2 className='text-2xl font-bold text-gray-800 break-words'>{documentTitle}</h2>
-            <p className='text-sm text-gray-400 mt-2'>Document title (estimated)</p>
-          </div>
-        )}
-
-        {/* 테이블 섹션 */}
-        <div className='space-y-4'>
-          <h3 className='font-bold text-lg text-gray-900 flex items-center'>
-            <TableIcon className='w-5 h-5 mr-2' />
-            Extracted tables ({data.tables.length})
-          </h3>
-
-          {data.tables.length > 0 ? (
-            <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
-              {data.tables.map((table: TableDto, idx: number) => (
-                <div key={idx} className='bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm'>
-                  <div className='bg-gray-50 px-4 py-2 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                    Table {idx + 1}
-                  </div>
-                  <div className='overflow-x-auto'>
-                    <table className='min-w-full divide-y divide-gray-200'>
-                      <tbody className='bg-white divide-y divide-gray-200'>
-                        {table.rows.map((row, rIdx) => (
-                          <tr key={rIdx} className={rIdx === 0 ? 'bg-gray-50/50' : ''}>
-                            {row.map((cell, cIdx) => (
-                              <td
-                                key={cIdx}
-                                className={`px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap border-r border-gray-100 last:border-r-0 ${
-                                  rIdx === 0 ? 'font-semibold text-gray-900' : ''
-                                }`}
-                              >
-                                {cell}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className='bg-gray-50 rounded-lg p-8 text-center text-gray-500 border border-gray-200 border-dashed'>
+                  No tables detected.
                 </div>
-              ))}
+              )}
             </div>
-          ) : (
-            <div className='bg-gray-50 rounded-lg p-8 text-center text-gray-500 border border-gray-200 border-dashed'>
-              No tables detected.
-            </div>
-          )}
-        </div>
 
-        {/* 키-값 쌍 섹션 (Form Data) */}
-        <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
-          <div className='bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center'>
-            <h3 className='font-semibold text-gray-900'>Key-value details (Key-Value Pairs)</h3>
-            <span className='text-xs text-gray-500'>Confidence scores shown</span>
-          </div>
-          <div className='max-h-96 overflow-y-auto p-4'>
-            {data.keyValuePairs.length > 0 ? (
-              <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
-                {data.keyValuePairs.map((kv, idx) => (
-                  <div
-                    key={idx}
-                    className='p-3 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors flex justify-between items-start text-sm'
-                  >
-                    <div className='flex-1 pr-2'>
-                      <span className='text-gray-500 text-xs block mb-1'>Key</span>
-                      <span className='text-gray-700 font-medium break-words'>{kv.key}</span>
-                    </div>
-                    <div className='flex-1 text-right pl-2 border-l border-gray-100'>
-                      <span className='text-gray-500 text-xs block mb-1'>Value</span>
-                      <span className='text-gray-900 break-words'>{kv.value}</span>
-                      <div className='mt-1 text-[10px] text-gray-400'>{Math.round(kv.valueConfidence)}%</div>
-                    </div>
-                  </div>
-                ))}
+            {/* 키-값 쌍 섹션 (Form Data) */}
+            <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
+              <div className='bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center'>
+                <h3 className='font-semibold text-gray-900'>Key-value details (Key-Value Pairs)</h3>
+                <span className='text-xs text-gray-500'>Confidence scores shown</span>
               </div>
-            ) : (
-              <div className='text-center text-gray-500 italic py-4'>No key-value pairs detected.</div>
-            )}
-          </div>
-        </div>
-
-        {/* 전체 텍스트 보기 토글 */}
-        <div className='bg-gray-50 p-4 rounded-lg border border-gray-200'>
-          <details className='group'>
-            <summary className='flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-700'>
-              <span>View full text</span>
-              <span className='transition group-open:rotate-180'>
-                <svg
-                  fill='none'
-                  height='24'
-                  shapeRendering='geometricPrecision'
-                  stroke='currentColor'
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  strokeWidth='1.5'
-                  viewBox='0 0 24 24'
-                  width='24'
-                >
-                  <path d='M6 9l6 6 6-6'></path>
-                </svg>
-              </span>
-            </summary>
-            <div className='text-neutral-600 mt-3 group-open:animate-fadeIn whitespace-pre-wrap text-xs font-mono p-2 bg-white rounded border border-gray-200'>
-              {data.extractedText}
+              <div className='max-h-96 overflow-y-auto p-4'>
+                {data.keyValuePairs.length > 0 ? (
+                  <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+                    {data.keyValuePairs.map((kv, idx) => (
+                      <div
+                        key={idx}
+                        className='p-3 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors flex justify-between items-start text-sm'
+                      >
+                        <div className='flex-1 pr-2'>
+                          <span className='text-gray-500 text-xs block mb-1'>Key</span>
+                          <span className='text-gray-700 font-medium break-words'>{kv.key}</span>
+                        </div>
+                        <div className='flex-1 text-right pl-2 border-l border-gray-100'>
+                          <span className='text-gray-500 text-xs block mb-1'>Value</span>
+                          <span className='text-gray-900 break-words'>{kv.value}</span>
+                          <div className='mt-1 text-[10px] text-gray-400'>{Math.round(kv.valueConfidence)}%</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className='text-center text-gray-500 italic py-4'>No key-value pairs detected.</div>
+                )}
+              </div>
             </div>
-          </details>
-        </div>
+
+            {/* 전체 텍스트 보기 토글 */}
+            <div className='bg-gray-50 p-4 rounded-lg border border-gray-200'>
+              <details className='group'>
+                <summary className='flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-700'>
+                  <span>View full text</span>
+                  <span className='transition group-open:rotate-180'>
+                    <svg
+                      fill='none'
+                      height='24'
+                      shapeRendering='geometricPrecision'
+                      stroke='currentColor'
+                      strokeLinecap='round'
+                      strokeLinejoin='round'
+                      strokeWidth='1.5'
+                      viewBox='0 0 24 24'
+                      width='24'
+                    >
+                      <path d='M6 9l6 6 6-6'></path>
+                    </svg>
+                  </span>
+                </summary>
+                <div className='text-neutral-600 mt-3 group-open:animate-fadeIn whitespace-pre-wrap text-xs font-mono p-2 bg-white rounded border border-gray-200'>
+                  {data.extractedText}
+                </div>
+              </details>
+            </div>
+          </>
+        )}
       </div>
     );
   };
