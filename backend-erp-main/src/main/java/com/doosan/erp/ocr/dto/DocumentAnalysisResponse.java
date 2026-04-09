@@ -36,6 +36,8 @@ public class DocumentAnalysisResponse {
     // 키-값을 Map으로 제공 (편의용)
     private Map<String, String> formFields;
 
+    private ClassifiedDocumentDto classified;
+
     // 평균 신뢰도 (0.0 ~ 100.0)
     private Float averageConfidence;
 }

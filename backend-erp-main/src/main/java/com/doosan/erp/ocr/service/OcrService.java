@@ -58,6 +58,8 @@ public class OcrService {
     // AWS Textract API 호출을 위한 클라이언트
     private final AwsTextractClient awsTextractClient;
 
+    private final OcrDocumentClassifier ocrDocumentClassifier;
+
     // 지원하는 파일 형식 (MIME 타입)
     private static final Set<String> SUPPORTED_CONTENT_TYPES = Set.of(
             "image/png",
@@ -318,6 +320,8 @@ public class OcrService {
                         LinkedHashMap::new
                 ));
 
+        var classified = ocrDocumentClassifier.classify(formFields, tables);
+
         float averageConfidence = (float) lines.stream()
                 .mapToDouble(TextBlockDto::getConfidence)
                 .average()
@@ -329,18 +333,21 @@ public class OcrService {
                 .tables(tables)
                 .keyValuePairs(keyValuePairs)
                 .formFields(formFields)
+                .classified(classified)
                 .averageConfidence(averageConfidence)
                 .build();
     }
 
     private DocumentAnalysisResponse mergeDocumentAnalysisResponses(List<DocumentAnalysisResponse> pageResponses) {
         if (pageResponses == null || pageResponses.isEmpty()) {
+            var classified = ocrDocumentClassifier.classify(Map.of(), List.of());
             return DocumentAnalysisResponse.builder()
                     .extractedText("")
                     .lines(List.of())
                     .tables(List.of())
                     .keyValuePairs(List.of())
                     .formFields(Map.of())
+                    .classified(classified)
                     .averageConfidence(0.0f)
                     .build();
         }
@@ -399,6 +406,7 @@ public class OcrService {
                         LinkedHashMap::new
                 ));
 
+        var classified = ocrDocumentClassifier.classify(formFields, tables);
         float averageConfidence = confidenceCount == 0 ? 0.0f : (float) (confidenceSum / confidenceCount);
 
         return DocumentAnalysisResponse.builder()
@@ -407,20 +415,11 @@ public class OcrService {
                 .tables(tables)
                 .keyValuePairs(keyValuePairs)
                 .formFields(formFields)
+                .classified(classified)
                 .averageConfidence(averageConfidence)
                 .build();
     }
 
-    /**
-     * TABLE 블록에서 테이블 데이터 추출
-     *
-     * TABLE 타입 블록을 찾아 각 셀의 텍스트와 위치 정보를 추출합니다.
-     * 2차원 배열 형태의 rows와 헤더-값 매핑도 함께 생성합니다.
-     *
-     * @param blocks   전체 블록 목록
-     * @param blockMap 블록 ID를 키로 하는 블록 맵
-     * @return 추출된 테이블 목록
-     */
     private List<TableDto> extractTables(List<Block> blocks, Map<String, Block> blockMap) {
         List<TableDto> tables = new ArrayList<>();
         int tableIndex = 0;
@@ -458,7 +457,6 @@ public class OcrService {
                 }
             }
 
-            // 2차원 배열 형태로 rows 구성
             List<List<String>> rows = new ArrayList<>();
             for (int r = 1; r <= maxRow; r++) {
                 List<String> row = new ArrayList<>();
@@ -475,7 +473,6 @@ public class OcrService {
                 rows.add(row);
             }
 
-            // 헤더-값 매핑 (첫 번째 행이 헤더인 경우)
             Map<String, String> headerToFirstRowMap = new LinkedHashMap<>();
             if (rows.size() >= 2) {
                 List<String> headers = rows.get(0);

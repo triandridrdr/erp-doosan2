@@ -56,6 +56,13 @@ export interface KeyValueDto {
   valueConfidence: number;
 }
 
+export interface ClassifiedDocumentDto {
+  salesOrderHeader: Record<string, string>;
+  salesOrderDetails: Array<Record<string, string>>;
+  bomItems: Array<Record<string, string>>;
+  unmappedFields: Record<string, string>;
+}
+
 // 문서 분석 응답 데이터
 export interface DocumentAnalysisResponseData {
   extractedText: string;
@@ -63,6 +70,7 @@ export interface DocumentAnalysisResponseData {
   tables: TableDto[]; // 감지된 테이블 목록
   keyValuePairs: KeyValueDto[]; // 감지된 키-값 쌍 목록
   formFields: Record<string, string>; // 단순화된 폼 필드 맵
+  classified: ClassifiedDocumentDto;
   averageConfidence: number;
 }
 
