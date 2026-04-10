@@ -5,7 +5,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, FileText, Loader2, Table as TableIcon, Type, Upload } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -57,6 +57,12 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
   }
 
   const preferred = [
+    'productNo',
+    'productName',
+    'productDescription',
+    'season',
+    'supplierCode',
+    'supplierName',
     'destinationCountry',
     'country',
     'sectionType',
@@ -69,6 +75,18 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
     'finishedGood',
     'style',
     'unitPrice',
+    'XS (Assortment)',
+    'S (Assortment)',
+    'M (Assortment)',
+    'L (Assortment)',
+    'XL (Assortment)',
+    'quantity (Assortment)',
+    'XS (Solid)',
+    'S (Solid)',
+    'M (Solid)',
+    'L (Solid)',
+    'XL (Solid)',
+    'quantity (Solid)',
     'XS',
     'S',
     'M',
@@ -114,6 +132,8 @@ export function OcrPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null); // 업로드된 파일
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 이미지 미리보기 URL
+
+  const isBatchAnalyzingRef = useRef(false);
 
   const [draft, setDraft] = useState<GarmentSalesOrderDraft | null>(null);
   const [hasUserEditedDraft, setHasUserEditedDraft] = useState(false);
@@ -163,6 +183,7 @@ export function OcrPage() {
   } = useMutation({
     mutationFn: ocrApi.analyze,
     onSuccess: (res) => {
+      if (isBatchAnalyzingRef.current) return;
       setAnalyzeData(res.data);
       setAnalyzeAvgConfidence(res.data.averageConfidence);
     },
@@ -277,16 +298,171 @@ export function OcrPage() {
       .map((l) => l.trim())
       .filter(Boolean);
 
+    const isCountryLine = (l: string) => {
+      if (!l) return false;
+      const upper = l.toUpperCase();
+      if (upper === 'XS (XS)' || upper === 'XS (XS)*') return false;
+      if (upper === 'S (S)' || upper === 'S (S)*') return false;
+      if (upper === 'M (M)' || upper === 'M (M)*') return false;
+      if (upper === 'L (L)' || upper === 'L (L)*') return false;
+      if (upper === 'XL (XL)' || upper === 'XL (XL)*') return false;
+      return /[A-Za-z]{3,}.*\b[A-Z]{2}\b\s*\([A-Za-z0-9\-]+\)/.test(l);
+    };
+
     const idx = lines.findIndex((l) => l.toLowerCase().includes('size / colour breakdown') || l.toLowerCase().includes('size/colour breakdown'));
     if (idx >= 0) {
       const next = lines[idx + 1];
-      if (next && /\b[A-Z]{2}\b\s*\([A-Z0-9]+\)/.test(next)) {
+      if (next && isCountryLine(next)) {
         return next;
       }
     }
 
-    const match = lines.find((l) => /\b[A-Z]{2}\b\s*\([A-Z0-9]+\)/.test(l));
+    const match = lines.find((l) => isCountryLine(l));
     return match ?? '';
+  }
+
+  function isLikelyCountryValue(v: string): boolean {
+    if (!v) return false;
+    const upper = v.toUpperCase().trim();
+    if (upper === 'XS (XS)' || upper === 'XS (XS)*') return false;
+    if (upper === 'S (S)' || upper === 'S (S)*') return false;
+    if (upper === 'M (M)' || upper === 'M (M)*') return false;
+    if (upper === 'L (L)' || upper === 'L (L)*') return false;
+    if (upper === 'XL (XL)' || upper === 'XL (XL)*') return false;
+    return /[A-Za-z]{3,}.*\b[A-Z]{2}\b\s*\([A-Za-z0-9\-]+\)/.test(v);
+  }
+
+  function pivotSalesOrderDetails(
+    details: Array<Record<string, string>>,
+    header: GarmentSalesOrderDraft['header'],
+  ): Array<Record<string, string>> {
+    const get = (r: Record<string, string>, k: string) => (typeof r[k] === 'string' ? r[k].trim() : '');
+
+    const hasAnySectionType = details.some((r) => {
+      const v = get(r, 'sectionType').toLowerCase();
+      return v === 'assortment' || v === 'solid';
+    });
+
+    const alreadyPivoted = details.some((r) =>
+      Object.keys(r).some((k) =>
+        k === 'XS (Assortment)' ||
+        k === 'S (Assortment)' ||
+        k === 'M (Assortment)' ||
+        k === 'L (Assortment)' ||
+        k === 'XL (Assortment)' ||
+        k === 'XS (Solid)' ||
+        k === 'S (Solid)' ||
+        k === 'M (Solid)' ||
+        k === 'L (Solid)' ||
+        k === 'XL (Solid)' ||
+        k === 'quantity (Assortment)' ||
+        k === 'quantity (Solid)'
+      )
+    );
+
+    if (alreadyPivoted) {
+      return details.map((r) => {
+        const row: Record<string, string> = { ...r };
+        if (!row.productNo && header.productNo) row.productNo = header.productNo;
+        if (!row.productName && header.productName) row.productName = header.productName;
+        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
+        if (!row.season && header.season) row.season = header.season;
+        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
+        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
+        return row;
+      });
+    }
+
+    if (!hasAnySectionType) {
+      return details.map((r) => {
+        const row: Record<string, string> = { ...r };
+        if (!row.productNo && header.productNo) row.productNo = header.productNo;
+        if (!row.productName && header.productName) row.productName = header.productName;
+        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
+        if (!row.season && header.season) row.season = header.season;
+        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
+        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
+        const dc = (row.destinationCountry || row.country || '').trim();
+        if (dc && !isLikelyCountryValue(dc)) {
+          delete row.destinationCountry;
+          delete row.country;
+        }
+        return row;
+      });
+    }
+
+    const baseKeyOf = (r: Record<string, string>) => {
+      const dc = get(r, 'destinationCountry') || get(r, 'country');
+      const keyParts = [
+        dc,
+        get(r, 'colourName'),
+        get(r, 'hmColourCode'),
+        get(r, 'articleNo'),
+        get(r, 'ptArticleNumber'),
+        get(r, 'optionNo'),
+        get(r, 'description'),
+      ];
+      return keyParts.map((x) => x || '').join('||');
+    };
+
+    const outByKey = new Map<string, Record<string, string>>();
+
+    for (let i = 0; i < details.length; i++) {
+      const r = details[i];
+      const sectionTypeRaw = (get(r, 'sectionType') || '').toLowerCase();
+      const section = sectionTypeRaw === 'solid' ? 'Solid' : sectionTypeRaw === 'assortment' ? 'Assortment' : '';
+
+      let baseKey = baseKeyOf(r);
+      if (!baseKey.replace(/\|/g, '').trim()) {
+        const fallback = [get(r, 'articleNo'), get(r, 'hmColourCode'), get(r, 'ptArticleNumber'), get(r, 'colourName')]
+          .filter(Boolean)
+          .join('||');
+        baseKey = fallback ? `__fallback__||${fallback}` : `__row__||${i}`;
+      }
+      if (!outByKey.has(baseKey)) {
+        const dc = get(r, 'destinationCountry') || get(r, 'country');
+        const row: Record<string, string> = {
+          productNo: header.productNo || '',
+          productName: header.productName || '',
+          productDescription: header.productDescription || '',
+          season: header.season || '',
+          supplierCode: header.supplierCode || '',
+          supplierName: header.supplierName || '',
+        };
+
+        if (isLikelyCountryValue(dc)) row.destinationCountry = dc;
+        const colourName = get(r, 'colourName');
+        if (colourName) row.colourName = colourName;
+        const hmColourCode = get(r, 'hmColourCode');
+        if (hmColourCode) row.hmColourCode = hmColourCode;
+        const articleNo = get(r, 'articleNo');
+        if (articleNo) row.articleNo = articleNo;
+        const ptArticleNumber = get(r, 'ptArticleNumber');
+        if (ptArticleNumber) row.ptArticleNumber = ptArticleNumber;
+        const optionNo = get(r, 'optionNo');
+        if (optionNo) row.optionNo = optionNo;
+        const description = get(r, 'description');
+        if (description) row.description = description;
+
+        outByKey.set(baseKey, row);
+      }
+
+      const target = outByKey.get(baseKey)!;
+      const sizes: Array<'XS' | 'S' | 'M' | 'L' | 'XL'> = ['XS', 'S', 'M', 'L', 'XL'];
+      for (const s of sizes) {
+        const v = get(r, s);
+        if (!v) continue;
+        const col = section ? `${s} (${section})` : s;
+        target[col] = v;
+      }
+      const q = get(r, 'quantity');
+      if (q) {
+        const qCol = section ? `quantity (${section})` : 'quantity';
+        target[qCol] = q;
+      }
+    }
+
+    return Array.from(outByKey.values());
   }
 
   function parseAssortmentFromText(extractedText: string): Record<string, string> {
@@ -366,6 +542,8 @@ export function OcrPage() {
   async function analyzeMultipleFiles(files: File[]) {
     if (files.length === 0) return;
 
+    isBatchAnalyzingRef.current = true;
+
     resetAnalyze();
     setAnalyzeData(null);
     setAnalyzeAvgConfidence(null);
@@ -377,9 +555,10 @@ export function OcrPage() {
     let confidenceCount = 0;
     let mergedExtractedText = '';
 
-    for (const f of files) {
-      const startedAt = new Date().toISOString();
-      const roleByName = detectDocRole(f.name);
+    try {
+      for (const f of files) {
+        const startedAt = new Date().toISOString();
+        const roleByName = detectDocRole(f.name);
 
       setAnalyzeTrace((prev) => [
         ...prev,
@@ -470,18 +649,47 @@ export function OcrPage() {
 
       if (role === 'size_breakdown') {
         const rawDetails = d.classified?.salesOrderDetails ?? [];
-        const details = rawDetails.map(normalizeDetailRow);
+        const normalizedDetails = rawDetails.map(normalizeDetailRow);
         const destinationCountryFromText = parseDestinationCountryFromText(d.extractedText ?? '');
+
+        const details = normalizedDetails.map((row) => {
+          const dc = (row.destinationCountry || row.country || '').trim();
+          if (dc && !isLikelyCountryValue(dc)) {
+            const { destinationCountry, country, ...rest } = row;
+            return rest;
+          }
+          if (dc) return row;
+          if (!destinationCountryFromText) return row;
+          if (!isLikelyCountryValue(destinationCountryFromText)) return row;
+          return { ...row, destinationCountry: destinationCountryFromText };
+        });
+
         if (details.length > 0) {
-          merged.salesOrderDetails = details.map((row) => {
-            if (row.destinationCountry || row.country) return row;
-            if (!destinationCountryFromText) return row;
-            return { ...row, destinationCountry: destinationCountryFromText };
-          });
+          const nextDetails = pivotSalesOrderDetails(details, merged.header);
+          if (nextDetails.length > 0) {
+            const prev = merged.salesOrderDetails ?? [];
+            const seen = new Set(prev.map((r) => JSON.stringify(r)));
+            const mergedUnique = [...prev];
+            for (const r of nextDetails) {
+              const key = JSON.stringify(r);
+              if (seen.has(key)) continue;
+              seen.add(key);
+              mergedUnique.push(r);
+            }
+            merged.salesOrderDetails = mergedUnique;
+          }
         } else {
           const fallbackRow = buildDetailRowFromAnalysis(d);
           fallbackDetailKeysCount = Object.keys(fallbackRow).length;
-          merged.salesOrderDetails = fallbackDetailKeysCount > 0 ? [fallbackRow] : [];
+          if (fallbackDetailKeysCount > 0) {
+            const nextDetails = pivotSalesOrderDetails([fallbackRow], merged.header);
+            if (nextDetails.length > 0) {
+              const prev = merged.salesOrderDetails ?? [];
+              if (prev.length === 0) {
+                merged.salesOrderDetails = nextDetails;
+              }
+            }
+          }
         }
       }
 
@@ -527,23 +735,26 @@ export function OcrPage() {
       }
     }
 
-    if (merged) {
-      setDraft(merged);
-      setAnalyzeData({
-        extractedText: mergedExtractedText,
-        lines: [],
-        tables: [],
-        keyValuePairs: [],
-        formFields: {},
-        classified: {
-          salesOrderHeader: { ...merged.header },
-          salesOrderDetails: merged.salesOrderDetails,
-          bomItems: merged.bomItems,
-          unmappedFields: {},
-        },
-        averageConfidence: confidenceCount ? confidenceSum / confidenceCount : 0,
-      });
-      setAnalyzeAvgConfidence(confidenceCount ? confidenceSum / confidenceCount : 0);
+      if (merged) {
+        setDraft(merged);
+        setAnalyzeData({
+          extractedText: mergedExtractedText,
+          lines: [],
+          tables: [],
+          keyValuePairs: [],
+          formFields: {},
+          classified: {
+            salesOrderHeader: { ...merged.header },
+            salesOrderDetails: merged.salesOrderDetails,
+            bomItems: merged.bomItems,
+            unmappedFields: {},
+          },
+          averageConfidence: confidenceCount ? confidenceSum / confidenceCount : 0,
+        });
+        setAnalyzeAvgConfidence(confidenceCount ? confidenceSum / confidenceCount : 0);
+      }
+    } finally {
+      isBatchAnalyzingRef.current = false;
     }
   }
 
@@ -576,6 +787,7 @@ export function OcrPage() {
     if (mode !== 'analyze') return;
     if (!parsedDraft) return;
     if (hasUserEditedDraft) return;
+    if (isBatchAnalyzingRef.current) return;
     setDraft(parsedDraft);
   }, [hasUserEditedDraft, mode, parsedDraft]);
 

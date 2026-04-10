@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -200,6 +201,61 @@ public class OcrService {
                 .build();
     }
 
+    private String tryExtractDestinationCountryFromText(String extractedText, List<TextBlockDto> lines) {
+        String fromLines = tryExtractDestinationCountryFromLines(lines);
+        if (fromLines != null && !fromLines.isBlank()) {
+            return fromLines;
+        }
+        if (extractedText == null || extractedText.isBlank()) {
+            return null;
+        }
+        String[] parts = extractedText.split("\\r?\\n");
+        for (String p : parts) {
+            String v = tryExtractDestinationCountryFromCandidate(p);
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    private String tryExtractDestinationCountryFromLines(List<TextBlockDto> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return null;
+        }
+        for (TextBlockDto b : lines) {
+            if (b == null || b.getText() == null) {
+                continue;
+            }
+            String v = tryExtractDestinationCountryFromCandidate(b.getText());
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    private String tryExtractDestinationCountryFromCandidate(String candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        String s = candidate.trim();
+        if (s.isBlank()) {
+            return null;
+        }
+        String upper = s.toUpperCase(Locale.ROOT);
+        if (upper.equals("XS") || upper.equals("S") || upper.equals("M") || upper.equals("L") || upper.equals("XL")) {
+            return null;
+        }
+        if (upper.startsWith("XS (") || upper.startsWith("S (") || upper.startsWith("M (") || upper.startsWith("L (") || upper.startsWith("XL (")) {
+            return null;
+        }
+        if (s.matches(".*[A-Za-z]{3,}.*\\b[A-Z]{2}\\b\\s*\\([A-Za-z0-9\u2010\u2011\u2012\u2013\u2014-]+\\).*")) {
+            return s;
+        }
+        return null;
+    }
+
     /**
      * Textract DetectDocumentText 응답을 OcrResponse로 변환
      *
@@ -362,6 +418,21 @@ public class OcrService {
 
         for (int i = 0; i < pageResponses.size(); i++) {
             DocumentAnalysisResponse page = pageResponses.get(i);
+
+            String destinationCountry = tryExtractDestinationCountryFromText(page.getExtractedText(), page.getLines());
+            if (destinationCountry != null && !destinationCountry.isBlank()) {
+                tables.add(TableDto.builder()
+                        .tableIndex(tableIndex++)
+                        .rowCount(2)
+                        .columnCount(1)
+                        .cells(List.of())
+                        .rows(List.of(
+                                List.of("destinationCountry"),
+                                List.of(destinationCountry)
+                        ))
+                        .headerToFirstRowMap(Map.of("destinationCountry", destinationCountry))
+                        .build());
+            }
 
             if (i > 0) {
                 extractedText.append("\n\n");

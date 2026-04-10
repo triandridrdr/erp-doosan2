@@ -2,6 +2,7 @@ package com.doosan.erp.ocr.service;
 
 import com.doosan.erp.ocr.dto.ClassifiedDocumentDto;
 import com.doosan.erp.ocr.dto.TableDto;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
+@Slf4j
 public class OcrDocumentClassifier {
 
     public ClassifiedDocumentDto classify(Map<String, String> formFields, List<TableDto> tables) {
@@ -215,16 +217,24 @@ public class OcrDocumentClassifier {
             return lines;
         }
 
+        int scanned = 0;
+        int detectedCountryTables = 0;
+        int detectedHorizontalTables = 0;
+        int detectedAssortmentVerticalTables = 0;
+        int extractedRows = 0;
+
         Map<String, String> ctx = new LinkedHashMap<>();
         String ctxSectionType = null;
 
         for (TableDto t : tables) {
+            scanned++;
             if (t.getRows() == null || t.getRows().size() < 2) {
                 continue;
             }
 
             String country = tryExtractDestinationCountry(t.getRows());
             if (country != null && !country.isBlank()) {
+                detectedCountryTables++;
                 ctx.put("destinationCountry", country);
                 ctx.remove("colourName");
                 ctx.remove("hmColourCode");
@@ -233,7 +243,6 @@ public class OcrDocumentClassifier {
                 ctx.remove("optionNo");
                 ctx.remove("description");
                 ctxSectionType = null;
-                continue;
             }
 
             String sectionType = tryExtractSectionType(t.getRows());
@@ -246,7 +255,23 @@ public class OcrDocumentClassifier {
                 ctx.putAll(headerFields);
             }
 
+            if (looksLikeSizeColourBreakdownHorizontal(t.getRows())) {
+                detectedHorizontalTables++;
+                List<Map<String, String>> extracted = extractSizeColourBreakdownHorizontalRows(t.getRows());
+                for (Map<String, String> m : extracted) {
+                    if (m == null || m.isEmpty()) {
+                        continue;
+                    }
+                    Map<String, String> row = new LinkedHashMap<>(ctx);
+                    row.putAll(m);
+                    lines.add(row);
+                    extractedRows++;
+                }
+                continue;
+            }
+
             if (looksLikeAssortmentTable(t.getRows())) {
+                detectedAssortmentVerticalTables++;
                 List<Map<String, String>> sectionRows = extractAssortmentRows(t.getRows(), ctxSectionType);
                 for (Map<String, String> m : sectionRows) {
                     if (m == null || m.isEmpty()) {
@@ -255,6 +280,7 @@ public class OcrDocumentClassifier {
                     Map<String, String> row = new LinkedHashMap<>(ctx);
                     row.putAll(m);
                     lines.add(row);
+                    extractedRows++;
                 }
                 continue;
             }
@@ -283,11 +309,149 @@ public class OcrDocumentClassifier {
                 }
                 if (!m.isEmpty()) {
                     lines.add(m);
+                    extractedRows++;
                 }
             }
         }
 
+        log.info(
+                "[OCR][Classifier] salesOrderDetails: scannedTables={}, countryTables={}, horizontalTables={}, assortmentVerticalTables={}, extractedRows={}",
+                scanned,
+                detectedCountryTables,
+                detectedHorizontalTables,
+                detectedAssortmentVerticalTables,
+                extractedRows
+        );
+
         return lines;
+    }
+
+    private boolean looksLikeSizeColourBreakdownHorizontal(List<List<String>> rows) {
+        if (rows == null || rows.size() < 2) {
+            return false;
+        }
+        List<String> headers = rows.get(0);
+        if (headers == null || headers.isEmpty()) {
+            return false;
+        }
+        List<String> normalized = normalizeHeaders(headers);
+
+        boolean hasAssortmentOrSolid = normalized.stream().anyMatch(h -> h.contains("assortment") || h.contains("solid"));
+        if (!hasAssortmentOrSolid) {
+            return false;
+        }
+
+        boolean hasSizeCols = normalized.stream().anyMatch(h -> h.startsWith("xs") || h.equals("s") || h.equals("m") || h.equals("l") || h.startsWith("xl"));
+        if (hasSizeCols) {
+            return true;
+        }
+
+        return normalized.stream().anyMatch(h -> (h.contains("assortment") || h.contains("solid")) && (h.contains("xs") || h.contains("xl") || h.equals("s") || h.equals("m") || h.equals("l")));
+    }
+
+    private List<Map<String, String>> extractSizeColourBreakdownHorizontalRows(List<List<String>> rows) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (rows == null || rows.size() < 2) {
+            return out;
+        }
+
+        List<String> headers = rows.get(0);
+        List<String> normalizedHeaders = normalizeHeaders(headers);
+
+        for (int r = 1; r < rows.size(); r++) {
+            List<String> row = rows.get(r);
+            if (row == null || row.stream().allMatch(v -> v == null || v.isBlank())) {
+                continue;
+            }
+
+            Map<String, String> m = new LinkedHashMap<>();
+            for (int c = 0; c < normalizedHeaders.size() && c < row.size(); c++) {
+                String h = normalizedHeaders.get(c);
+                if (h == null || h.isBlank()) {
+                    continue;
+                }
+                String v = row.get(c);
+                if (v == null || v.isBlank()) {
+                    continue;
+                }
+
+                String key = toSizeColourOutputKey(h);
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                m.put(key, v.trim());
+            }
+
+            if (!m.isEmpty()) {
+                out.add(m);
+            }
+        }
+
+        return out;
+    }
+
+    private String toSizeColourOutputKey(String normalizedHeader) {
+        if (normalizedHeader == null || normalizedHeader.isBlank()) {
+            return null;
+        }
+
+        String h = normalizedHeader.trim();
+
+        if (h.contains("product no") || h.equals("productno") || h.equals("product no")) {
+            return "productNo";
+        }
+        if (h.contains("product name") || h.equals("productname") || h.equals("product name")) {
+            return "productName";
+        }
+        if (h.contains("product description") || h.contains("productdesc") || h.contains("product description")) {
+            return "productDescription";
+        }
+        if (h.equals("season") || h.contains("season")) {
+            return "season";
+        }
+        if (h.contains("supplier code") || h.equals("suppliercode") || h.equals("supplier code")) {
+            return "supplierCode";
+        }
+        if (h.contains("supplier name") || h.equals("suppliername") || h.equals("supplier name")) {
+            return "supplierName";
+        }
+        if (h.contains("destination") && h.contains("country")) {
+            return "destinationCountry";
+        }
+        if (h.contains("colour name") || h.contains("color name")) {
+            return "colourName";
+        }
+
+        String section = null;
+        if (h.contains("assortment")) {
+            section = "Assortment";
+        }
+        if (h.contains("solid")) {
+            section = "Solid";
+        }
+
+        String size = null;
+        if (h.startsWith("xs") || h.contains("xs (xs")) {
+            size = "XS";
+        } else if (h.equals("s") || h.startsWith("s (") || h.contains(" s")) {
+            size = "S";
+        } else if (h.equals("m") || h.startsWith("m (") || h.contains(" m")) {
+            size = "M";
+        } else if (h.equals("l") || h.startsWith("l (") || h.contains(" l")) {
+            size = "L";
+        } else if (h.startsWith("xl") || h.contains("xl (xl")) {
+            size = "XL";
+        }
+
+        if (size != null) {
+            return section != null ? (size + " (" + section + ")") : size;
+        }
+
+        if (h.contains("quantity") || h.contains("qty") || h.equals("q'ty")) {
+            return section != null ? ("quantity (" + section + ")") : "quantity";
+        }
+
+        return null;
     }
 
     private String tryExtractDestinationCountry(List<List<String>> rows) {
@@ -299,14 +463,35 @@ public class OcrDocumentClassifier {
             if (row == null || row.isEmpty()) {
                 continue;
             }
+
+            StringBuilder joinedRow = new StringBuilder();
             for (String cell : row) {
                 if (cell == null || cell.isBlank()) {
                     continue;
                 }
                 String s = cell.trim();
-                if (s.matches(".*\\b[A-Z]{2}\\b\\s*\\([A-Za-z0-9\u2010\u2011\u2012\u2013\u2014-]+\\).*")) {
+
+                String normalized = normalizeKey(s);
+                if (normalized.equals("xs") || normalized.equals("s") || normalized.equals("m") || normalized.equals("l") || normalized.equals("xl")) {
+                    continue;
+                }
+                if (normalized.startsWith("xs (") || normalized.startsWith("xl (") || normalized.startsWith("s (") || normalized.startsWith("m (") || normalized.startsWith("l (")) {
+                    continue;
+                }
+
+                if (s.matches(".*[A-Za-z]{3,}.*\\b[A-Z]{2}\\b\\s*\\([A-Za-z0-9\u2010\u2011\u2012\u2013\u2014-]+\\).*")) {
                     return s;
                 }
+
+                if (joinedRow.length() > 0) {
+                    joinedRow.append(' ');
+                }
+                joinedRow.append(s);
+            }
+
+            String joined = joinedRow.toString().trim();
+            if (!joined.isBlank() && joined.matches(".*[A-Za-z]{3,}.*\\b[A-Z]{2}\\b\\s*\\([A-Za-z0-9\u2010\u2011\u2012\u2013\u2014-]+\\).*")) {
+                return joined;
             }
         }
         return null;
