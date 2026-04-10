@@ -55,7 +55,38 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
       if (k && k.trim()) cols.add(k);
     }
   }
-  return Array.from(cols);
+
+  const preferred = [
+    'destinationCountry',
+    'country',
+    'sectionType',
+    'colourName',
+    'hmColourCode',
+    'articleNo',
+    'ptArticleNumber',
+    'optionNo',
+    'description',
+    'finishedGood',
+    'style',
+    'unitPrice',
+    'XS',
+    'S',
+    'M',
+    'L',
+    'XL',
+    'quantity',
+  ];
+
+  const ordered: string[] = [];
+  for (const k of preferred) {
+    if (cols.has(k)) ordered.push(k);
+  }
+
+  const remaining = Array.from(cols)
+    .filter((k) => !preferred.includes(k))
+    .sort((a, b) => a.localeCompare(b));
+
+  return [...ordered, ...remaining];
 }
 
 function getFirstValue(row: Record<string, string>, keys: string[]): string {
@@ -81,10 +112,36 @@ export function OcrPage() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<OcrMode>('extract'); // 현재 선택된 모드
   const [selectedFile, setSelectedFile] = useState<File | null>(null); // 업로드된 파일
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 이미지 미리보기 URL
 
   const [draft, setDraft] = useState<GarmentSalesOrderDraft | null>(null);
   const [hasUserEditedDraft, setHasUserEditedDraft] = useState(false);
+
+  const [analyzeData, setAnalyzeData] = useState<DocumentAnalysisResponseData | null>(null);
+  const [analyzeAvgConfidence, setAnalyzeAvgConfidence] = useState<number | null>(null);
+
+  type AnalyzeTraceEntry = {
+    fileName: string;
+    fileSize: number;
+    fileType: string;
+    startedAt: string;
+    finishedAt?: string;
+    status: 'sending' | 'success' | 'error';
+    errorMessage?: string;
+    roleByName: 'supplementary' | 'size_breakdown' | 'unknown';
+    roleByContent?: 'supplementary' | 'size_breakdown' | 'unknown';
+    roleFinal?: 'supplementary' | 'size_breakdown' | 'unknown';
+    extractedTextLength?: number;
+    tablesCount?: number;
+    keyValuePairsCount?: number;
+    classifiedDetailsCount?: number;
+    classifiedBomCount?: number;
+    fallbackDetailKeysCount?: number;
+    assortmentDetected?: boolean;
+  };
+
+  const [analyzeTrace, setAnalyzeTrace] = useState<AnalyzeTraceEntry[]>([]);
 
   // 텍스트 추출 Mutation
   const {
@@ -99,18 +156,396 @@ export function OcrPage() {
 
   // 문서 분석 Mutation
   const {
-    mutate: analyzeDoc,
+    mutateAsync: analyzeDocAsync,
     isPending: isAnalyzePending,
-    data: analyzeResult,
     error: analyzeError,
     reset: resetAnalyze,
   } = useMutation({
     mutationFn: ocrApi.analyze,
+    onSuccess: (res) => {
+      setAnalyzeData(res.data);
+      setAnalyzeAvgConfidence(res.data.averageConfidence);
+    },
   });
 
   const isPending = isExtractPending || isAnalyzePending;
 
-  const analyzedData = analyzeResult?.data ?? null;
+  const analyzedData = analyzeData;
+
+  function detectDocRole(fileName: string): 'supplementary' | 'size_breakdown' | 'unknown' {
+    const n = fileName.toLowerCase();
+    if (n.includes('supplementary') || n.includes('supplement')) return 'supplementary';
+    if (n.includes('sizepercolour') || n.includes('size per colour') || n.includes('sizepercolor') || n.includes('breakdown')) {
+      return 'size_breakdown';
+    }
+    return 'unknown';
+  }
+
+  function detectDocRoleFromContent(d: DocumentAnalysisResponseData): 'supplementary' | 'size_breakdown' | 'unknown' {
+    const text = (d.extractedText ?? '').toLowerCase();
+
+    const hasSizeColour =
+      text.includes('size / colour breakdown') ||
+      text.includes('size/colour breakdown') ||
+      text.includes('size / color breakdown') ||
+      text.includes('size/color breakdown') ||
+      text.includes('assortment') ||
+      text.includes('h&m colour code') ||
+      text.includes('hm colour code') ||
+      text.includes('colour name') ||
+      text.includes('pt article number');
+
+    if (hasSizeColour) return 'size_breakdown';
+
+    const fields = Object.keys(d.formFields ?? {}).join(' ').toLowerCase();
+    const hasSizeColourFields =
+      fields.includes('h&m') ||
+      fields.includes('hm') ||
+      fields.includes('colour') ||
+      fields.includes('color') ||
+      fields.includes('assortment') ||
+      fields.includes('article');
+
+    if (hasSizeColourFields) return 'size_breakdown';
+
+    return 'unknown';
+  }
+
+  function normalizeDetailRow(row: Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {};
+    const lowerEntries = Object.entries(row).map(([k, v]) => [k.trim().toLowerCase(), v] as const);
+
+    const pick = (aliases: string[]) => {
+      for (const a of aliases) {
+        const found = lowerEntries.find(([k]) => k === a);
+        if (found && typeof found[1] === 'string' && found[1].trim()) return found[1].trim();
+      }
+      return '';
+    };
+
+    const country = pick(['country', 'destination country', 'country of destination', 'destination', 'tujuan negara', '국가']);
+    const articleNo = pick(['article no', 'article number', 'article', 'article_no', 'article no.']);
+    const hmColourCode = pick(['h&m colour code', 'hm colour code', 'h&m color code', 'hm color code', 'colour code', 'color code']);
+    const colourName = pick(['colour name', 'color name', 'colour', 'color']);
+    const ptArticleNumber = pick(['pt article number', 'pt article no', 'pt article no.', 'pt article', 'pt article #']);
+    const optionNo = pick(['option no', 'option number', 'option', 'option_no', 'option no.']);
+    const description = pick(['description', 'desc', 'item description', 'product description']);
+    const finishedGood = pick(['finished good', 'finishedgoods', 'fg', 'finished_good', 'finishedgood']);
+    const style = pick(['style', 'style no', 'styleno', 'style_no']);
+    const quantity = pick(['quantity', 'qty', 'q\'ty', 'total qty', 'total quantity', '수량']);
+    const destinationCountry = pick(['destination country', 'country of destination', 'destination', 'tujuan negara', '국가']);
+    const unitPrice = pick(['unit price', 'unitprice', 'u/price', 'price', '단가']);
+
+    const sizeXS = pick(['xs', 'xs (xs)', 'xs (xs)*', 'xsmall', 'x-small']);
+    const sizeS = pick(['s', 's (s)', 's (s)*', 'small']);
+    const sizeM = pick(['m', 'm (m)', 'm (m)*', 'medium']);
+    const sizeL = pick(['l', 'l (l)', 'l (l)*', 'large']);
+    const sizeXL = pick(['xl', 'xl (xl)', 'xl (xl)*', 'xlarge', 'x-large']);
+
+    if (country) out.country = country;
+    if (articleNo) out.articleNo = articleNo;
+    if (hmColourCode) out.hmColourCode = hmColourCode;
+    if (colourName) out.colourName = colourName;
+    if (ptArticleNumber) out.ptArticleNumber = ptArticleNumber;
+    if (optionNo) out.optionNo = optionNo;
+    if (description) out.description = description;
+    if (finishedGood) out.finishedGood = finishedGood;
+    if (style) out.style = style;
+    if (quantity) out.quantity = quantity;
+    if (destinationCountry) out.destinationCountry = destinationCountry;
+    if (unitPrice) out.unitPrice = unitPrice;
+
+    if (sizeXS) out.XS = sizeXS;
+    if (sizeS) out.S = sizeS;
+    if (sizeM) out.M = sizeM;
+    if (sizeL) out.L = sizeL;
+    if (sizeXL) out.XL = sizeXL;
+
+    for (const [k, v] of Object.entries(row)) {
+      if (typeof v !== 'string') continue;
+      if (out[k] !== undefined) continue;
+      if (Object.prototype.hasOwnProperty.call(out, k)) continue;
+      out[k] = v;
+    }
+
+    return out;
+  }
+
+  function parseDestinationCountryFromText(extractedText: string): string {
+    const lines = extractedText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const idx = lines.findIndex((l) => l.toLowerCase().includes('size / colour breakdown') || l.toLowerCase().includes('size/colour breakdown'));
+    if (idx >= 0) {
+      const next = lines[idx + 1];
+      if (next && /\b[A-Z]{2}\b\s*\([A-Z0-9]+\)/.test(next)) {
+        return next;
+      }
+    }
+
+    const match = lines.find((l) => /\b[A-Z]{2}\b\s*\([A-Z0-9]+\)/.test(l));
+    return match ?? '';
+  }
+
+  function parseAssortmentFromText(extractedText: string): Record<string, string> {
+    const lines = extractedText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const idx = lines.findIndex((l) => l.toLowerCase() === 'assortment' || l.toLowerCase().startsWith('assortment'));
+    if (idx < 0) return {};
+
+    const out: Record<string, string> = {};
+
+    for (let i = idx + 1; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^(quantity:|no of|article no|h&m|colour name|description|size\s*\/\s*colour)/i.test(l)) break;
+
+      const m = l.match(/^(XS|S|M|L|XL)\b.*?\s(\d+(?:\.\d+)?)$/i);
+      if (m) {
+        const size = m[1].toUpperCase();
+        out[size] = m[2];
+        continue;
+      }
+
+      const qty = l.match(/^quantity\s*:\s*(\d+(?:\.\d+)?)/i);
+      if (qty) {
+        out.quantity = qty[1];
+        break;
+      }
+    }
+
+    return out;
+  }
+
+  function buildDetailRowFromAnalysis(d: DocumentAnalysisResponseData): Record<string, string> {
+    const mergedFields: Record<string, string> = {
+      ...(d.formFields ?? {}),
+    };
+
+    for (const kv of d.keyValuePairs ?? []) {
+      const k = (kv.key ?? '').toString().trim();
+      const v = (kv.value ?? '').toString().trim();
+      if (!k || !v) continue;
+      if (mergedFields[k] === undefined) mergedFields[k] = v;
+    }
+
+    const row: Record<string, string> = {
+      country: getFirstValue(mergedFields, ['Country', 'Destination Country', 'Country of Destination', 'Destination', 'Tujuan Negara', '국가']),
+      articleNo: getFirstValue(mergedFields, ['Article No', 'Article No.', 'Article Number', 'Article']),
+      hmColourCode: getFirstValue(mergedFields, ['H&M Colour Code', 'HM Colour Code', 'H&M Color Code', 'HM Color Code', 'Colour Code', 'Color Code']),
+      colourName: getFirstValue(mergedFields, ['Colour Name', 'Color Name', 'Colour', 'Color']),
+      ptArticleNumber: getFirstValue(mergedFields, ['PT Article Number', 'PT Article No', 'PT Article No.', 'PT Article']),
+      optionNo: getFirstValue(mergedFields, ['Option No', 'Option No.', 'Option Number', 'Option']),
+      description: getFirstValue(mergedFields, ['Description', 'Desc']),
+      quantity: getFirstValue(mergedFields, ['Quantity', 'Qty', 'QTY', '수량']),
+      unitPrice: getFirstValue(mergedFields, ['Unit Price', 'UnitPrice', 'Price', '단가']),
+      style: getFirstValue(mergedFields, ['Style', 'Style No', 'Style No.']),
+      finishedGood: getFirstValue(mergedFields, ['Finished Good', 'FG']),
+    };
+
+    const destinationCountry = getFirstValue(mergedFields, ['Destination Country', 'Country of Destination', 'Destination', 'Tujuan Negara', '국가']);
+    const destinationCountryFromText = parseDestinationCountryFromText(d.extractedText ?? '');
+    const resolvedDestinationCountry = (destinationCountry || destinationCountryFromText).trim();
+    if (resolvedDestinationCountry) row.destinationCountry = resolvedDestinationCountry;
+
+    const assortmentFromText = parseAssortmentFromText(d.extractedText ?? '');
+    if (assortmentFromText.XS) row.XS = assortmentFromText.XS;
+    if (assortmentFromText.S) row.S = assortmentFromText.S;
+    if (assortmentFromText.M) row.M = assortmentFromText.M;
+    if (assortmentFromText.L) row.L = assortmentFromText.L;
+    if (assortmentFromText.XL) row.XL = assortmentFromText.XL;
+    if (assortmentFromText.quantity && !row.quantity) row.quantity = assortmentFromText.quantity;
+
+    return Object.fromEntries(Object.entries(row).filter(([, v]) => typeof v === 'string' && v.trim().length > 0));
+  }
+
+  async function analyzeMultipleFiles(files: File[]) {
+    if (files.length === 0) return;
+
+    resetAnalyze();
+    setAnalyzeData(null);
+    setAnalyzeAvgConfidence(null);
+    setHasUserEditedDraft(false);
+    setAnalyzeTrace([]);
+
+    let merged: GarmentSalesOrderDraft | null = null;
+    let confidenceSum = 0;
+    let confidenceCount = 0;
+    let mergedExtractedText = '';
+
+    for (const f of files) {
+      const startedAt = new Date().toISOString();
+      const roleByName = detectDocRole(f.name);
+
+      setAnalyzeTrace((prev) => [
+        ...prev,
+        {
+          fileName: f.name,
+          fileSize: f.size,
+          fileType: f.type,
+          startedAt,
+          status: 'sending',
+          roleByName,
+        },
+      ]);
+
+      console.log('[OCR][Analyze] sending file', { name: f.name, size: f.size, type: f.type, roleByName });
+
+      try {
+        const res = await analyzeDocAsync(f);
+        const d = res.data;
+        const roleByContent = roleByName === 'unknown' ? detectDocRoleFromContent(d) : roleByName;
+        const roleFinal = roleByName === 'unknown' ? roleByContent : roleByName;
+
+        const assortmentDetected = (d.extractedText ?? '').toLowerCase().includes('assortment');
+        let fallbackDetailKeysCount: number | undefined = undefined;
+
+        console.log('[OCR][Analyze] response summary', {
+          name: f.name,
+          avgConfidence: d.averageConfidence,
+          extractedTextLength: (d.extractedText ?? '').length,
+          tables: d.tables?.length ?? 0,
+          keyValuePairs: d.keyValuePairs?.length ?? 0,
+          classifiedDetails: d.classified?.salesOrderDetails?.length ?? 0,
+          classifiedBom: d.classified?.bomItems?.length ?? 0,
+          roleByContent,
+          roleFinal,
+        });
+
+        confidenceSum += d.averageConfidence;
+        confidenceCount += 1;
+        mergedExtractedText += (mergedExtractedText ? '\n\n' : '') + d.extractedText;
+
+        if (!merged) {
+          merged = {
+            header: {
+              orderNo: '',
+              dateOfOrder: '',
+              supplierCode: '',
+              supplierName: '',
+              productNo: '',
+              productName: '',
+              productType: '',
+              productDescription: '',
+              season: '',
+              optionNo: '',
+              developmentNo: '',
+              productDevName: '',
+              customsCustomerGroup: '',
+              typeOfConstruction: '',
+              remarks: '',
+            },
+            salesOrderDetails: [],
+            bomItems: [],
+          };
+        }
+
+        const role = roleFinal;
+
+      if (role === 'supplementary' || role === 'unknown') {
+        const header = d.classified?.salesOrderHeader ?? {};
+        merged.header = {
+          ...merged.header,
+          orderNo: header.orderNo ?? merged.header.orderNo,
+          dateOfOrder: header.dateOfOrder ?? merged.header.dateOfOrder,
+          supplierCode: header.supplierCode ?? merged.header.supplierCode,
+          supplierName: header.supplierName ?? merged.header.supplierName,
+          productNo: header.productNo ?? merged.header.productNo,
+          productName: header.productName ?? merged.header.productName,
+          productType: header.productType ?? merged.header.productType,
+          productDescription: header.productDescription ?? merged.header.productDescription,
+          season: header.season ?? merged.header.season,
+          optionNo: header.optionNo ?? merged.header.optionNo,
+          developmentNo: header.developmentNo ?? merged.header.developmentNo,
+          productDevName: header.productDevName ?? merged.header.productDevName,
+          customsCustomerGroup: header.customsCustomerGroup ?? merged.header.customsCustomerGroup,
+          typeOfConstruction: header.typeOfConstruction ?? merged.header.typeOfConstruction,
+        };
+        merged.bomItems = d.classified?.bomItems ?? merged.bomItems;
+      }
+
+      if (role === 'size_breakdown') {
+        const rawDetails = d.classified?.salesOrderDetails ?? [];
+        const details = rawDetails.map(normalizeDetailRow);
+        const destinationCountryFromText = parseDestinationCountryFromText(d.extractedText ?? '');
+        if (details.length > 0) {
+          merged.salesOrderDetails = details.map((row) => {
+            if (row.destinationCountry || row.country) return row;
+            if (!destinationCountryFromText) return row;
+            return { ...row, destinationCountry: destinationCountryFromText };
+          });
+        } else {
+          const fallbackRow = buildDetailRowFromAnalysis(d);
+          fallbackDetailKeysCount = Object.keys(fallbackRow).length;
+          merged.salesOrderDetails = fallbackDetailKeysCount > 0 ? [fallbackRow] : [];
+        }
+      }
+
+        const finishedAt = new Date().toISOString();
+        setAnalyzeTrace((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((x) => x.fileName === f.name && x.startedAt === startedAt);
+          if (idx >= 0) {
+            next[idx] = {
+              ...next[idx],
+              status: 'success',
+              finishedAt,
+              roleByContent,
+              roleFinal,
+              extractedTextLength: (d.extractedText ?? '').length,
+              tablesCount: d.tables?.length ?? 0,
+              keyValuePairsCount: d.keyValuePairs?.length ?? 0,
+              classifiedDetailsCount: d.classified?.salesOrderDetails?.length ?? 0,
+              classifiedBomCount: d.classified?.bomItems?.length ?? 0,
+              fallbackDetailKeysCount,
+              assortmentDetected,
+            };
+          }
+          return next;
+        });
+      } catch (err) {
+        const finishedAt = new Date().toISOString();
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[OCR][Analyze] error analyzing file', { name: f.name, message });
+        setAnalyzeTrace((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((x) => x.fileName === f.name && x.startedAt === startedAt);
+          if (idx >= 0) {
+            next[idx] = {
+              ...next[idx],
+              status: 'error',
+              finishedAt,
+              errorMessage: message,
+            };
+          }
+          return next;
+        });
+      }
+    }
+
+    if (merged) {
+      setDraft(merged);
+      setAnalyzeData({
+        extractedText: mergedExtractedText,
+        lines: [],
+        tables: [],
+        keyValuePairs: [],
+        formFields: {},
+        classified: {
+          salesOrderHeader: { ...merged.header },
+          salesOrderDetails: merged.salesOrderDetails,
+          bomItems: merged.bomItems,
+          unmappedFields: {},
+        },
+        averageConfidence: confidenceCount ? confidenceSum / confidenceCount : 0,
+      });
+      setAnalyzeAvgConfidence(confidenceCount ? confidenceSum / confidenceCount : 0);
+    }
+  }
 
   const parsedDraft = useMemo<GarmentSalesOrderDraft | null>(() => {
     if (!analyzedData?.classified?.salesOrderHeader) return null;
@@ -244,31 +679,42 @@ export function OcrPage() {
   const handleModeChange = (newMode: OcrMode) => {
     setMode(newMode);
     // 모드 변경 시 이전 결과 초기화
-    if (newMode === 'extract') resetAnalyze();
-    else resetExtract();
+    if (newMode === 'extract') {
+      resetAnalyze();
+      setAnalyzeData(null);
+      setAnalyzeAvgConfidence(null);
+    } else {
+      resetExtract();
+    }
   };
 
   // 파일 선택 핸들러
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setSelectedFile(file);
-      setPreviewUrl(URL.createObjectURL(file)); // 미리보기 URL 생성
-      // 파일 변경 시 이전 결과 초기화
-      resetExtract();
-      resetAnalyze();
-    }
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    const files = Array.from(e.target.files);
+    const first = files[0] ?? null;
+
+    setSelectedFiles(files);
+    setSelectedFile(first);
+    if (first) setPreviewUrl(URL.createObjectURL(first));
+
+    resetExtract();
+    resetAnalyze();
+    setAnalyzeData(null);
+    setAnalyzeAvgConfidence(null);
   };
 
   // 처리 시작 핸들러
   const handleProcess = () => {
-    if (selectedFile) {
-      if (mode === 'extract') {
-        extractText(selectedFile);
-      } else {
-        analyzeDoc(selectedFile);
-      }
+    if (mode === 'extract') {
+      if (selectedFile) extractText(selectedFile);
+      return;
     }
+
+    const files = selectedFiles.length > 0 ? selectedFiles : selectedFile ? [selectedFile] : [];
+    if (files.length === 0) return;
+    void analyzeMultipleFiles(files);
   };
 
   // 문서 분석 결과 렌더링 함수
@@ -996,10 +1442,37 @@ export function OcrPage() {
                 <input
                   type='file'
                   accept='image/*,application/pdf'
+                  multiple={mode === 'analyze'}
                   onChange={handleFileChange}
                   className='absolute inset-0 w-full h-full opacity-0 cursor-pointer'
                 />
-                {!selectedFile ? (
+                {mode === 'analyze' ? (
+                  selectedFiles.length === 0 ? (
+                    <div className='text-center text-gray-500'>
+                      <FileText className='w-12 h-12 mx-auto mb-3 text-gray-400' />
+                      <p className='text-sm font-medium'>Drag files here, or click to select</p>
+                      <p className='text-xs mt-1 text-gray-400'>PDFs: Supplementary + SizePerColourBreakdown_Supplier</p>
+                    </div>
+                  ) : (
+                    <div className='text-center'>
+                      <p className='text-sm font-medium text-gray-900 mb-2'>Selected files ({selectedFiles.length})</p>
+                      <div className='mt-2 space-y-1'>
+                        {selectedFiles.slice(0, 4).map((f) => (
+                          <p
+                            key={f.name}
+                            className='text-xs text-gray-500 bg-white px-3 py-1 rounded border border-gray-200 inline-block'
+                          >
+                            {f.name}
+                          </p>
+                        ))}
+                        {selectedFiles.length > 4 && (
+                          <p className='text-xs text-gray-400'>+{selectedFiles.length - 4} more</p>
+                        )}
+                      </div>
+                      <p className='text-xs text-gray-400 mt-3'>Click to choose different files</p>
+                    </div>
+                  )
+                ) : !selectedFile ? (
                   <div className='text-center text-gray-500'>
                     <FileText className='w-12 h-12 mx-auto mb-3 text-gray-400' />
                     <p className='text-sm font-medium'>Drag a file here, or click to select</p>
@@ -1033,7 +1506,7 @@ export function OcrPage() {
           <div className='mt-6 flex justify-end'>
             <Button
               onClick={handleProcess}
-              disabled={!selectedFile || isPending}
+              disabled={(mode === 'extract' ? !selectedFile : selectedFiles.length === 0) || isPending}
               className={`w-full sm:w-auto h-12 px-8 text-base ${mode === 'analyze' ? 'bg-indigo-600 hover:bg-indigo-700' : ''}`}
             >
               {isPending ? (
@@ -1042,7 +1515,7 @@ export function OcrPage() {
                   {mode === 'extract' ? 'Extracting text...' : 'Analyzing document...'}
                 </>
               ) : (
-                <>{mode === 'extract' ? 'Extract text' : 'Analyze tables and data'}</>
+                <>{mode === 'extract' ? 'Extract text' : 'Analyze files and merge'}</>
               )}
             </Button>
           </div>
@@ -1067,8 +1540,8 @@ export function OcrPage() {
         <div>
           {/* Analyze 모드 결과 */}
           {mode === 'analyze' && (
-            <div className={`transition-all duration-500 ${analyzeResult ? 'opacity-100' : 'opacity-0'}`}>
-              {analyzeResult?.data && (
+            <div className={`transition-all duration-500 ${analyzeData ? 'opacity-100' : 'opacity-0'}`}>
+              {analyzeData && (
                 <div className='bg-white p-8 rounded-lg shadow-sm border border-gray-200'>
                   <div className='flex items-center justify-between mb-6'>
                     <h2 className='text-xl font-bold text-gray-900 flex items-center'>
@@ -1076,11 +1549,59 @@ export function OcrPage() {
                       Results
                     </h2>
                     <span className='text-sm font-medium text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100'>
-                      Avg. confidence: {analyzeResult.data.averageConfidence.toFixed(1)}%
+                      Avg. confidence: {(analyzeAvgConfidence ?? analyzeData.averageConfidence).toFixed(1)}%
                     </span>
                   </div>
 
-                  {renderAnalysisResult(analyzeResult.data)}
+                  <details className='mb-6 rounded-lg border border-gray-200 bg-gray-50/40 px-4 py-3'>
+                    <summary className='cursor-pointer text-sm font-semibold text-gray-800'>Debug trace (per file)</summary>
+                    <div className='mt-3 overflow-auto'>
+                      {analyzeTrace.length === 0 ? (
+                        <div className='text-sm text-gray-500 italic'>No trace yet. Run Analyze.</div>
+                      ) : (
+                        <table className='min-w-full border border-gray-200 bg-white'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>File</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Status</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Role</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>Text len</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>Tables</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>KV</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>Details</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>BoM</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>Fallback keys</th>
+                              <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200'>Assortment</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {analyzeTrace.map((t) => (
+                              <tr key={`${t.fileName}-${t.startedAt}`} className='border-b border-gray-100 last:border-b-0'>
+                                <td className='px-3 py-2 text-xs text-gray-800 whitespace-nowrap'>{t.fileName}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 whitespace-nowrap'>
+                                  {t.status}
+                                  {t.status === 'error' && t.errorMessage ? `: ${t.errorMessage}` : ''}
+                                </td>
+                                <td className='px-3 py-2 text-xs text-gray-800 whitespace-nowrap'>
+                                  {t.roleFinal ?? t.roleByName}
+                                  {t.roleByName === 'unknown' && t.roleByContent ? ` (content: ${t.roleByContent})` : ''}
+                                </td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.extractedTextLength ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.tablesCount ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.keyValuePairsCount ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.classifiedDetailsCount ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.classifiedBomCount ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.fallbackDetailKeysCount ?? '-'}</td>
+                                <td className='px-3 py-2 text-xs text-gray-800 text-right'>{t.assortmentDetected === undefined ? '-' : t.assortmentDetected ? 'yes' : 'no'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </details>
+
+                  {renderAnalysisResult(analyzeData)}
                 </div>
               )}
             </div>

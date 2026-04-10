@@ -215,8 +215,47 @@ public class OcrDocumentClassifier {
             return lines;
         }
 
+        Map<String, String> ctx = new LinkedHashMap<>();
+        String ctxSectionType = null;
+
         for (TableDto t : tables) {
             if (t.getRows() == null || t.getRows().size() < 2) {
+                continue;
+            }
+
+            String country = tryExtractDestinationCountry(t.getRows());
+            if (country != null && !country.isBlank()) {
+                ctx.put("destinationCountry", country);
+                ctx.remove("colourName");
+                ctx.remove("hmColourCode");
+                ctx.remove("articleNo");
+                ctx.remove("ptArticleNumber");
+                ctx.remove("optionNo");
+                ctx.remove("description");
+                ctxSectionType = null;
+                continue;
+            }
+
+            String sectionType = tryExtractSectionType(t.getRows());
+            if (sectionType != null) {
+                ctxSectionType = sectionType;
+            }
+
+            Map<String, String> headerFields = tryExtractSizeColourHeaderFields(t.getRows());
+            if (!headerFields.isEmpty()) {
+                ctx.putAll(headerFields);
+            }
+
+            if (looksLikeAssortmentTable(t.getRows())) {
+                List<Map<String, String>> sectionRows = extractAssortmentRows(t.getRows(), ctxSectionType);
+                for (Map<String, String> m : sectionRows) {
+                    if (m == null || m.isEmpty()) {
+                        continue;
+                    }
+                    Map<String, String> row = new LinkedHashMap<>(ctx);
+                    row.putAll(m);
+                    lines.add(row);
+                }
                 continue;
             }
 
@@ -249,6 +288,235 @@ public class OcrDocumentClassifier {
         }
 
         return lines;
+    }
+
+    private String tryExtractDestinationCountry(List<List<String>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+
+        for (List<String> row : rows) {
+            if (row == null || row.isEmpty()) {
+                continue;
+            }
+            for (String cell : row) {
+                if (cell == null || cell.isBlank()) {
+                    continue;
+                }
+                String s = cell.trim();
+                if (s.matches(".*\\b[A-Z]{2}\\b\\s*\\([A-Za-z0-9\u2010\u2011\u2012\u2013\u2014-]+\\).*")) {
+                    return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String tryExtractSectionType(List<List<String>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+
+        for (List<String> row : rows) {
+            if (row == null || row.isEmpty()) {
+                continue;
+            }
+            String first = row.get(0);
+            String k = normalizeKey(first);
+            if (k.equals("assortment")) {
+                return "Assortment";
+            }
+            if (k.equals("solid")) {
+                return "Solid";
+            }
+        }
+        return null;
+    }
+
+    private Map<String, String> tryExtractSizeColourHeaderFields(List<List<String>> rows) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+
+        int hits = 0;
+        for (List<String> row : rows) {
+            if (row == null || row.size() < 2) {
+                continue;
+            }
+            String keyCell = row.get(0);
+            if (keyCell == null || keyCell.isBlank()) {
+                continue;
+            }
+            String key = normalizeKey(keyCell);
+            if (!key.endsWith("no") && !key.endsWith("code") && !key.endsWith("name") && !key.contains("description") && !key.contains("article")) {
+                continue;
+            }
+
+            String value = findLastNonBlank(row);
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+
+            if (key.contains("colour name") || key.contains("color name")) {
+                out.put("colourName", value.trim());
+                hits++;
+                continue;
+            }
+            if (key.contains("h&m") && key.contains("colour") && key.contains("code")) {
+                out.put("hmColourCode", value.trim());
+                hits++;
+                continue;
+            }
+            if (key.contains("article") && key.contains("no")) {
+                out.put("articleNo", value.trim());
+                hits++;
+                continue;
+            }
+            if (key.contains("pt") && key.contains("article") && (key.contains("no") || key.contains("number"))) {
+                out.put("ptArticleNumber", value.trim());
+                hits++;
+                continue;
+            }
+            if (key.contains("option") && key.contains("no")) {
+                out.put("optionNo", value.trim());
+                hits++;
+                continue;
+            }
+            if (key.contains("description")) {
+                out.put("description", value.trim());
+                hits++;
+            }
+        }
+
+        return hits >= 2 ? out : new LinkedHashMap<>();
+    }
+
+    private boolean looksLikeAssortmentTable(List<List<String>> rows) {
+        if (rows == null || rows.size() < 2) {
+            return false;
+        }
+
+        int hits = 0;
+        for (List<String> row : rows) {
+            if (row == null || row.isEmpty()) {
+                continue;
+            }
+            String first = row.get(0);
+            String k = normalizeKey(first);
+            if (k.isBlank()) {
+                continue;
+            }
+            if (k.startsWith("xs") || k.equals("s") || k.equals("m") || k.equals("l") || k.startsWith("xl")) {
+                hits++;
+            }
+            if (k.startsWith("quantity")) {
+                hits++;
+            }
+            if (hits >= 3) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private List<Map<String, String>> extractAssortmentRows(List<List<String>> rows, String initialSectionType) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+
+        String currentSectionType = initialSectionType;
+        Map<String, String> current = new LinkedHashMap<>();
+        if (currentSectionType != null && !currentSectionType.isBlank()) {
+            current.put("sectionType", currentSectionType);
+        }
+
+        for (List<String> row : rows) {
+            if (row == null || row.isEmpty()) {
+                continue;
+            }
+            String first = row.get(0);
+            String k = normalizeKey(first);
+            if (k.isBlank()) {
+                continue;
+            }
+
+            if (k.equals("assortment") || k.equals("solid")) {
+                if (hasSizeOrQty(current)) {
+                    out.add(current);
+                }
+                current = new LinkedHashMap<>();
+                currentSectionType = k.equals("assortment") ? "Assortment" : "Solid";
+                current.put("sectionType", currentSectionType);
+                continue;
+            }
+
+            String last = findLastNonBlank(row);
+            if (last == null || last.isBlank()) {
+                continue;
+            }
+
+            String size = normalizeAssortmentSizeKey(k);
+            if (size != null) {
+                current.put(size, last.trim());
+                continue;
+            }
+
+            if (k.startsWith("quantity")) {
+                current.put("quantity", last.trim());
+            }
+        }
+
+        if (hasSizeOrQty(current)) {
+            out.add(current);
+        }
+
+        return out;
+    }
+
+    private boolean hasSizeOrQty(Map<String, String> row) {
+        if (row == null || row.isEmpty()) {
+            return false;
+        }
+        return row.containsKey("XS") || row.containsKey("S") || row.containsKey("M") || row.containsKey("L") || row.containsKey("XL") || row.containsKey("quantity");
+    }
+
+    private String normalizeAssortmentSizeKey(String normalizedKey) {
+        if (normalizedKey == null) {
+            return null;
+        }
+        String k = normalizedKey.trim();
+        if (k.startsWith("xs")) {
+            return "XS";
+        }
+        if (k.equals("s") || k.startsWith("s ") || k.startsWith("s(")) {
+            return "S";
+        }
+        if (k.equals("m") || k.startsWith("m ") || k.startsWith("m(")) {
+            return "M";
+        }
+        if (k.equals("l") || k.startsWith("l ") || k.startsWith("l(")) {
+            return "L";
+        }
+        if (k.startsWith("xl")) {
+            return "XL";
+        }
+        return null;
+    }
+
+    private String findLastNonBlank(List<String> row) {
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        for (int i = row.size() - 1; i >= 0; i--) {
+            String v = row.get(i);
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        return null;
     }
 
     private boolean looksLikeSizeQtyTable(List<String> headers) {
