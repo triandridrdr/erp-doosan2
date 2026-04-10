@@ -506,13 +506,20 @@ public class OcrDocumentClassifier {
             if (row == null || row.isEmpty()) {
                 continue;
             }
-            String first = row.get(0);
-            String k = normalizeKey(first);
-            if (k.equals("assortment")) {
-                return "Assortment";
-            }
-            if (k.equals("solid")) {
-                return "Solid";
+            for (String cell : row) {
+                if (cell == null || cell.isBlank()) {
+                    continue;
+                }
+                String k = normalizeKey(cell);
+                if (k.equals("assortment")) {
+                    return "Assortment";
+                }
+                if (k.equals("solid")) {
+                    return "Solid";
+                }
+                if (k.equals("total")) {
+                    return "Total";
+                }
             }
         }
         return null;
@@ -628,13 +635,33 @@ public class OcrDocumentClassifier {
                 continue;
             }
 
-            if (k.equals("assortment") || k.equals("solid")) {
+            String detectedSection = null;
+            for (String cell : row) {
+                if (cell == null || cell.isBlank()) {
+                    continue;
+                }
+                String kc = normalizeKey(cell);
+                if (kc.equals("assortment")) {
+                    detectedSection = "Assortment";
+                    break;
+                }
+                if (kc.equals("solid")) {
+                    detectedSection = "Solid";
+                    break;
+                }
+                if (kc.equals("total")) {
+                    detectedSection = "Total";
+                    break;
+                }
+            }
+
+            if (detectedSection != null) {
                 if (hasSizeOrQty(current)) {
                     out.add(current);
                 }
                 current = new LinkedHashMap<>();
-                currentSectionType = k.equals("assortment") ? "Assortment" : "Solid";
-                current.put("sectionType", currentSectionType);
+                currentSectionType = detectedSection;
+                current.put("sectionType", detectedSection);
                 continue;
             }
 
@@ -651,6 +678,16 @@ public class OcrDocumentClassifier {
 
             if (k.startsWith("quantity")) {
                 current.put("quantity", last.trim());
+                continue;
+            }
+
+            if (k.equals("no of ast") || k.equals("no of assortment") || k.equals("no of asst") || k.equals("no of ast:")) {
+                current.put("noOfAst", last.trim());
+                continue;
+            }
+
+            if (k.equals("tot pcs") || k.equals("total pcs") || k.equals("tot pcs:") || k.equals("tot pieces") || k.equals("total pieces")) {
+                current.put("totPcs", last.trim());
             }
         }
 

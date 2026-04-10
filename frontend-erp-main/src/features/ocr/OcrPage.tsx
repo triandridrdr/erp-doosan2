@@ -56,16 +56,17 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
     }
   }
 
-  const preferred = [
+  const preferredOrder = [
+    'destinationCountry',
+    'sectionType',
+    'type',
+    'breakdownIncluded',
     'productNo',
     'productName',
     'productDescription',
     'season',
     'supplierCode',
     'supplierName',
-    'destinationCountry',
-    'country',
-    'sectionType',
     'colourName',
     'hmColourCode',
     'articleNo',
@@ -81,27 +82,41 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
     'L (Assortment)',
     'XL (Assortment)',
     'quantity (Assortment)',
+    'noOfAst (Assortment)',
+    'totPcs (Assortment)',
     'XS (Solid)',
     'S (Solid)',
     'M (Solid)',
     'L (Solid)',
     'XL (Solid)',
     'quantity (Solid)',
+    'noOfAst (Solid)',
+    'totPcs (Solid)',
+    'XS (Total)',
+    'S (Total)',
+    'M (Total)',
+    'L (Total)',
+    'XL (Total)',
+    'quantity (Total)',
+    'noOfAst (Total)',
+    'totPcs (Total)',
     'XS',
     'S',
     'M',
     'L',
     'XL',
     'quantity',
+    'noOfAst',
+    'totPcs',
   ];
 
   const ordered: string[] = [];
-  for (const k of preferred) {
+  for (const k of preferredOrder) {
     if (cols.has(k)) ordered.push(k);
   }
 
   const remaining = Array.from(cols)
-    .filter((k) => !preferred.includes(k))
+    .filter((k) => !preferredOrder.includes(k))
     .sort((a, b) => a.localeCompare(b));
 
   return [...ordered, ...remaining];
@@ -257,6 +272,18 @@ export function OcrPage() {
     const destinationCountry = pick(['destination country', 'country of destination', 'destination', 'tujuan negara', '국가']);
     const unitPrice = pick(['unit price', 'unitprice', 'u/price', 'price', '단가']);
 
+    const sectionType = pick([
+      'sectiontype',
+      'section type',
+      'type',
+      'breakdown group',
+      'breakdowngroup',
+      'pack type',
+      'packtype',
+    ]);
+    const noOfAst = pick(['noofast', 'no of ast', 'no of asst', 'no of assortment', 'no. of ast', 'no. of asst']);
+    const totPcs = pick(['totpcs', 'tot pcs', 'total pcs', 'tot pieces', 'total pieces']);
+
     const sizeXS = pick(['xs', 'xs (xs)', 'xs (xs)*', 'xsmall', 'x-small']);
     const sizeS = pick(['s', 's (s)', 's (s)*', 'small']);
     const sizeM = pick(['m', 'm (m)', 'm (m)*', 'medium']);
@@ -275,6 +302,16 @@ export function OcrPage() {
     if (quantity) out.quantity = quantity;
     if (destinationCountry) out.destinationCountry = destinationCountry;
     if (unitPrice) out.unitPrice = unitPrice;
+
+    if (sectionType) {
+      const s = sectionType.trim().toLowerCase();
+      if (s === 'assortment') out.sectionType = 'Assortment';
+      else if (s === 'solid') out.sectionType = 'Solid';
+      else if (s === 'total') out.sectionType = 'Total';
+      else out.sectionType = sectionType;
+    }
+    if (noOfAst) out.noOfAst = noOfAst;
+    if (totPcs) out.totPcs = totPcs;
 
     if (sizeXS) out.XS = sizeXS;
     if (sizeS) out.S = sizeS;
@@ -338,58 +375,12 @@ export function OcrPage() {
   ): Array<Record<string, string>> {
     const get = (r: Record<string, string>, k: string) => (typeof r[k] === 'string' ? r[k].trim() : '');
 
-    const hasAnySectionType = details.some((r) => {
-      const v = get(r, 'sectionType').toLowerCase();
-      return v === 'assortment' || v === 'solid';
-    });
-
-    const alreadyPivoted = details.some((r) =>
-      Object.keys(r).some((k) =>
-        k === 'XS (Assortment)' ||
-        k === 'S (Assortment)' ||
-        k === 'M (Assortment)' ||
-        k === 'L (Assortment)' ||
-        k === 'XL (Assortment)' ||
-        k === 'XS (Solid)' ||
-        k === 'S (Solid)' ||
-        k === 'M (Solid)' ||
-        k === 'L (Solid)' ||
-        k === 'XL (Solid)' ||
-        k === 'quantity (Assortment)' ||
-        k === 'quantity (Solid)'
-      )
-    );
-
-    if (alreadyPivoted) {
-      return details.map((r) => {
-        const row: Record<string, string> = { ...r };
-        if (!row.productNo && header.productNo) row.productNo = header.productNo;
-        if (!row.productName && header.productName) row.productName = header.productName;
-        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
-        if (!row.season && header.season) row.season = header.season;
-        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
-        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
-        return row;
-      });
-    }
-
-    if (!hasAnySectionType) {
-      return details.map((r) => {
-        const row: Record<string, string> = { ...r };
-        if (!row.productNo && header.productNo) row.productNo = header.productNo;
-        if (!row.productName && header.productName) row.productName = header.productName;
-        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
-        if (!row.season && header.season) row.season = header.season;
-        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
-        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
-        const dc = (row.destinationCountry || row.country || '').trim();
-        if (dc && !isLikelyCountryValue(dc)) {
-          delete row.destinationCountry;
-          delete row.country;
-        }
-        return row;
-      });
-    }
+    const toNumber = (v: string) => {
+      if (!v) return NaN;
+      const cleaned = v.replace(/[\s,]/g, '');
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : NaN;
+    };
 
     const baseKeyOf = (r: Record<string, string>) => {
       const dc = get(r, 'destinationCountry') || get(r, 'country');
@@ -405,12 +396,142 @@ export function OcrPage() {
       return keyParts.map((x) => x || '').join('||');
     };
 
+    const inferSectionTypesIfMissing = (rows: Array<Record<string, string>>): Array<Record<string, string>> => {
+      const out = rows.map((r) => ({ ...r }));
+
+      const groups = new Map<string, Array<{ idx: number; row: Record<string, string> }>>();
+      for (let i = 0; i < out.length; i++) {
+        const r = out[i];
+        const hasSection = (get(r, 'sectionType') || '').trim();
+        if (hasSection) continue;
+        const k = baseKeyOf(r);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k)!.push({ idx: i, row: r });
+      }
+
+      for (const [, items] of groups) {
+        const assortment: Array<{ idx: number; q: number }> = [];
+        const nonAssort: Array<{ idx: number; q: number }> = [];
+
+        for (const it of items) {
+          const r = it.row;
+          const hasAst = !!get(r, 'noOfAst') || !!get(r, 'totPcs');
+          const q = toNumber(get(r, 'quantity'));
+          if (hasAst) assortment.push({ idx: it.idx, q });
+          else nonAssort.push({ idx: it.idx, q });
+        }
+
+        for (const a of assortment) {
+          out[a.idx].sectionType = 'Assortment';
+        }
+
+        if (nonAssort.length === 1) {
+          out[nonAssort[0].idx].sectionType = 'Solid';
+        } else if (nonAssort.length >= 2) {
+          const sorted = [...nonAssort].sort((a, b) => {
+            const an = Number.isFinite(a.q) ? a.q : -Infinity;
+            const bn = Number.isFinite(b.q) ? b.q : -Infinity;
+            return an - bn;
+          });
+          const max = sorted[sorted.length - 1];
+          out[max.idx].sectionType = 'Total';
+          for (let i = 0; i < sorted.length - 1; i++) {
+            out[sorted[i].idx].sectionType = 'Solid';
+          }
+        }
+      }
+
+      return out;
+    };
+
+    const detailsWithSections = inferSectionTypesIfMissing(details);
+
+    const hasAnySectionType = detailsWithSections.some((r) => {
+      const v = get(r, 'sectionType').toLowerCase();
+      return v === 'assortment' || v === 'solid' || v === 'total';
+    });
+
+    const alreadyPivoted = detailsWithSections.some((r) =>
+      Object.keys(r).some((k) =>
+        k === 'XS (Assortment)' ||
+        k === 'S (Assortment)' ||
+        k === 'M (Assortment)' ||
+        k === 'L (Assortment)' ||
+        k === 'XL (Assortment)' ||
+        k === 'XS (Solid)' ||
+        k === 'S (Solid)' ||
+        k === 'M (Solid)' ||
+        k === 'L (Solid)' ||
+        k === 'XL (Solid)' ||
+        k === 'quantity (Assortment)' ||
+        k === 'quantity (Solid)' ||
+        k === 'noOfAst (Assortment)' ||
+        k === 'noOfAst (Solid)' ||
+        k === 'totPcs (Assortment)' ||
+        k === 'totPcs (Solid)' ||
+        k === 'XS (Total)' ||
+        k === 'S (Total)' ||
+        k === 'M (Total)' ||
+        k === 'L (Total)' ||
+        k === 'XL (Total)' ||
+        k === 'quantity (Total)' ||
+        k === 'noOfAst (Total)' ||
+        k === 'totPcs (Total)'
+      )
+    );
+
+    if (alreadyPivoted) {
+      return detailsWithSections.map((r) => {
+        const row: Record<string, string> = { ...r };
+        if (!row.productNo && header.productNo) row.productNo = header.productNo;
+        if (!row.productName && header.productName) row.productName = header.productName;
+        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
+        if (!row.season && header.season) row.season = header.season;
+        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
+        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
+
+        const st = (get(row, 'sectionType') || '').trim();
+        if (st && !row.type) row.type = st;
+        if (!st && !row.type) {
+          const hasAst = !!get(row, 'noOfAst') || !!get(row, 'totPcs');
+          if (hasAst) row.type = 'Assortment';
+        }
+        return row;
+      });
+    }
+
+    if (!hasAnySectionType) {
+      return detailsWithSections.map((r) => {
+        const row: Record<string, string> = { ...r };
+        if (!row.productNo && header.productNo) row.productNo = header.productNo;
+        if (!row.productName && header.productName) row.productName = header.productName;
+        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
+        if (!row.season && header.season) row.season = header.season;
+        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
+        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
+        const dc = (row.destinationCountry || row.country || '').trim();
+        if (dc && !isLikelyCountryValue(dc)) {
+          delete row.destinationCountry;
+          delete row.country;
+        }
+
+        const st = (get(row, 'sectionType') || '').trim();
+        if (st && !row.type) row.type = st;
+        if (!st && !row.type) {
+          const hasAst = !!get(row, 'noOfAst') || !!get(row, 'totPcs');
+          if (hasAst) row.type = 'Assortment';
+        }
+        return row;
+      });
+    }
+
     const outByKey = new Map<string, Record<string, string>>();
 
-    for (let i = 0; i < details.length; i++) {
-      const r = details[i];
+    for (let i = 0; i < detailsWithSections.length; i++) {
+      const r = detailsWithSections[i];
       const sectionTypeRaw = (get(r, 'sectionType') || '').toLowerCase();
-      const section = sectionTypeRaw === 'solid' ? 'Solid' : sectionTypeRaw === 'assortment' ? 'Assortment' : '';
+      const section =
+        sectionTypeRaw === 'solid' ? 'Solid' : sectionTypeRaw === 'assortment' ? 'Assortment' : sectionTypeRaw === 'total' ? 'Total' : '';
 
       let baseKey = baseKeyOf(r);
       if (!baseKey.replace(/\|/g, '').trim()) {
@@ -460,9 +581,34 @@ export function OcrPage() {
         const qCol = section ? `quantity (${section})` : 'quantity';
         target[qCol] = q;
       }
+
+      const noOfAst = get(r, 'noOfAst');
+      if (noOfAst) {
+        const col = section ? `noOfAst (${section})` : 'noOfAst';
+        target[col] = noOfAst;
+      }
+
+      const totPcs = get(r, 'totPcs');
+      if (totPcs) {
+        const col = section ? `totPcs (${section})` : 'totPcs';
+        target[col] = totPcs;
+      }
     }
 
-    return Array.from(outByKey.values());
+    return Array.from(outByKey.values()).map((row) => {
+      const hasA = Object.keys(row).some((k) => k.endsWith(' (Assortment)'));
+      const hasS = Object.keys(row).some((k) => k.endsWith(' (Solid)'));
+      const hasT = Object.keys(row).some((k) => k.endsWith(' (Total)'));
+      const parts: string[] = [];
+      if (hasA) parts.push('Assortment');
+      if (hasS) parts.push('Solid');
+      if (hasT) parts.push('Total');
+      if (parts.length > 0) {
+        row.breakdownIncluded = parts.join(', ');
+        row.type = row.breakdownIncluded;
+      }
+      return row;
+    });
   }
 
   function parseAssortmentFromText(extractedText: string): Record<string, string> {
@@ -1281,7 +1427,11 @@ export function OcrPage() {
                                       {cols.map((c) => (
                                         <td key={c} className='px-2 py-2 align-top'>
                                           <input
-                                            className='w-full h-10 rounded-lg border border-gray-200 bg-gray-50/50 px-2 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200'
+                                            className={`h-10 rounded-lg border border-gray-200 bg-gray-50/50 text-sm text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 ${/^(XS|S|M|L|XL)(\s*\((Assortment|Solid)\))?$/.test(
+                                              c,
+                                            )
+                                              ? 'w-24 min-w-24 px-3'
+                                              : 'w-full px-2'}`}
                                             value={row[c] ?? ''}
                                             onChange={(e) => {
                                               setHasUserEditedDraft(true);
