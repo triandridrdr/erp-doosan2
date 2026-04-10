@@ -58,9 +58,7 @@ function buildColumns(rows: Array<Record<string, string>>): string[] {
 
   const preferredOrder = [
     'destinationCountry',
-    'sectionType',
-    'type',
-    'breakdownIncluded',
+    'breakdownGroup',
     'productNo',
     'productName',
     'productDescription',
@@ -373,240 +371,88 @@ export function OcrPage() {
     details: Array<Record<string, string>>,
     header: GarmentSalesOrderDraft['header'],
   ): Array<Record<string, string>> {
-    const get = (r: Record<string, string>, k: string) => (typeof r[k] === 'string' ? r[k].trim() : '');
+    if (!details || details.length === 0) return [];
 
-    const toNumber = (v: string) => {
-      if (!v) return NaN;
-      const cleaned = v.replace(/[\s,]/g, '');
-      const n = Number(cleaned);
-      return Number.isFinite(n) ? n : NaN;
+    const getVal = (row: Record<string, string>, key: string) => {
+      const v = row[key];
+      return typeof v === 'string' ? v : '';
     };
+
+    const detailsWithSections = details.map((r) => normalizeDetailRow(r));
 
     const baseKeyOf = (r: Record<string, string>) => {
-      const dc = get(r, 'destinationCountry') || get(r, 'country');
+      const dc = (getVal(r, 'destinationCountry') || getVal(r, 'country') || '').trim();
       const keyParts = [
         dc,
-        get(r, 'colourName'),
-        get(r, 'hmColourCode'),
-        get(r, 'articleNo'),
-        get(r, 'ptArticleNumber'),
-        get(r, 'optionNo'),
-        get(r, 'description'),
-      ];
-      return keyParts.map((x) => x || '').join('||');
+        getVal(r, 'articleNo'),
+        getVal(r, 'hmColourCode'),
+        getVal(r, 'ptArticleNumber'),
+        getVal(r, 'optionNo'),
+        getVal(r, 'colourName'),
+        getVal(r, 'description'),
+      ]
+        .map((x) => (x || '').trim())
+        .filter(Boolean);
+      return keyParts.length > 0 ? keyParts.join('||') : '';
     };
 
-    const inferSectionTypesIfMissing = (rows: Array<Record<string, string>>): Array<Record<string, string>> => {
-      const out = rows.map((r) => ({ ...r }));
-
-      const groups = new Map<string, Array<{ idx: number; row: Record<string, string> }>>();
-      for (let i = 0; i < out.length; i++) {
-        const r = out[i];
-        const hasSection = (get(r, 'sectionType') || '').trim();
-        if (hasSection) continue;
-        const k = baseKeyOf(r);
-        if (!groups.has(k)) groups.set(k, []);
-        groups.get(k)!.push({ idx: i, row: r });
-      }
-
-      for (const [, items] of groups) {
-        const assortment: Array<{ idx: number; q: number }> = [];
-        const nonAssort: Array<{ idx: number; q: number }> = [];
-
-        for (const it of items) {
-          const r = it.row;
-          const hasAst = !!get(r, 'noOfAst') || !!get(r, 'totPcs');
-          const q = toNumber(get(r, 'quantity'));
-          if (hasAst) assortment.push({ idx: it.idx, q });
-          else nonAssort.push({ idx: it.idx, q });
-        }
-
-        for (const a of assortment) {
-          out[a.idx].sectionType = 'Assortment';
-        }
-
-        if (nonAssort.length === 1) {
-          out[nonAssort[0].idx].sectionType = 'Solid';
-        } else if (nonAssort.length >= 2) {
-          const sorted = [...nonAssort].sort((a, b) => {
-            const an = Number.isFinite(a.q) ? a.q : -Infinity;
-            const bn = Number.isFinite(b.q) ? b.q : -Infinity;
-            return an - bn;
-          });
-          const max = sorted[sorted.length - 1];
-          out[max.idx].sectionType = 'Total';
-          for (let i = 0; i < sorted.length - 1; i++) {
-            out[sorted[i].idx].sectionType = 'Solid';
-          }
-        }
-      }
-
-      return out;
-    };
-
-    const detailsWithSections = inferSectionTypesIfMissing(details);
-
-    const hasAnySectionType = detailsWithSections.some((r) => {
-      const v = get(r, 'sectionType').toLowerCase();
-      return v === 'assortment' || v === 'solid' || v === 'total';
-    });
-
-    const alreadyPivoted = detailsWithSections.some((r) =>
-      Object.keys(r).some((k) =>
-        k === 'XS (Assortment)' ||
-        k === 'S (Assortment)' ||
-        k === 'M (Assortment)' ||
-        k === 'L (Assortment)' ||
-        k === 'XL (Assortment)' ||
-        k === 'XS (Solid)' ||
-        k === 'S (Solid)' ||
-        k === 'M (Solid)' ||
-        k === 'L (Solid)' ||
-        k === 'XL (Solid)' ||
-        k === 'quantity (Assortment)' ||
-        k === 'quantity (Solid)' ||
-        k === 'noOfAst (Assortment)' ||
-        k === 'noOfAst (Solid)' ||
-        k === 'totPcs (Assortment)' ||
-        k === 'totPcs (Solid)' ||
-        k === 'XS (Total)' ||
-        k === 'S (Total)' ||
-        k === 'M (Total)' ||
-        k === 'L (Total)' ||
-        k === 'XL (Total)' ||
-        k === 'quantity (Total)' ||
-        k === 'noOfAst (Total)' ||
-        k === 'totPcs (Total)'
-      )
-    );
-
-    if (alreadyPivoted) {
-      return detailsWithSections.map((r) => {
-        const row: Record<string, string> = { ...r };
-        if (!row.productNo && header.productNo) row.productNo = header.productNo;
-        if (!row.productName && header.productName) row.productName = header.productName;
-        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
-        if (!row.season && header.season) row.season = header.season;
-        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
-        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
-
-        const st = (get(row, 'sectionType') || '').trim();
-        if (st && !row.type) row.type = st;
-        if (!st && !row.type) {
-          const hasAst = !!get(row, 'noOfAst') || !!get(row, 'totPcs');
-          if (hasAst) row.type = 'Assortment';
-        }
-        return row;
-      });
-    }
-
-    if (!hasAnySectionType) {
-      return detailsWithSections.map((r) => {
-        const row: Record<string, string> = { ...r };
-        if (!row.productNo && header.productNo) row.productNo = header.productNo;
-        if (!row.productName && header.productName) row.productName = header.productName;
-        if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
-        if (!row.season && header.season) row.season = header.season;
-        if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
-        if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
-        const dc = (row.destinationCountry || row.country || '').trim();
-        if (dc && !isLikelyCountryValue(dc)) {
-          delete row.destinationCountry;
-          delete row.country;
-        }
-
-        const st = (get(row, 'sectionType') || '').trim();
-        if (st && !row.type) row.type = st;
-        if (!st && !row.type) {
-          const hasAst = !!get(row, 'noOfAst') || !!get(row, 'totPcs');
-          if (hasAst) row.type = 'Assortment';
-        }
-        return row;
-      });
-    }
-
-    const outByKey = new Map<string, Record<string, string>>();
-
+    const groups = new Map<string, Array<Record<string, string>>>();
     for (let i = 0; i < detailsWithSections.length; i++) {
       const r = detailsWithSections[i];
-      const sectionTypeRaw = (get(r, 'sectionType') || '').toLowerCase();
-      const section =
-        sectionTypeRaw === 'solid' ? 'Solid' : sectionTypeRaw === 'assortment' ? 'Assortment' : sectionTypeRaw === 'total' ? 'Total' : '';
+      const key = baseKeyOf(r) || `__row__||${i}`;
+      const arr = groups.get(key) ?? [];
+      arr.push(r);
+      groups.set(key, arr);
+    }
 
-      let baseKey = baseKeyOf(r);
-      if (!baseKey.replace(/\|/g, '').trim()) {
-        const fallback = [get(r, 'articleNo'), get(r, 'hmColourCode'), get(r, 'ptArticleNumber'), get(r, 'colourName')]
-          .filter(Boolean)
-          .join('||');
-        baseKey = fallback ? `__fallback__||${fallback}` : `__row__||${i}`;
-      }
-      if (!outByKey.has(baseKey)) {
-        const dc = get(r, 'destinationCountry') || get(r, 'country');
-        const row: Record<string, string> = {
-          productNo: header.productNo || '',
-          productName: header.productName || '',
-          productDescription: header.productDescription || '',
-          season: header.season || '',
-          supplierCode: header.supplierCode || '',
-          supplierName: header.supplierName || '',
-        };
-
-        if (isLikelyCountryValue(dc)) row.destinationCountry = dc;
-        const colourName = get(r, 'colourName');
-        if (colourName) row.colourName = colourName;
-        const hmColourCode = get(r, 'hmColourCode');
-        if (hmColourCode) row.hmColourCode = hmColourCode;
-        const articleNo = get(r, 'articleNo');
-        if (articleNo) row.articleNo = articleNo;
-        const ptArticleNumber = get(r, 'ptArticleNumber');
-        if (ptArticleNumber) row.ptArticleNumber = ptArticleNumber;
-        const optionNo = get(r, 'optionNo');
-        if (optionNo) row.optionNo = optionNo;
-        const description = get(r, 'description');
-        if (description) row.description = description;
-
-        outByKey.set(baseKey, row);
+    for (const rows of groups.values()) {
+      for (const r of rows) {
+        const st = (getVal(r, 'sectionType') || '').trim();
+        if (st) continue;
+        const hasAst = !!getVal(r, 'noOfAst') || !!getVal(r, 'totPcs');
+        if (hasAst) r.sectionType = 'Assortment';
       }
 
-      const target = outByKey.get(baseKey)!;
-      const sizes: Array<'XS' | 'S' | 'M' | 'L' | 'XL'> = ['XS', 'S', 'M', 'L', 'XL'];
-      for (const s of sizes) {
-        const v = get(r, s);
-        if (!v) continue;
-        const col = section ? `${s} (${section})` : s;
-        target[col] = v;
-      }
-      const q = get(r, 'quantity');
-      if (q) {
-        const qCol = section ? `quantity (${section})` : 'quantity';
-        target[qCol] = q;
-      }
+      const remaining = rows.filter((r) => !(getVal(r, 'sectionType') || '').trim());
+      if (remaining.length === 0) continue;
 
-      const noOfAst = get(r, 'noOfAst');
-      if (noOfAst) {
-        const col = section ? `noOfAst (${section})` : 'noOfAst';
-        target[col] = noOfAst;
-      }
+      const scored = remaining
+        .map((r) => ({
+          r,
+          q: parseNumberLike(getVal(r, 'quantity') || '', -1),
+        }))
+        .sort((a, b) => b.q - a.q);
 
-      const totPcs = get(r, 'totPcs');
-      if (totPcs) {
-        const col = section ? `totPcs (${section})` : 'totPcs';
-        target[col] = totPcs;
+      if (scored.length >= 2) {
+        scored[0].r.sectionType = 'Total';
+        for (let i = 1; i < scored.length; i++) scored[i].r.sectionType = 'Solid';
+      } else {
+        scored[0].r.sectionType = 'Solid';
       }
     }
 
-    return Array.from(outByKey.values()).map((row) => {
-      const hasA = Object.keys(row).some((k) => k.endsWith(' (Assortment)'));
-      const hasS = Object.keys(row).some((k) => k.endsWith(' (Solid)'));
-      const hasT = Object.keys(row).some((k) => k.endsWith(' (Total)'));
-      const parts: string[] = [];
-      if (hasA) parts.push('Assortment');
-      if (hasS) parts.push('Solid');
-      if (hasT) parts.push('Total');
-      if (parts.length > 0) {
-        row.breakdownIncluded = parts.join(', ');
-        row.type = row.breakdownIncluded;
+    return detailsWithSections.map((r) => {
+      const row: Record<string, string> = { ...r };
+
+      if (!row.productNo && header.productNo) row.productNo = header.productNo;
+      if (!row.productName && header.productName) row.productName = header.productName;
+      if (!row.productDescription && header.productDescription) row.productDescription = header.productDescription;
+      if (!row.season && header.season) row.season = header.season;
+      if (!row.supplierCode && header.supplierCode) row.supplierCode = header.supplierCode;
+      if (!row.supplierName && header.supplierName) row.supplierName = header.supplierName;
+
+      const dc = (row.destinationCountry || row.country || '').trim();
+      if (dc && !isLikelyCountryValue(dc)) {
+        delete row.destinationCountry;
+        delete row.country;
       }
+
+      const st = (getVal(row, 'sectionType') || '').trim();
+      if (st) row.breakdownGroup = st;
+      delete row.sectionType;
+      delete row.type;
+      delete row.breakdownIncluded;
+
       return row;
     });
   }
@@ -984,7 +830,7 @@ export function OcrPage() {
     const customerName = (draft.header.supplierName || 'OCR Customer').trim();
 
     const mappedLines = draft.salesOrderDetails
-      .map((row, idx) => {
+      .map<SalesOrderRequest['lines'][number] | null>((row, idx) => {
         const itemCode = getFirstValue(row, ['itemCode', 'ITEM CODE', 'Item Code', 'Material Code', 'Code', '품번', '품목코드']);
         const itemName = getFirstValue(row, ['itemName', 'ITEM NAME', 'Item Name', 'Description', '품명', '품목명']);
         const qtyStr = getFirstValue(row, ['quantity', 'QTY', 'Qty', 'Quantity', '수량']);
@@ -1005,7 +851,7 @@ export function OcrPage() {
           remarks: remarks || undefined,
         };
       })
-      .filter((x): x is SalesOrderRequest['lines'][number] => x !== null);
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
     const lines: SalesOrderRequest['lines'] =
       mappedLines.length > 0
