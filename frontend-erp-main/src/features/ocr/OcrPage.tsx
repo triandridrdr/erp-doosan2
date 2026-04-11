@@ -1246,7 +1246,7 @@ export function OcrPage() {
                         Add row
                       </Button>
                     </div>
-                    <div className='p-4 overflow-auto'>
+                    <div className='p-4 overflow-x-auto overflow-y-scroll h-[60vh]'>
                       {draft.salesOrderDetails.length === 0 ? (
                         <div className='text-sm text-gray-500 italic'>No detail rows detected.</div>
                       ) : (
@@ -1332,7 +1332,7 @@ export function OcrPage() {
                         Add row
                       </Button>
                     </div>
-                    <div className='p-4 overflow-auto'>
+                    <div className='p-4 overflow-x-auto overflow-y-scroll h-[60vh]'>
                       {draft.bomItems.length === 0 ? (
                         <div className='text-sm text-gray-500 italic'>No BoM items detected.</div>
                       ) : (
