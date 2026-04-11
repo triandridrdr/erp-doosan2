@@ -62,6 +62,10 @@ dependencies {
     // ================= PDF =================
     implementation 'org.apache.pdfbox:pdfbox:2.0.32'
 
+    // ================= OCR-NEW (NO TEXTRACT) =================
+    implementation 'net.sourceforge.tess4j:tess4j:5.13.0'
+    implementation 'org.jsoup:jsoup:1.17.2'
+
     // ================= TEST =================
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
