@@ -499,7 +499,7 @@ public class TableParser {
             if (lowRaw.contains("yester") && !lowSeg.contains("yester")) {
                 seg = oneLine(seg + " YESTER");
             }
-            return formatBomCompositionMultiline(seg);
+            return oneLine(seg);
         }
 
         BomDescComp dc = splitBomTail(r);
@@ -535,91 +535,8 @@ public class TableParser {
     }
 
     private static String formatBomCompositionMultiline(String raw) {
-        String r = oneLine(raw);
-        if (r.isBlank()) return "";
-
-        String[] parts = r.split("\\s+");
-        if (parts.length == 0) return "";
-
-        int firstPct = -1;
-        for (int i = 0; i < parts.length; i++) {
-            if (TOKEN_HAS_PERCENT.matcher(stripPunctKeepPercent(parts[i])).find()) {
-                firstPct = i;
-                break;
-            }
-        }
-        if (firstPct < 0) return r;
-
-        StringBuilder out = new StringBuilder();
-
-        // Line 1: first percent token + next token (e.g. "80% Revisco")
-        String pctTok = stripPunctKeepPercent(parts[firstPct]);
-        if (!pctTok.isBlank()) out.append(pctTok);
-        int i = firstPct + 1;
-        if (i < parts.length) {
-            String next = stripPunctKeepPercent(parts[i]);
-            if (!next.isBlank() && !TOKEN_HAS_PERCENT.matcher(next).find()) {
-                out.append(' ').append(next);
-                i++;
-            }
-        }
-
-        StringBuilder line2 = new StringBuilder();
-        StringBuilder line3 = new StringBuilder();
-        boolean startedLine3 = false;
-
-        for (; i < parts.length; i++) {
-            String tok = stripPunctKeepPercent(parts[i]);
-            if (tok.isBlank()) continue;
-            String low = tok.toLowerCase();
-
-            boolean isKeyFiberSingleLine = low.equals("polyamide") || low.equals("yester");
-            if (isKeyFiberSingleLine) {
-                if (line2.length() > 0) {
-                    out.append('\n').append(oneLine(line2.toString()));
-                    line2.setLength(0);
-                }
-                if (line3.length() > 0) {
-                    out.append('\n').append(oneLine(line3.toString()));
-                    line3.setLength(0);
-                }
-                out.append('\n').append(tok.toUpperCase());
-                startedLine3 = true;
-                continue;
-            }
-
-            // Start line3 when we hit circulose/irculose so we can keep "circulose, 20%" together.
-            boolean isCirculoseToken = low.startsWith("circulose") || low.startsWith("irculose");
-            if (!startedLine3 && isCirculoseToken) {
-                if (line2.length() > 0) {
-                    out.append('\n').append(oneLine(line2.toString()));
-                    line2.setLength(0);
-                }
-                startedLine3 = true;
-            }
-
-            // If another percent segment appears later, start it on a new line unless it's the expected "circulose, 20%" pair.
-            boolean isPercentTok = TOKEN_HAS_PERCENT.matcher(tok).find();
-            if (isPercentTok && startedLine3) {
-                String prev = stripPunctKeepPercent(parts[Math.max(0, i - 1)]).toLowerCase();
-                boolean prevIsCirculose = prev.startsWith("circulose") || prev.startsWith("irculose");
-                if (!prevIsCirculose) {
-                    if (line3.length() > 0) {
-                        out.append('\n').append(oneLine(line3.toString()));
-                        line3.setLength(0);
-                    }
-                }
-            }
-
-            StringBuilder target = startedLine3 ? line3 : line2;
-            if (target.length() > 0) target.append(' ');
-            target.append(tok);
-        }
-
-        if (line2.length() > 0) out.append('\n').append(oneLine(line2.toString()));
-        if (line3.length() > 0) out.append('\n').append(oneLine(line3.toString()));
-
-        return out.toString().trim();
+        // Keep this helper for compatibility, but composition should be a single line (no newlines)
+        return oneLine(raw);
     }
 
     private static String insertBeforePercent(String raw, String percentToken, String toInsert) {
