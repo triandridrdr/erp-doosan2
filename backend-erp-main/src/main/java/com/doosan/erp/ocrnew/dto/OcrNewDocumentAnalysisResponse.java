@@ -24,6 +24,8 @@ public class OcrNewDocumentAnalysisResponse {
 
     private Map<String, String> formFields;
 
+    private List<Map<String, String>> salesOrderDetailSizeBreakdown;
+
     private Float averageConfidence;
 
     private Integer pageCount;

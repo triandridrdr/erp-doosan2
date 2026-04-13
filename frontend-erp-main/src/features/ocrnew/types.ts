@@ -42,6 +42,7 @@ export interface OcrNewDocumentAnalysisResponseData {
   tables: OcrNewTableDto[];
   keyValuePairs: OcrNewKeyValuePairDto[];
   formFields: Record<string, string>;
+  salesOrderDetailSizeBreakdown?: Array<Record<string, string>>;
   averageConfidence: number;
   pageCount: number;
 }

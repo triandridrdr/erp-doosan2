@@ -23,11 +23,16 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -41,6 +46,9 @@ public class OcrNewService {
     );
 
     private static final String PDF_CONTENT_TYPE = "application/pdf";
+
+    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d{1,7})\\s*$");
+    private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d{1,9})\\s*$", Pattern.CASE_INSENSITIVE);
 
     private final PdfToImageRenderer pdfToImageRenderer = new PdfToImageRenderer();
     private final KeyValueParser keyValueParser = new KeyValueParser();
@@ -59,6 +67,143 @@ public class OcrNewService {
         this.renderDpi = renderDpi;
         this.ocrEngine = new TesseractOcrEngine(tessDataPath, language);
         this.debugLogging = debugLogging;
+    }
+
+    private static List<Map<String, String>> extractSalesOrderDetailSizeBreakdownFromLines(
+            List<OcrNewLine> lines,
+            Map<String, String> formFields
+    ) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (lines == null || lines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : lines) {
+            if (l == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        String globalColor = firstNonBlank(
+                formFields == null ? null : formFields.get("Colour Name"),
+                formFields == null ? null : formFields.get("Color Name"),
+                formFields == null ? null : formFields.get("Description")
+        );
+
+        for (Map.Entry<Integer, List<OcrNewLine>> e : byPage.entrySet()) {
+            List<OcrNewLine> pageLines = e.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+            pageLines.sort(Comparator.comparingInt(OcrNewLine::getTop).thenComparingInt(OcrNewLine::getLeft));
+
+            List<String> texts = pageLines.stream().map(OcrNewLine::getText).filter(Objects::nonNull).toList();
+
+            int idxHeader = indexOfLineContaining(texts, "size / colour breakdown");
+            if (idxHeader < 0) continue;
+
+            String destinationCountry = "";
+            // Typically the country line comes shortly after header
+            for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 8); i++) {
+                String t = oneLine(texts.get(i));
+                if (t.isBlank()) continue;
+                if (t.toLowerCase(Locale.ROOT).startsWith("article no")) break;
+                if (looksLikeDestinationCountryLine(t)) {
+                    destinationCountry = t;
+                    break;
+                }
+            }
+
+            Map<String, String> row = new LinkedHashMap<>();
+            String color = globalColor;
+            if (color == null || color.isBlank()) color = "";
+            if (!color.isBlank()) row.put("color", color);
+            if (!destinationCountry.isBlank()) row.put("destinationCountry", destinationCountry);
+
+            boolean inSolid = false;
+            boolean sawAnySize = false;
+            for (int i = idxHeader; i < texts.size(); i++) {
+                String t = oneLine(texts.get(i));
+                if (t.isBlank()) continue;
+
+                String lower = t.toLowerCase(Locale.ROOT);
+                if (lower.startsWith("bill of material")) break;
+
+                if (lower.equals("solid") || lower.startsWith("solid ")) {
+                    inSolid = true;
+                    continue;
+                }
+                if (!inSolid) continue;
+
+                Matcher qm = QUANTITY_LINE.matcher(t);
+                if (qm.matches()) {
+                    String q = qm.group(1);
+                    if (q != null && !q.isBlank()) row.put("total", q);
+                    if (sawAnySize || row.containsKey("total")) {
+                        out.add(row);
+                    }
+                    break;
+                }
+
+                // Lines like: "XS (XS)* 236", "L(L)y* 622"
+                Matcher sm = SIZE_VALUE_LINE.matcher(t);
+                if (sm.matches()) {
+                    String sizeRaw = sm.group(1);
+                    String v = sm.group(2);
+                    String size = normalizeSizeKey(sizeRaw);
+                    if (size != null && v != null && !v.isBlank()) {
+                        row.put(size, v);
+                        sawAnySize = true;
+                    }
+                }
+            }
+
+            // If Quantity line wasn't found but sizes exist, still output.
+            if (sawAnySize && out.stream().noneMatch(m -> m == row)) {
+                out.add(row);
+            }
+        }
+
+        return out;
+    }
+
+    private static int indexOfLineContaining(List<String> texts, String needle) {
+        if (texts == null || texts.isEmpty() || needle == null || needle.isBlank()) return -1;
+        String n = needle.toLowerCase(Locale.ROOT);
+        for (int i = 0; i < texts.size(); i++) {
+            String t = oneLine(texts.get(i)).toLowerCase(Locale.ROOT);
+            if (t.contains(n)) return i;
+        }
+        return -1;
+    }
+
+    private static boolean looksLikeDestinationCountryLine(String t) {
+        if (t == null) return false;
+        String s = oneLine(t);
+        if (s.isBlank()) return false;
+        String lower = s.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("article no")) return false;
+        if (lower.startsWith("h&m colour")) return false;
+        if (lower.startsWith("colour name")) return false;
+        // Typical pattern: "USA (Online H&M) OU (OLNAM)" or "Great Britan (Online) OG (OL-UK)"
+        return s.contains("(") && s.contains(")") && s.matches(".*\\b[A-Z]{2}\\b\\s*\\(.+\\)\\s*$");
+    }
+
+    private static String normalizeSizeKey(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim().toUpperCase(Locale.ROOT);
+        if (s.equals("XS")) return "XS";
+        if (s.equals("XL")) return "XL";
+        if (s.equals("S")) return "S";
+        if (s.equals("M")) return "M";
+        if (s.equals("L")) return "L";
+        return null;
+    }
+
+    private static String firstNonBlank(String... xs) {
+        if (xs == null) return "";
+        for (String x : xs) {
+            if (x == null) continue;
+            String t = x.trim();
+            if (!t.isBlank()) return t;
+        }
+        return "";
     }
 
     public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file) {
@@ -129,6 +274,11 @@ public class OcrNewService {
             List<OcrNewKeyValuePairDto> pairs = keyValueParser.parseKeyValuePairs(allLines);
             Map<String, String> formFields = keyValueParser.toFieldMap(pairs);
             List<OcrNewTableDto> tables = tableParser.parseTables(allLines);
+
+            List<Map<String, String>> salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdown(tables);
+            if (salesOrderDetailSizeBreakdown.isEmpty()) {
+                salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdownFromLines(allLines, formFields);
+            }
 
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
@@ -206,6 +356,7 @@ public class OcrNewService {
                     .tables(tables)
                     .keyValuePairs(pairs)
                     .formFields(formFields)
+                    .salesOrderDetailSizeBreakdown(salesOrderDetailSizeBreakdown)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();
@@ -247,5 +398,93 @@ public class OcrNewService {
     private boolean isPdf(MultipartFile file) {
         String contentType = file.getContentType();
         return contentType != null && PDF_CONTENT_TYPE.equalsIgnoreCase(contentType);
+    }
+
+    private static List<Map<String, String>> extractSalesOrderDetailSizeBreakdown(List<OcrNewTableDto> tables) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (tables == null || tables.isEmpty()) return out;
+
+        for (OcrNewTableDto t : tables) {
+            List<List<String>> rows = t.getRows();
+            if (rows == null || rows.size() < 2) continue;
+            if (!looksLikeSalesOrderDetailSizeBreakdown(rows)) continue;
+
+            List<String> header = rows.get(0);
+            int iColor = idxOf(header, h -> eqAny(h, "color", "colour") || h.contains("color") || h.contains("colour"));
+            int iXS = idxOf(header, h -> h.equals("xs") || h.endsWith(" xs") || h.startsWith("xs "));
+            int iS = idxOf(header, h -> h.equals("s"));
+            int iM = idxOf(header, h -> h.equals("m"));
+            int iL = idxOf(header, h -> h.equals("l"));
+            int iXL = idxOf(header, h -> h.equals("xl") || h.endsWith(" xl") || h.startsWith("xl "));
+            int iTotal = idxOf(header, h -> h.equals("total") || h.contains("total"));
+
+            for (int r = 1; r < rows.size(); r++) {
+                List<String> row = rows.get(r);
+                if (row == null || row.stream().allMatch(v -> v == null || v.isBlank())) continue;
+
+                Map<String, String> m = new LinkedHashMap<>();
+                putIfNonBlank(m, "color", cell(row, iColor));
+                putIfNonBlank(m, "XS", cell(row, iXS));
+                putIfNonBlank(m, "S", cell(row, iS));
+                putIfNonBlank(m, "M", cell(row, iM));
+                putIfNonBlank(m, "L", cell(row, iL));
+                putIfNonBlank(m, "XL", cell(row, iXL));
+                putIfNonBlank(m, "total", cell(row, iTotal));
+
+                if (!m.isEmpty()) out.add(m);
+            }
+        }
+
+        return out;
+    }
+
+    private static boolean looksLikeSalesOrderDetailSizeBreakdown(List<List<String>> rows) {
+        if (rows == null || rows.size() < 2) return false;
+        List<String> header = rows.get(0);
+        if (header == null || header.isEmpty()) return false;
+
+        List<String> h = header.stream().map(OcrNewService::normHeader).toList();
+        boolean hasColor = h.stream().anyMatch(x -> eqAny(x, "color", "colour") || x.contains("color") || x.contains("colour"));
+        boolean hasXS = h.stream().anyMatch(x -> x.equals("xs") || x.endsWith(" xs") || x.startsWith("xs "));
+        boolean hasS = h.stream().anyMatch(x -> x.equals("s"));
+        boolean hasM = h.stream().anyMatch(x -> x.equals("m"));
+        boolean hasL = h.stream().anyMatch(x -> x.equals("l"));
+        boolean hasXL = h.stream().anyMatch(x -> x.equals("xl") || x.endsWith(" xl") || x.startsWith("xl "));
+        boolean hasTotal = h.stream().anyMatch(x -> x.equals("total") || x.contains("total"));
+        return hasColor && hasXS && hasS && hasM && hasL && hasXL && hasTotal;
+    }
+
+    private static int idxOf(List<String> header, Predicate<String> pred) {
+        if (header == null) return -1;
+        for (int i = 0; i < header.size(); i++) {
+            String h = normHeader(header.get(i));
+            if (pred.test(h)) return i;
+        }
+        return -1;
+    }
+
+    private static String normHeader(String s) {
+        if (s == null) return "";
+        return s.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+    }
+
+    private static boolean eqAny(String s, String... xs) {
+        if (s == null) return false;
+        for (String x : xs) {
+            if (s.equals(x)) return true;
+        }
+        return false;
+    }
+
+    private static String cell(List<String> row, int idx) {
+        if (row == null) return "";
+        if (idx < 0 || idx >= row.size()) return "";
+        return Optional.ofNullable(row.get(idx)).orElse("").trim();
+    }
+
+    private static void putIfNonBlank(Map<String, String> m, String k, String v) {
+        if (m == null || k == null || v == null) return;
+        String t = v.trim();
+        if (!t.isBlank()) m.put(k, t);
     }
 }

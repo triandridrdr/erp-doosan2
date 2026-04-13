@@ -21,42 +21,163 @@ const SALES_ORDER_HEADER_FIELDS = [
 ] as const;
 
 export function OcrNewPage() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
+  const [results, setResults] = useState<Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>>([]);
   const [data, setData] = useState<OcrNewDocumentAnalysisResponseData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<Array<{ component: string; description: string; category: string; composition: string }>>([]);
+  const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
+    Array<{ color: string; XS: string; S: string; M: string; L: string; XL: string; total: string; editable: boolean }>
+  >([]);
+
+  const appendLog = (msg: string) => {
+    const ts = new Date().toISOString();
+    setMultiFileLogs((prev) => [...prev, `[${ts}] ${msg}`]);
+  };
+
+  const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
+    const ff = d?.formFields ?? {};
+    const next: Record<string, string> = {};
+    for (const f of SALES_ORDER_HEADER_FIELDS) {
+      next[f] = ff[f] ?? '';
+    }
+    setSalesOrderHeaderDraft(next);
+
+    const bomTable = (d?.tables ?? []).find((t) => isBomDraftTable(t.rows));
+    if (bomTable?.rows?.length) {
+      const rows = bomTable.rows.slice(1).map((r) => ({
+        component: r?.[0] ?? '',
+        description: r?.[1] ?? '',
+        category: r?.[2] ?? '',
+        composition: r?.[3] ?? '',
+      }));
+      setBomDraftRows(rows);
+    } else {
+      setBomDraftRows([]);
+    }
+
+    const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
+    if (backendDetail.length > 0) {
+      setSalesOrderDetailDraftRows(
+        backendDetail
+          .map((m) => ({
+            color: (m?.color ?? m?.colour ?? '').toString(),
+            XS: (m?.XS ?? m?.xs ?? '').toString(),
+            S: (m?.S ?? m?.s ?? '').toString(),
+            M: (m?.M ?? m?.m ?? '').toString(),
+            L: (m?.L ?? m?.l ?? '').toString(),
+            XL: (m?.XL ?? m?.xl ?? '').toString(),
+            total: (m?.total ?? m?.Total ?? '').toString(),
+            editable: true,
+          }))
+          .filter((r) => [r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
+      );
+    } else {
+      setSalesOrderDetailDraftRows([]);
+    }
+  };
+
+  const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
+    const mergedHeader: Record<string, string> = {};
+    for (const f of SALES_ORDER_HEADER_FIELDS) {
+      let v = '';
+      for (const r of out) {
+        const cand = (r?.data?.formFields?.[f] ?? '').toString().trim();
+        if (cand) {
+          v = cand;
+          break;
+        }
+      }
+      mergedHeader[f] = v;
+    }
+    setSalesOrderHeaderDraft(mergedHeader);
+
+    let bomRows: Array<{ component: string; description: string; category: string; composition: string }> = [];
+    for (const r of out) {
+      const bomTable = (r?.data?.tables ?? []).find((t) => isBomDraftTable(t.rows));
+      if (bomTable?.rows?.length) {
+        bomRows = bomTable.rows.slice(1).map((row) => ({
+          component: row?.[0] ?? '',
+          description: row?.[1] ?? '',
+          category: row?.[2] ?? '',
+          composition: row?.[3] ?? '',
+        }));
+        break;
+      }
+    }
+    setBomDraftRows(bomRows);
+
+    let detailRows: Array<{ color: string; XS: string; S: string; M: string; L: string; XL: string; total: string; editable: boolean }> = [];
+    for (const r of out) {
+      const backendDetail = r?.data?.salesOrderDetailSizeBreakdown ?? [];
+      if (backendDetail.length > 0) {
+        detailRows = backendDetail
+          .map((m) => ({
+            color: (m?.color ?? m?.colour ?? '').toString(),
+            XS: (m?.XS ?? m?.xs ?? '').toString(),
+            S: (m?.S ?? m?.s ?? '').toString(),
+            M: (m?.M ?? m?.m ?? '').toString(),
+            L: (m?.L ?? m?.l ?? '').toString(),
+            XL: (m?.XL ?? m?.xl ?? '').toString(),
+            total: (m?.total ?? m?.Total ?? '').toString(),
+            editable: true,
+          }))
+          .filter((row) => [row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0));
+        if (detailRows.length > 0) break;
+      }
+    }
+    setSalesOrderDetailDraftRows(detailRows);
+  };
 
   const analyzeMutation = useMutation({
-    mutationFn: (file: File) => ocrNewApi.analyze(file),
-    onSuccess: (res) => {
-      setData(res.data);
-      setError(null);
-
-      const ff = res.data?.formFields ?? {};
-      const next: Record<string, string> = {};
-      for (const f of SALES_ORDER_HEADER_FIELDS) {
-        next[f] = ff[f] ?? '';
+    mutationFn: async (files: File[]) => {
+      const out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }> = [];
+      for (const f of files) {
+        const t0 = performance.now();
+        appendLog(`START file=${f.name} sizeBytes=${f.size}`);
+        try {
+          const res = await ocrNewApi.analyze(f);
+          const dtMs = Math.round(performance.now() - t0);
+          const pc = res?.data?.pageCount ?? 0;
+          const tc = res?.data?.tables?.length ?? 0;
+          const dc = (res?.data?.salesOrderDetailSizeBreakdown ?? []).length;
+          appendLog(`OK file=${f.name} durationMs=${dtMs} pageCount=${pc} tableCount=${tc} detailRowCount=${dc}`);
+          if (res?.data) {
+            out.push({ fileName: f.name, data: res.data });
+          }
+        } catch (e) {
+          const dtMs = Math.round(performance.now() - t0);
+          const msg = e instanceof Error ? e.message : String(e);
+          appendLog(`ERROR file=${f.name} durationMs=${dtMs} message=${msg}`);
+          throw e;
+        }
       }
-      setSalesOrderHeaderDraft(next);
+      return out;
+    },
+    onSuccess: (out) => {
+      setResults(out);
+      setError(null);
+      setActiveFileIndex(0);
+      const first = out?.[0]?.data ?? null;
+      setData(first);
 
-      const bomTable = (res.data?.tables ?? []).find((t) => isBomDraftTable(t.rows));
-      if (bomTable?.rows?.length) {
-        const rows = bomTable.rows.slice(1).map((r) => ({
-          component: r?.[0] ?? '',
-          description: r?.[1] ?? '',
-          category: r?.[2] ?? '',
-          composition: r?.[3] ?? '',
-        }));
-        setBomDraftRows(rows);
+      if (out.length <= 1) {
+        hydrateDraftsFromData(first);
       } else {
-        setBomDraftRows([]);
+        hydrateDraftsFromResultsMerged(out);
       }
     },
     onError: (e: Error) => {
       setError(e.message);
       setData(null);
+      setResults([]);
+      setSalesOrderHeaderDraft({});
+      setBomDraftRows([]);
+      setSalesOrderDetailDraftRows([]);
     },
   });
 
@@ -139,23 +260,28 @@ export function OcrNewPage() {
             <Input
               type='file'
               accept='.pdf,image/png,image/jpeg,image/jpg'
+              multiple
               onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                setSelectedFile(f);
+                const files = Array.from(e.target.files ?? []);
+                setSelectedFiles(files);
+                setActiveFileIndex(0);
                 setData(null);
+                setResults([]);
                 setError(null);
+                setMultiFileLogs([]);
                 setSalesOrderHeaderDraft({});
                 setBomDraftRows([]);
+                setSalesOrderDetailDraftRows([]);
               }}
             />
           </div>
           <div className='flex gap-3 justify-start md:justify-end'>
             <Button
               type='button'
-              disabled={!selectedFile || isPending}
+              disabled={selectedFiles.length === 0 || isPending}
               onClick={() => {
-                if (!selectedFile) return;
-                analyzeMutation.mutate(selectedFile);
+                if (selectedFiles.length === 0) return;
+                analyzeMutation.mutate(selectedFiles);
               }}
             >
               {isPending ? (
@@ -179,6 +305,171 @@ export function OcrNewPage() {
             <div className='text-sm'>{error}</div>
           </div>
         )}
+
+        {results.length > 1 && (
+          <div className='mt-4 flex flex-wrap gap-2'>
+            {results.map((r, idx) => (
+              <button
+                key={r.fileName}
+                type='button'
+                className={
+                  idx === activeFileIndex
+                    ? 'px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white'
+                    : 'px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'
+                }
+                onClick={() => {
+                  setActiveFileIndex(idx);
+                  const nextData = results[idx]?.data ?? null;
+                  setData(nextData);
+
+                  hydrateDraftsFromData(nextData);
+                }}
+              >
+                {r.fileName}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className='mt-4'>
+          <div className='flex items-center justify-between'>
+            <div className='text-xs font-semibold text-gray-500'>MULTI-FILE TRACKING LOG</div>
+            <Button
+              type='button'
+              variant='secondary'
+              onClick={() => {
+                setMultiFileLogs([]);
+              }}
+            >
+              Clear
+            </Button>
+          </div>
+          <pre className='mt-2 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl p-4 overflow-auto max-h-[24vh] whitespace-pre-wrap'>
+            {multiFileLogs.length === 0 ? 'No logs.' : multiFileLogs.join('\n')}
+          </pre>
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setSalesOrderDetailDraftRows((prev) => [...prev, { color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true }]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : salesOrderDetailDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
+          ) : (
+            <div className='overflow-auto'>
+              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XS</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>S</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>M</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>L</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XL</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {salesOrderDetailDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.color}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.XS}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, XS: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.S}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, S: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.M}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, M: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.L}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, L: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.XL}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, XL: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.total}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
