@@ -23,12 +23,16 @@ public class TableParser {
     private static final Pattern BOM_HEADER_HINT = Pattern.compile("\\bPosition\\b.*\\bPlacement\\b.*\\bType\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern BOM_ROW_START = Pattern.compile("^(Trim|Shell|Miscellaneous|Material)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern ONLY_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+$");
-    private static final Pattern STARTS_WITH_NUMBER = Pattern.compile("^\\d+(?:[.,]\\d+)?\\b");
     private static final Pattern TOKEN_HAS_PERCENT = Pattern.compile("\\d{1,3}\\s*%");
     private static final Pattern CONSTRUCTION_HINT = Pattern.compile("\\b\\d{2,}x\\d{2,}\\b|\\b\\d{1,3}\\*\\d{1,3}\\b|\\b\\d{2,}\\/\\d{1,2}\\/\\d{1,2}\\b|\\bx\\d{1,3}\\/\\d{1,2}\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern UNIT_TOKEN = Pattern.compile("^(km|yd|m|g/m|g/m2|gram/km)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ALL_CAPS_SPILLOVER = Pattern.compile("^[A-Z0-9][A-Z0-9\\s|.\\-]{2,}$");
     private static final Pattern BOM_HEADER_REQUIRED = Pattern.compile("\\bDescription\\b.*\\bComposition\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ID_LIKE_TOKEN = Pattern.compile("^(QW|QWO|TEL|THD|JY)[A-Z0-9\\-()]{2,}$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MIXED_ALNUM_TOKEN = Pattern.compile("^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z0-9\\-()/.]+$");
+    private static final Pattern SUPPLIER_STOPWORD = Pattern.compile("^(import|export|ltd|limited|co|company|trading|printing|dyeing|hangzhou|shao?xing|pt|indonesia)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NYLON_WORD = Pattern.compile("^%?nylon$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern STAR_SPEC = Pattern.compile("^\\d{1,3}\\*\\d{1,3}$");
 
     public List<OcrNewTableDto> parseTables(List<OcrNewLine> lines) {
         // Heuristic table detection:
@@ -210,6 +214,9 @@ public class TableParser {
         rows.add(List.of("Component", "Description", "Category", "Composition"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
 
+        List<StringBuilder> rawRowText = new ArrayList<>();
+        rawRowText.add(new StringBuilder());
+
         BomColumnCenters centers = deriveBomColumnCenters(headerLine);
         if (!centers.valid()) {
             // fallback to older heuristic if header didn't yield usable columns
@@ -217,6 +224,7 @@ public class TableParser {
         }
 
         List<String> cur = null;
+        StringBuilder curRaw = null;
         for (OcrNewLine l : sectionLines) {
             String txt = oneLine(l.getText());
             if (txt.isBlank()) continue;
@@ -224,6 +232,10 @@ public class TableParser {
 
             String txtClean = txt.replace("|", " ").replaceAll("[\\p{Punct}]", " ");
             txtClean = oneLine(txtClean);
+
+            // For composition extraction we must NOT remove '%' (otherwise tokens like '20%' become '20')
+            String txtCleanKeepPercent = txt.replace("|", " ").replaceAll("[\\p{Punct}&&[^%]]", " ");
+            txtCleanKeepPercent = oneLine(txtCleanKeepPercent);
             if (cur != null && ALL_CAPS_SPILLOVER.matcher(txt).matches() && txt.length() <= 40 && !TOKEN_HAS_PERCENT.matcher(txt).find()) {
                 continue;
             }
@@ -237,6 +249,14 @@ public class TableParser {
             }
 
             BomLineCells cells = extractBomLineCells(l, centers);
+            String wholeLine = oneLine(l.getText());
+            String compFromWhole = "";
+            if (TOKEN_HAS_PERCENT.matcher(wholeLine).find()) {
+                compFromWhole = normalizeBomComposition(wholeLine);
+                if (compFromWhole.isBlank()) {
+                    compFromWhole = extractMinimalComposition(wholeLine);
+                }
+            }
 
             boolean isContinuation = (cells.position.isBlank() || !BOM_ROW_START.matcher(cells.position).find()) && cur != null;
             if (!cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find()) {
@@ -248,20 +268,48 @@ public class TableParser {
                         cells.position,
                         cells.description,
                         cells.type,
-                        cells.composition
+                        (cells.composition.isBlank() ? compFromWhole : cells.composition)
                 ));
                 rows.add(cur);
+                curRaw = new StringBuilder();
+                curRaw.append(wholeLine);
+                rawRowText.add(curRaw);
             } else {
                 // Append continuation into description/composition based on which column has data
+                if (cur == null) {
+                    continue;
+                }
+                if (curRaw != null) {
+                    curRaw.append(' ').append(wholeLine);
+                }
                 if (!cells.description.isBlank()) {
                     cur.set(1, oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + cells.description));
                 }
                 if (!cells.composition.isBlank()) {
-                    cur.set(3, oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition));
+                    cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
                 } else if (TOKEN_HAS_PERCENT.matcher(txt).find() || looksLikeCompositionContinuation(txt)) {
                     // if OCR lost column alignment but line clearly looks like composition, append raw text to composition
-                    cur.set(3, oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtClean));
+                    cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtCleanKeepPercent)));
+                } else if (cur.get(3).isBlank() && !compFromWhole.isBlank()) {
+                    // last resort: if this line has % but didn't map into composition column, use whole-line extraction
+                    cur.set(3, compFromWhole);
+                } else if (!cur.get(3).isBlank() && TOKEN_HAS_PERCENT.matcher(cur.get(3)).find() && looksLikeCompositionContinuation(txt)) {
+                    // Special: keep fibre continuation words (e.g. 'YESTER') even if the line has no %
+                    String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
+                    if (!cont.isBlank()) {
+                        cur.set(3, oneLine(cur.get(3) + " " + cont));
+                    }
                 }
+            }
+        }
+
+        for (int ri = 1; ri < rows.size() && ri < rawRowText.size(); ri++) {
+            List<String> r = rows.get(ri);
+            if (r == null || r.size() < 4) continue;
+            String mergedRaw = oneLine(rawRowText.get(ri).toString());
+            if (!mergedRaw.isBlank() && TOKEN_HAS_PERCENT.matcher(mergedRaw).find()) {
+                String comp = normalizeBomComposition(mergedRaw);
+                if (!comp.isBlank()) r.set(3, comp);
             }
         }
 
@@ -385,11 +433,23 @@ public class TableParser {
         String desc = oneLine(description.toString());
         String comp = oneLine(composition.toString());
 
-        // Post-fix: if composition column got polluted without % but description has %, swap
+        // Normalize comp first; it may become empty if it was only noise.
+        comp = normalizeBomComposition(comp);
+
+        // Fallback 1: if comp became empty but desc contains %, extract from desc.
         if (comp.isBlank() && TOKEN_HAS_PERCENT.matcher(desc).find()) {
             BomDescComp dc = splitBomTail(desc);
             desc = dc.description;
-            comp = dc.composition;
+            comp = normalizeBomComposition(dc.composition);
+        }
+
+        // Fallback 2: if still empty, try from whole line text (handles column mis-assignment).
+        if (comp.isBlank()) {
+            String whole = oneLine(line.getText());
+            if (TOKEN_HAS_PERCENT.matcher(whole).find()) {
+                BomDescComp dc = splitBomTail(whole);
+                comp = normalizeBomComposition(dc.composition);
+            }
         }
 
         // trim all-caps spillover from description
@@ -398,6 +458,124 @@ public class TableParser {
         }
 
         return new BomLineCells(pos, plc, typ, desc, comp);
+    }
+
+    private static String normalizeBomComposition(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+
+        // If there's no percent at all, this is almost certainly consumption/weight/supplier noise.
+        if (!TOKEN_HAS_PERCENT.matcher(r).find()) {
+            return "";
+        }
+
+        String seg = extractCompositionSegments(r);
+        if (!seg.isBlank()) return seg;
+
+        BomDescComp dc = splitBomTail(r);
+        if (!dc.composition.isBlank()) return dc.composition;
+        return extractMinimalComposition(r);
+    }
+
+    private static String extractCompositionSegments(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+
+        StringBuilder out = new StringBuilder();
+        int i = 0;
+        while (i < parts.length) {
+            String tok0 = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            if (!TOKEN_HAS_PERCENT.matcher(tok0).find()) {
+                i++;
+                continue;
+            }
+
+            int start = i;
+            int j = i + 1;
+            for (; j < parts.length; j++) {
+                String tok = parts[j];
+                String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                if (tokClean.isBlank()) continue;
+                String low = tokClean.toLowerCase();
+
+                // Stop segment when another percent token starts (start of next segment)
+                if (TOKEN_HAS_PERCENT.matcher(tokClean).find()) {
+                    break;
+                }
+
+                if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) break;
+                if (ID_LIKE_TOKEN.matcher(tokClean).matches()) break;
+                if (UNIT_TOKEN.matcher(tokClean).matches()) break;
+                if (CONSTRUCTION_HINT.matcher(tokClean).find()) break;
+                if (NYLON_WORD.matcher(tokClean).matches() && j + 1 < parts.length) {
+                    String next = parts[j + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                    if (STAR_SPEC.matcher(next).matches()) break;
+                }
+                if (MIXED_ALNUM_TOKEN.matcher(tokClean).matches() && !isFiberWord(low)) break;
+                if (tokClean.matches("[A-Z]{3,}") && !isFiberWord(low)) break;
+            }
+
+            String segmentRaw = joinParts(parts, start, j);
+            String cleaned = cleanCompositionTokens(segmentRaw);
+            if (!cleaned.isBlank()) {
+                if (out.length() > 0) out.append(' ');
+                out.append(cleaned);
+            }
+
+            // Continue scanning from where we stopped (j). If we stopped due to stopword/construction,
+            // move forward by 1 to avoid infinite loops on the same token.
+            i = (j <= i ? i + 1 : j);
+        }
+
+        return oneLine(out.toString());
+    }
+
+    private static String extractMinimalComposition(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+        int pctIdx = -1;
+        for (int i = 0; i < parts.length; i++) {
+            String tokClean = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            if (TOKEN_HAS_PERCENT.matcher(tokClean).find()) {
+                pctIdx = i;
+                break;
+            }
+        }
+        if (pctIdx < 0) return "";
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = pctIdx; i < parts.length; i++) {
+            String tok = parts[i];
+            String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            if (tokClean.isBlank()) continue;
+            String low = tokClean.toLowerCase();
+
+            if (i > pctIdx) {
+                if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) break;
+                if (ID_LIKE_TOKEN.matcher(tokClean).matches()) break;
+                if (CONSTRUCTION_HINT.matcher(tokClean).find()) break;
+                if (UNIT_TOKEN.matcher(tokClean).matches()) break;
+                if (MIXED_ALNUM_TOKEN.matcher(tokClean).matches() && !isFiberWord(low)) break;
+                if (tokClean.matches("[A-Z]{3,}") && !isFiberWord(low)) break;
+
+                // Stop if we are entering construction spec like '%nylon 20*32'
+                if (NYLON_WORD.matcher(tokClean).matches() && i + 1 < parts.length) {
+                    String next = parts[i + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                    if (STAR_SPEC.matcher(next).matches()) {
+                        break;
+                    }
+                }
+            }
+
+            // Keep token as-is; this fallback is intentionally permissive.
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(tokClean);
+        }
+
+        // If we ended up keeping only the percent token, still return it (better than empty).
+        return oneLine(sb.toString());
     }
 
     private record BomDescComp(String description, String composition) {
@@ -426,6 +604,26 @@ public class TableParser {
             String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
             String low = tokClean.toLowerCase();
 
+            // Stop if we reached supplier/article/id like segments
+            if (i > pctIdx) {
+                if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) {
+                    stopIdx = i;
+                    break;
+                }
+                if (ID_LIKE_TOKEN.matcher(tokClean).matches()) {
+                    stopIdx = i;
+                    break;
+                }
+                if (MIXED_ALNUM_TOKEN.matcher(tokClean).matches() && !isFiberWord(low)) {
+                    stopIdx = i;
+                    break;
+                }
+                if (tokClean.matches("[A-Z]{3,}") && !isFiberWord(low)) {
+                    stopIdx = i;
+                    break;
+                }
+            }
+
             if (CONSTRUCTION_HINT.matcher(tokClean).find()) {
                 stopIdx = i;
                 break;
@@ -448,8 +646,108 @@ public class TableParser {
         }
 
         String description = joinParts(parts, 0, pctIdx);
-        String composition = joinParts(parts, pctIdx, stopIdx);
+        String compositionRaw = joinParts(parts, pctIdx, stopIdx);
+        String composition = cleanCompositionTokens(compositionRaw);
         return new BomDescComp(description, composition);
+    }
+
+    private static String cleanCompositionTokens(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        String prevKeptLow = "";
+        for (int i = 0; i < parts.length; i++) {
+            String p = parts[i];
+            String tokClean = p.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            if (tokClean.isBlank()) continue;
+            String low = tokClean.toLowerCase();
+
+            // Stop if we are entering construction spec like '%nylon 20*32'
+            if (NYLON_WORD.matcher(tokClean).matches() && i + 1 < parts.length && STAR_SPEC.matcher(parts[i + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "")).matches()) {
+                break;
+            }
+
+            if (low.equals("irculose")) {
+                tokClean = "circulose";
+                low = "circulose";
+            }
+            if (low.equals("wit")) {
+                tokClean = "with";
+                low = "with";
+            }
+            if (low.equals("yester")) {
+                tokClean = "YESTER";
+            }
+
+            if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) break;
+            if (ID_LIKE_TOKEN.matcher(tokClean).matches()) break;
+            if (MIXED_ALNUM_TOKEN.matcher(tokClean).matches() && !isFiberWord(low)) break;
+            if (tokClean.matches("[A-Z]{3,}") && !isFiberWord(low)) break;
+
+            // Drop nylon noise unless it's part of a legit fibre list (in our documents it is construction spec)
+            if (low.equals("nylon") || low.equals("%nylon")) {
+                continue;
+            }
+
+            boolean keep = TOKEN_HAS_PERCENT.matcher(tokClean).find() || isFiberWord(low) || isCompositionGlueWord(low);
+            // Keep 1-letter fragments right after 'with' (OCR often splits 'circulose' into 'c irculose', or uses 'with c')
+            if (!keep && tokClean.length() == 1 && "with".equals(prevKeptLow)) {
+                keep = true;
+            }
+            if (!keep) continue;
+
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(tokClean);
+            prevKeptLow = tokClean.toLowerCase();
+        }
+        return oneLine(sb.toString());
+    }
+
+    private static boolean isCompositionGlueWord(String low) {
+        if (low == null || low.isBlank()) return false;
+        return low.equals("with")
+                || low.equals("and")
+                || low.equals("&")
+                || low.equals("so");
+    }
+
+    private static String extractCompositionContinuationTokens(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            String tokClean = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            if (tokClean.isBlank()) continue;
+            String low = tokClean.toLowerCase();
+
+            // Stop if we are entering construction spec like '%nylon 20*32'
+            if (NYLON_WORD.matcher(tokClean).matches() && i + 1 < parts.length && STAR_SPEC.matcher(parts[i + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "")).matches()) {
+                break;
+            }
+            if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) break;
+            if (ID_LIKE_TOKEN.matcher(tokClean).matches()) break;
+
+            if (low.equals("irculose")) {
+                tokClean = "circulose";
+                low = "circulose";
+            }
+            if (low.equals("wit")) {
+                tokClean = "with";
+                low = "with";
+            }
+            if (low.equals("yester")) {
+                tokClean = "YESTER";
+                low = "yester";
+            }
+
+            boolean keep = isFiberWord(low) || isCompositionGlueWord(low) || (tokClean.length() == 1 && i > 0 && parts[i - 1].equalsIgnoreCase("with"));
+            if (!keep) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(tokClean);
+        }
+        return oneLine(sb.toString());
     }
 
     private static String joinParts(String[] parts, int start, int end) {
@@ -468,10 +766,25 @@ public class TableParser {
     private static boolean looksLikeCompositionContinuation(String txt) {
         String lower = oneLine(txt).toLowerCase();
         if (lower.isBlank()) return false;
-        if (lower.contains("viscose") || lower.contains("polyamide") || lower.contains("polyester") || lower.contains("nylon") || lower.contains("cotton") || lower.contains("elastane") || lower.contains("spandex") || lower.contains("circulose")) {
+        if (lower.contains("viscose") || lower.contains("polyamide") || lower.contains("polyester") || lower.contains("nylon") || lower.contains("cotton") || lower.contains("elastane") || lower.contains("spandex") || lower.contains("circulose") || lower.contains("revisco") || lower.contains("yester") || lower.contains(" so pol") || lower.contains(" wit ") || lower.endsWith(" wit")) {
             return true;
         }
         return false;
+    }
+
+    private static boolean isFiberWord(String low) {
+        if (low == null || low.isBlank()) return false;
+        return low.contains("viscose")
+                || low.contains("revis")
+                || low.contains("revisco")
+                || low.contains("circulose")
+                || low.contains("polyamide")
+                || low.contains("polyester")
+                || low.contains("cotton")
+                || low.contains("elastane")
+                || low.contains("spandex")
+                || low.equals("pol")
+                || low.equals("yester");
     }
 
     private static BomRowStart parseBomRowStart(String txt) {
