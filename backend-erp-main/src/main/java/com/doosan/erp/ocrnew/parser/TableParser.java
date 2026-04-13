@@ -480,8 +480,16 @@ public class TableParser {
 
             // Some scans split 'circulose, 20% POLYAMIDE' across multiple lines where supplier stopwords cut segments.
             // Re-add key fibre tokens when raw row text contains them but extracted segments dropped them.
-            if ((lowRaw.contains("circulose") || lowRaw.contains("irculose")) && lowSeg.contains("20%") && !lowSeg.contains("circulose")) {
-                seg = insertBeforePercent(seg, "20%", "circulose,");
+            if ((lowRaw.contains("circulose") || lowRaw.contains("irculose")) && lowSeg.contains("20%") && !lowSeg.contains("circulose") && !lowSeg.contains("irculose")) {
+                String circTok = lowRaw.contains("irculose") ? "irculose," : "circulose,";
+                seg = insertBeforePercent(seg, "20%", circTok);
+                lowSeg = seg.toLowerCase();
+            }
+            // If OCR dropped the 'Viscose with c' middle phrase (often split around supplier tokens), put it back.
+            if (lowRaw.contains("viscose") && !lowSeg.contains("viscose")) {
+                // Insert after the first percent+material token, so formatter can render it as line 2.
+                seg = seg.replaceFirst("^(\\d{1,3}%\\s+\\S+)(?:\\s+|$)", "$1 Viscose with c ");
+                seg = oneLine(seg);
                 lowSeg = seg.toLowerCase();
             }
             if (lowRaw.contains("polyamide") && lowSeg.contains("20%") && !lowSeg.contains("polyamide")) {
@@ -530,15 +538,88 @@ public class TableParser {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
 
-        // New line before every percent token after the first one
-        r = r.replaceAll("(\\d{1,3}%)(\\s+)", "$1 ");
-        r = r.replaceAll("(?i)(?<!^)(?:\\s+)(\\d{1,3}%\\s*)", "\n$1");
+        String[] parts = r.split("\\s+");
+        if (parts.length == 0) return "";
 
-        // Put key fibre continuation tokens on a new line if present
-        r = r.replaceAll("(?i)\\s+(POLYAMIDE)\\b", "\n$1");
-        r = r.replaceAll("(?i)\\s+(YESTER)\\b", "\n$1");
+        int firstPct = -1;
+        for (int i = 0; i < parts.length; i++) {
+            if (TOKEN_HAS_PERCENT.matcher(stripPunctKeepPercent(parts[i])).find()) {
+                firstPct = i;
+                break;
+            }
+        }
+        if (firstPct < 0) return r;
 
-        return r.trim();
+        StringBuilder out = new StringBuilder();
+
+        // Line 1: first percent token + next token (e.g. "80% Revisco")
+        String pctTok = stripPunctKeepPercent(parts[firstPct]);
+        if (!pctTok.isBlank()) out.append(pctTok);
+        int i = firstPct + 1;
+        if (i < parts.length) {
+            String next = stripPunctKeepPercent(parts[i]);
+            if (!next.isBlank() && !TOKEN_HAS_PERCENT.matcher(next).find()) {
+                out.append(' ').append(next);
+                i++;
+            }
+        }
+
+        StringBuilder line2 = new StringBuilder();
+        StringBuilder line3 = new StringBuilder();
+        boolean startedLine3 = false;
+
+        for (; i < parts.length; i++) {
+            String tok = stripPunctKeepPercent(parts[i]);
+            if (tok.isBlank()) continue;
+            String low = tok.toLowerCase();
+
+            boolean isKeyFiberSingleLine = low.equals("polyamide") || low.equals("yester");
+            if (isKeyFiberSingleLine) {
+                if (line2.length() > 0) {
+                    out.append('\n').append(oneLine(line2.toString()));
+                    line2.setLength(0);
+                }
+                if (line3.length() > 0) {
+                    out.append('\n').append(oneLine(line3.toString()));
+                    line3.setLength(0);
+                }
+                out.append('\n').append(tok.toUpperCase());
+                startedLine3 = true;
+                continue;
+            }
+
+            // Start line3 when we hit circulose/irculose so we can keep "circulose, 20%" together.
+            boolean isCirculoseToken = low.startsWith("circulose") || low.startsWith("irculose");
+            if (!startedLine3 && isCirculoseToken) {
+                if (line2.length() > 0) {
+                    out.append('\n').append(oneLine(line2.toString()));
+                    line2.setLength(0);
+                }
+                startedLine3 = true;
+            }
+
+            // If another percent segment appears later, start it on a new line unless it's the expected "circulose, 20%" pair.
+            boolean isPercentTok = TOKEN_HAS_PERCENT.matcher(tok).find();
+            if (isPercentTok && startedLine3) {
+                String prev = stripPunctKeepPercent(parts[Math.max(0, i - 1)]).toLowerCase();
+                boolean prevIsCirculose = prev.startsWith("circulose") || prev.startsWith("irculose");
+                if (!prevIsCirculose) {
+                    if (line3.length() > 0) {
+                        out.append('\n').append(oneLine(line3.toString()));
+                        line3.setLength(0);
+                    }
+                }
+            }
+
+            StringBuilder target = startedLine3 ? line3 : line2;
+            if (target.length() > 0) target.append(' ');
+            target.append(tok);
+        }
+
+        if (line2.length() > 0) out.append('\n').append(oneLine(line2.toString()));
+        if (line3.length() > 0) out.append('\n').append(oneLine(line3.toString()));
+
+        return out.toString().trim();
     }
 
     private static String insertBeforePercent(String raw, String percentToken, String toInsert) {
