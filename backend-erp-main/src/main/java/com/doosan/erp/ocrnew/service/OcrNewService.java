@@ -62,14 +62,20 @@ public class OcrNewService {
     }
 
     public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file) {
+        return analyzeDocument(file, null);
+    }
+
+    public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file, Boolean debugOverride) {
         validateFile(file);
+
+        boolean effectiveDebug = debugLogging || Boolean.TRUE.equals(debugOverride);
 
         try {
             byte[] fileBytes = file.getBytes();
 
-            if (debugLogging) {
-                log.info("[OCR-NEW][DEBUG] analyzeDocument start: fileName={}, contentType={}, sizeBytes={}, renderDpi={}",
-                        file.getOriginalFilename(), file.getContentType(), fileBytes.length, renderDpi);
+            if (effectiveDebug) {
+                log.info("[OCR-NEW][DEBUG] analyzeDocument start: fileName={}, contentType={}, sizeBytes={}, renderDpi={}, debugOverride={}",
+                        file.getOriginalFilename(), file.getContentType(), fileBytes.length, renderDpi, debugOverride);
             }
 
             List<BufferedImage> pageImages;
@@ -83,7 +89,7 @@ public class OcrNewService {
                 pageImages = List.of(img);
             }
 
-            if (debugLogging) {
+            if (effectiveDebug) {
                 log.info("[OCR-NEW][DEBUG] rendered pages: pageCount={}", pageImages.size());
                 for (int i = 0; i < Math.min(pageImages.size(), 5); i++) {
                     BufferedImage img = pageImages.get(i);
@@ -104,7 +110,7 @@ public class OcrNewService {
                     .thenComparingInt(OcrNewLine::getTop)
                     .thenComparingInt(OcrNewLine::getLeft));
 
-            if (debugLogging) {
+            if (effectiveDebug) {
                 log.info("[OCR-NEW][DEBUG] ocr lines: count={}", allLines.size());
                 for (int i = 0; i < Math.min(allLines.size(), 80); i++) {
                     OcrNewLine l = allLines.get(i);
@@ -128,7 +134,7 @@ public class OcrNewService {
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
 
-            if (debugLogging) {
+            if (effectiveDebug) {
                 log.info("[OCR-NEW][DEBUG] extractedText preview: {}", truncate(extractedText, 4000));
                 log.info("[OCR-NEW][DEBUG] keyValuePairs: count={}", pairs.size());
                 for (int i = 0; i < Math.min(pairs.size(), 80); i++) {

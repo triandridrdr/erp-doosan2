@@ -6,7 +6,7 @@ export const ocrNewApi = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await client.post<OcrNewDocumentAnalysisResponse>('/api/v1/ocr-new/analyze', formData, {
+    const response = await client.post<OcrNewDocumentAnalysisResponse>('/api/v1/ocr-new/analyze?debug=true', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

@@ -35,9 +35,10 @@ public class OcrNewController {
                     required = true,
                     content = @Content(mediaType = MediaType.MULTIPART_FORM_DATA_VALUE)
             )
-            @RequestParam("file") MultipartFile file
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "debug", required = false) Boolean debug
     ) {
-        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file);
+        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file, debug);
         return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW analysis completed"));
     }
 }
