@@ -26,6 +26,7 @@ export function OcrNewPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
+  const [bomDraftRows, setBomDraftRows] = useState<Array<{ component: string; description: string; category: string; composition: string }>>([]);
 
   const analyzeMutation = useMutation({
     mutationFn: (file: File) => ocrNewApi.analyze(file),
@@ -39,6 +40,19 @@ export function OcrNewPage() {
         next[f] = ff[f] ?? '';
       }
       setSalesOrderHeaderDraft(next);
+
+      const bomTable = (res.data?.tables ?? []).find((t) => isBomDraftTable(t.rows));
+      if (bomTable?.rows?.length) {
+        const rows = bomTable.rows.slice(1).map((r) => ({
+          component: r?.[0] ?? '',
+          description: r?.[1] ?? '',
+          category: r?.[2] ?? '',
+          composition: r?.[3] ?? '',
+        }));
+        setBomDraftRows(rows);
+      } else {
+        setBomDraftRows([]);
+      }
     },
     onError: (e: Error) => {
       setError(e.message);
@@ -131,6 +145,7 @@ export function OcrNewPage() {
                 setData(null);
                 setError(null);
                 setSalesOrderHeaderDraft({});
+                setBomDraftRows([]);
               }}
             />
           </div>
@@ -164,6 +179,88 @@ export function OcrNewPage() {
             <div className='text-sm'>{error}</div>
           </div>
         )}
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 3 – BILL OF MATERIALS (BOM DRAFT)</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setBomDraftRows((prev) => [...prev, { component: '', description: '', category: '', composition: '' }]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : bomDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
+          ) : (
+            <div className='overflow-auto'>
+              <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Component</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Category</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {bomDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.component}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, component: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.description}
+                          rows={2}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, description: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.category}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, category: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.composition}
+                          rows={2}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
@@ -277,5 +374,18 @@ export function OcrNewPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function isBomDraftTable(rows: Array<Array<string>> | undefined): boolean {
+  if (!rows || rows.length === 0) return false;
+  const header = rows[0] ?? [];
+  const norm = (s: string | undefined) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (header.length < 4) return false;
+  return (
+    norm(header[0]) === 'component' &&
+    norm(header[1]) === 'description' &&
+    norm(header[2]) === 'category' &&
+    norm(header[3]) === 'composition'
   );
 }
