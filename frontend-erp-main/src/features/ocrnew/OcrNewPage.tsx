@@ -183,10 +183,6 @@ export function OcrNewPage() {
 
   const isPending = analyzeMutation.isPending;
 
-  const formFieldsEntries = useMemo(() => {
-    const obj = data?.formFields ?? {};
-    return Object.entries(obj).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [data]);
 
   const hasHeaderDraft = useMemo(() => {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
@@ -549,117 +545,6 @@ export function OcrNewPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
-        <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-          <div className='bg-gray-50 px-6 py-4 border-b border-gray-200'>
-            <h4 className='font-semibold text-gray-900'>Form Fields</h4>
-            <p className='text-xs text-gray-500 mt-1'>Key-value pairs extracted from OCR lines.</p>
-          </div>
-          <div className='p-6'>
-            {!data ? (
-              <div className='text-sm text-gray-500 italic'>No data.</div>
-            ) : formFieldsEntries.length === 0 ? (
-              <div className='text-sm text-gray-500 italic'>No fields detected.</div>
-            ) : (
-              <div className='overflow-auto max-h-[60vh]'>
-                <table className='min-w-full border border-gray-200 rounded-lg overflow-hidden'>
-                  <thead className='bg-gray-50'>
-                    <tr>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className='bg-white'>
-                    {formFieldsEntries.map(([k, v]) => (
-                      <tr key={k} className='border-b border-gray-100 last:border-b-0'>
-                        <td className='px-3 py-2 text-sm text-gray-900 align-top whitespace-nowrap'>{k}</td>
-                        <td className='px-3 py-2 text-sm text-gray-700 align-top'>{v}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-          <div className='bg-gray-50 px-6 py-4 border-b border-gray-200'>
-            <h4 className='font-semibold text-gray-900'>Tables</h4>
-            <p className='text-xs text-gray-500 mt-1'>Heuristic table detection from word alignment.</p>
-          </div>
-          <div className='p-6'>
-            {!data ? (
-              <div className='text-sm text-gray-500 italic'>No data.</div>
-            ) : (data.tables?.length ?? 0) === 0 ? (
-              <div className='text-sm text-gray-500 italic'>No tables detected.</div>
-            ) : (
-              <div className='space-y-4 overflow-auto max-h-[60vh] pr-2'>
-                {data.tables.map((t) => (
-                  <div key={`${t.page}-${t.index}`} className='border border-gray-200 rounded-xl overflow-hidden'>
-                    <div className='px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600 flex items-center justify-between'>
-                      <span>Page {t.page} - Table {t.index}</span>
-                      <span>
-                        {t.rowCount}x{t.columnCount}
-                      </span>
-                    </div>
-                    <div className='overflow-auto'>
-                      <table className='min-w-full'>
-                        <tbody>
-                          {t.rows.slice(0, 25).map((row, i) => (
-                            <tr key={i} className='border-b border-gray-100 last:border-b-0'>
-                              {row.map((cell, ci) => (
-                                <td key={ci} className='px-3 py-2 text-sm text-gray-700 whitespace-nowrap'>
-                                  {cell}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-        <div className='bg-gray-50 px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div>
-            <h4 className='font-semibold text-gray-900'>Raw OCR Output</h4>
-            <p className='text-xs text-gray-500 mt-1'>Extracted text + lines (first 200).</p>
-          </div>
-          {data && (
-            <div className='text-xs text-gray-600'>Avg confidence: {Math.round((data.averageConfidence ?? 0) * 10) / 10}</div>
-          )}
-        </div>
-        <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : (
-            <div className='space-y-4'>
-              <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl p-4 overflow-auto max-h-[40vh] whitespace-pre-wrap'>
-                {data.extractedText}
-              </pre>
-              <pre className='text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl p-4 overflow-auto max-h-[40vh] whitespace-pre-wrap'>
-                {JSON.stringify(
-                  {
-                    pageCount: data.pageCount,
-                    keyValuePairs: data.keyValuePairs?.slice(0, 200) ?? [],
-                    lines: data.lines?.slice(0, 200) ?? [],
-                  },
-                  null,
-                  2,
-                )}
-              </pre>
             </div>
           )}
         </div>
