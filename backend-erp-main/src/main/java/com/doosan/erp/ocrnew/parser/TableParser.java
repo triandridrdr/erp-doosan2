@@ -470,11 +470,25 @@ public class TableParser {
         }
 
         String seg = extractCompositionSegments(r);
-        if (!seg.isBlank()) return seg;
+        if (!seg.isBlank()) {
+            // If OCR pushed 'YESTER' to a continuation line after units/supplier tokens, segments may drop it.
+            // Re-add when clearly present in the raw row text.
+            String lowRaw = r.toLowerCase();
+            String lowSeg = seg.toLowerCase();
+            if (lowRaw.contains("yester") && !lowSeg.contains("yester")) {
+                seg = oneLine(seg + " YESTER");
+            }
+            return seg;
+        }
 
         BomDescComp dc = splitBomTail(r);
         if (!dc.composition.isBlank()) return dc.composition;
         return extractMinimalComposition(r);
+    }
+
+    private static String stripPunctKeepPercent(String s) {
+        if (s == null) return "";
+        return s.replaceAll("^[\\p{Punct}&&[^%]]+|[\\p{Punct}&&[^%]]+$", "");
     }
 
     private static String extractCompositionSegments(String raw) {
@@ -485,17 +499,37 @@ public class TableParser {
         StringBuilder out = new StringBuilder();
         int i = 0;
         while (i < parts.length) {
-            String tok0 = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tok0 = stripPunctKeepPercent(parts[i]);
             if (!TOKEN_HAS_PERCENT.matcher(tok0).find()) {
                 i++;
                 continue;
             }
 
+            // Include a few fibre/glue tokens just before the % token (e.g. 'circulose, 20%')
             int start = i;
+            int back = i - 1;
+            int backLimit = Math.max(0, i - 3);
+            while (back >= backLimit) {
+                String prev = stripPunctKeepPercent(parts[back]);
+                if (prev.isBlank()) {
+                    back--;
+                    continue;
+                }
+                String prevLow = prev.toLowerCase();
+                if (TOKEN_HAS_PERCENT.matcher(prev).find()) break;
+                if (SUPPLIER_STOPWORD.matcher(prev).matches()) break;
+                if (ID_LIKE_TOKEN.matcher(prev).matches()) break;
+                if (UNIT_TOKEN.matcher(prev).matches()) break;
+                if (CONSTRUCTION_HINT.matcher(prev).find()) break;
+                if (!(isFiberWord(prevLow) || isCompositionGlueWord(prevLow))) break;
+                start = back;
+                back--;
+            }
+
             int j = i + 1;
             for (; j < parts.length; j++) {
                 String tok = parts[j];
-                String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                String tokClean = stripPunctKeepPercent(tok);
                 if (tokClean.isBlank()) continue;
                 String low = tokClean.toLowerCase();
 
@@ -509,7 +543,7 @@ public class TableParser {
                 if (UNIT_TOKEN.matcher(tokClean).matches()) break;
                 if (CONSTRUCTION_HINT.matcher(tokClean).find()) break;
                 if (NYLON_WORD.matcher(tokClean).matches() && j + 1 < parts.length) {
-                    String next = parts[j + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                    String next = stripPunctKeepPercent(parts[j + 1]);
                     if (STAR_SPEC.matcher(next).matches()) break;
                 }
                 if (MIXED_ALNUM_TOKEN.matcher(tokClean).matches() && !isFiberWord(low)) break;
@@ -537,7 +571,7 @@ public class TableParser {
         String[] parts = r.split("\\s+");
         int pctIdx = -1;
         for (int i = 0; i < parts.length; i++) {
-            String tokClean = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tokClean = stripPunctKeepPercent(parts[i]);
             if (TOKEN_HAS_PERCENT.matcher(tokClean).find()) {
                 pctIdx = i;
                 break;
@@ -548,7 +582,7 @@ public class TableParser {
         StringBuilder sb = new StringBuilder();
         for (int i = pctIdx; i < parts.length; i++) {
             String tok = parts[i];
-            String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tokClean = stripPunctKeepPercent(tok);
             if (tokClean.isBlank()) continue;
             String low = tokClean.toLowerCase();
 
@@ -562,7 +596,7 @@ public class TableParser {
 
                 // Stop if we are entering construction spec like '%nylon 20*32'
                 if (NYLON_WORD.matcher(tokClean).matches() && i + 1 < parts.length) {
-                    String next = parts[i + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+                    String next = stripPunctKeepPercent(parts[i + 1]);
                     if (STAR_SPEC.matcher(next).matches()) {
                         break;
                     }
@@ -601,7 +635,7 @@ public class TableParser {
         int stopIdx = parts.length;
         for (int i = pctIdx; i < parts.length; i++) {
             String tok = parts[i];
-            String tokClean = tok.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tokClean = stripPunctKeepPercent(tok);
             String low = tokClean.toLowerCase();
 
             // Stop if we reached supplier/article/id like segments
@@ -659,9 +693,19 @@ public class TableParser {
         String prevKeptLow = "";
         for (int i = 0; i < parts.length; i++) {
             String p = parts[i];
-            String tokClean = p.replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tokClean = stripPunctKeepPercent(p);
             if (tokClean.isBlank()) continue;
             String low = tokClean.toLowerCase();
+
+            // Convert bare numeric token into percent when followed by a fibre word (e.g. '20 POLYAMIDE')
+            if (tokClean.matches("\\d{1,3}") && i + 1 < parts.length) {
+                String next = stripPunctKeepPercent(parts[i + 1]);
+                String nextLow = next.toLowerCase();
+                if (isFiberWord(nextLow)) {
+                    tokClean = tokClean + "%";
+                    low = tokClean.toLowerCase();
+                }
+            }
 
             // Stop if we are entering construction spec like '%nylon 20*32'
             if (NYLON_WORD.matcher(tokClean).matches() && i + 1 < parts.length && STAR_SPEC.matcher(parts[i + 1].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "")).matches()) {
@@ -718,7 +762,7 @@ public class TableParser {
         String[] parts = r.split("\\s+");
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < parts.length; i++) {
-            String tokClean = parts[i].replaceAll("^[\\p{Punct}]+|[\\p{Punct}]+$", "");
+            String tokClean = stripPunctKeepPercent(parts[i]);
             if (tokClean.isBlank()) continue;
             String low = tokClean.toLowerCase();
 
