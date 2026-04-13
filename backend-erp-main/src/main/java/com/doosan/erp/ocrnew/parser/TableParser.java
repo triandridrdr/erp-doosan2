@@ -475,10 +475,23 @@ public class TableParser {
             // Re-add when clearly present in the raw row text.
             String lowRaw = r.toLowerCase();
             String lowSeg = seg.toLowerCase();
+            seg = dedupePercentTokens(seg);
+            lowSeg = seg.toLowerCase();
+
+            // Some scans split 'circulose, 20% POLYAMIDE' across multiple lines where supplier stopwords cut segments.
+            // Re-add key fibre tokens when raw row text contains them but extracted segments dropped them.
+            if ((lowRaw.contains("circulose") || lowRaw.contains("irculose")) && lowSeg.contains("20%") && !lowSeg.contains("circulose")) {
+                seg = insertBeforePercent(seg, "20%", "circulose,");
+                lowSeg = seg.toLowerCase();
+            }
+            if (lowRaw.contains("polyamide") && lowSeg.contains("20%") && !lowSeg.contains("polyamide")) {
+                seg = oneLine(seg + " POLYAMIDE");
+                lowSeg = seg.toLowerCase();
+            }
             if (lowRaw.contains("yester") && !lowSeg.contains("yester")) {
                 seg = oneLine(seg + " YESTER");
             }
-            return seg;
+            return formatBomCompositionMultiline(seg);
         }
 
         BomDescComp dc = splitBomTail(r);
@@ -489,6 +502,65 @@ public class TableParser {
     private static String stripPunctKeepPercent(String s) {
         if (s == null) return "";
         return s.replaceAll("^[\\p{Punct}&&[^%]]+|[\\p{Punct}&&[^%]]+$", "");
+    }
+
+    private static String dedupePercentTokens(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        String lastPct = "";
+        for (String p : parts) {
+            String tok = stripPunctKeepPercent(p);
+            if (tok.isBlank()) continue;
+            if (TOKEN_HAS_PERCENT.matcher(tok).find()) {
+                String pct = tok.replaceAll("[^0-9%]", "");
+                if (!lastPct.isBlank() && lastPct.equals(pct)) {
+                    continue;
+                }
+                lastPct = pct;
+            }
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(tok);
+        }
+        return oneLine(sb.toString());
+    }
+
+    private static String formatBomCompositionMultiline(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+
+        // New line before every percent token after the first one
+        r = r.replaceAll("(\\d{1,3}%)(\\s+)", "$1 ");
+        r = r.replaceAll("(?i)(?<!^)(?:\\s+)(\\d{1,3}%\\s*)", "\n$1");
+
+        // Put key fibre continuation tokens on a new line if present
+        r = r.replaceAll("(?i)\\s+(POLYAMIDE)\\b", "\n$1");
+        r = r.replaceAll("(?i)\\s+(YESTER)\\b", "\n$1");
+
+        return r.trim();
+    }
+
+    private static String insertBeforePercent(String raw, String percentToken, String toInsert) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        String[] parts = r.split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        boolean inserted = false;
+        for (String p : parts) {
+            String tok = stripPunctKeepPercent(p);
+            if (!inserted && percentToken.equalsIgnoreCase(tok)) {
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(toInsert);
+                sb.append(' ');
+                inserted = true;
+                sb.append(tok);
+                continue;
+            }
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(tok);
+        }
+        return oneLine(sb.toString());
     }
 
     private static String extractCompositionSegments(String raw) {
@@ -696,6 +768,12 @@ public class TableParser {
             String tokClean = stripPunctKeepPercent(p);
             if (tokClean.isBlank()) continue;
             String low = tokClean.toLowerCase();
+
+            // Normalize tokens like '80%Revis' -> '80%' (OCR sometimes sticks trailing letters to %)
+            if (tokClean.matches("\\d{1,3}%[A-Za-z]{2,}") && TOKEN_HAS_PERCENT.matcher(tokClean).find()) {
+                tokClean = tokClean.replaceAll("^(\\d{1,3}%)(?:[A-Za-z]{2,})$", "$1");
+                low = tokClean.toLowerCase();
+            }
 
             // Convert bare numeric token into percent when followed by a fibre word (e.g. '20 POLYAMIDE')
             if (tokClean.matches("\\d{1,3}") && i + 1 < parts.length) {
