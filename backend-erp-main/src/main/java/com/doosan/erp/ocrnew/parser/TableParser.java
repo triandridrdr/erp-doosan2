@@ -134,10 +134,12 @@ public class TableParser {
 
         Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
         List<OcrNewTableDto> out = new ArrayList<>();
+        List<List<String>> mergedRows = new ArrayList<>();
+        mergedRows.add(List.of("Component", "Description", "Category", "Composition"));
 
-        for (Map.Entry<Integer, List<OcrNewLine>> e : byPage.entrySet()) {
-            int page = e.getKey();
-            List<OcrNewLine> pageLines = e.getValue().stream()
+        List<Integer> pages = byPage.keySet().stream().sorted().toList();
+        for (Integer page : pages) {
+            List<OcrNewLine> pageLines = byPage.get(page).stream()
                     .filter(Objects::nonNull)
                     .sorted(Comparator.comparingInt(OcrNewLine::getTop))
                     .toList();
@@ -159,7 +161,9 @@ public class TableParser {
                 OcrNewLine l = pageLines.get(i);
                 String txt = oneLine(l.getText());
                 if (txt.isBlank()) continue;
+                String lowerTxt = txt.toLowerCase();
                 if (BOM_SECTION_ANY.matcher(txt).find() && !BOM_SECTION_START.matcher(txt).find()) break;
+                if (lowerTxt.contains("production units") || lowerTxt.contains("processing capabilities") || lowerTxt.contains("yarn source")) break;
                 if (CREATED_LINE.matcher(txt).find()) break;
                 if (txt.toLowerCase().contains("page") && txt.contains("/")) break;
 
@@ -174,37 +178,78 @@ public class TableParser {
                 section.add(l);
             }
 
-            List<List<String>> rows = normalizeBomRows(section, headerLine);
-            if (rows.size() <= 1) continue;
+            // Cross-page continuation:
+            // Some PDFs continue a material description on the next page without repeating the row start (Trim/Shell...).
+            // Treat leading non-row-start lines as continuation of the previous merged row.
+            if (mergedRows.size() > 1 && !section.isEmpty()) {
+                int firstRowStartIdx = -1;
+                for (int si = 0; si < section.size(); si++) {
+                    String t = oneLine(section.get(si).getText());
+                    if (BOM_ROW_START.matcher(t).find()) {
+                        firstRowStartIdx = si;
+                        break;
+                    }
+                }
 
-            List<OcrNewTableCellDto> cells = new ArrayList<>();
-            for (int r = 0; r < rows.size(); r++) {
-                List<String> row = rows.get(r);
-                for (int c = 0; c < row.size(); c++) {
-                    cells.add(OcrNewTableCellDto.builder()
-                            .rowIndex(r)
-                            .columnIndex(c)
-                            .text(row.get(c))
-                            .boundingBox(OcrNewBoundingBoxDto.builder()
-                                    .left(0)
-                                    .top(0)
-                                    .width(0)
-                                    .height(0)
-                                    .build())
-                            .confidence(null)
-                            .build());
+                if (firstRowStartIdx > 0) {
+                    StringBuilder cont = new StringBuilder();
+                    for (int si = 0; si < firstRowStartIdx; si++) {
+                        String t = oneLine(section.get(si).getText());
+                        if (t.isBlank()) continue;
+                        if (cont.length() > 0) cont.append(' ');
+                        cont.append(t);
+                    }
+
+                    String contText = oneLine(cont.toString());
+                    if (!contText.isBlank()) {
+                        List<String> last = mergedRows.get(mergedRows.size() - 1);
+                        if (last != null && last.size() >= 2) {
+                            last.set(1, oneLine(last.get(1) + (last.get(1).isBlank() ? "" : " ") + contText));
+                        }
+                    }
+
+                    section = new ArrayList<>(section.subList(firstRowStartIdx, section.size()));
                 }
             }
 
-            out.add(OcrNewTableDto.builder()
-                    .page(page)
-                    .index(null)
-                    .rowCount(rows.size())
-                    .columnCount(4)
-                    .cells(cells)
-                    .rows(rows)
-                    .build());
+            List<List<String>> rows = normalizeBomRows(section, headerLine);
+            if (rows.size() <= 1) continue;
+
+            // Merge data rows (skip header row at index 0)
+            for (int r = 1; r < rows.size(); r++) {
+                mergedRows.add(rows.get(r));
+            }
         }
+
+        if (mergedRows.size() <= 1) return List.of();
+
+        List<OcrNewTableCellDto> cells = new ArrayList<>();
+        for (int r = 0; r < mergedRows.size(); r++) {
+            List<String> row = mergedRows.get(r);
+            for (int c = 0; c < row.size(); c++) {
+                cells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(r)
+                        .columnIndex(c)
+                        .text(row.get(c))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+        }
+
+        out.add(OcrNewTableDto.builder()
+                .page(1)
+                .index(null)
+                .rowCount(mergedRows.size())
+                .columnCount(4)
+                .cells(cells)
+                .rows(mergedRows)
+                .build());
 
         return out;
     }
@@ -258,9 +303,13 @@ public class TableParser {
                 }
             }
 
-            boolean isContinuation = (cells.position.isBlank() || !BOM_ROW_START.matcher(cells.position).find()) && cur != null;
-            if (!cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find()) {
-                isContinuation = false;
+            boolean isRowStart = !cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find();
+            boolean isContinuation = !isRowStart && cur != null;
+
+            // If we haven't started any row yet, ignore stray lines that don't start a row.
+            // This prevents carry-over description/composition lines on the next page from becoming their own rows.
+            if (cur == null && !isRowStart) {
+                continue;
             }
 
             if (!isContinuation) {
@@ -532,11 +581,6 @@ public class TableParser {
             sb.append(tok);
         }
         return oneLine(sb.toString());
-    }
-
-    private static String formatBomCompositionMultiline(String raw) {
-        // Keep this helper for compatibility, but composition should be a single line (no newlines)
-        return oneLine(raw);
     }
 
     private static String insertBeforePercent(String raw, String percentToken, String toInsert) {
