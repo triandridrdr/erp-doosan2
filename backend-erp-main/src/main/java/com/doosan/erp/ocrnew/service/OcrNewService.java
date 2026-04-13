@@ -161,7 +161,11 @@ public class OcrNewService {
                     if (t.getRows() != null && !t.getRows().isEmpty()) {
                         for (int r = 0; r < Math.min(t.getRows().size(), 5); r++) {
                             List<String> row = t.getRows().get(r);
-                            String rowText = row == null ? "" : row.stream().filter(Objects::nonNull).map(this::oneLine).map(s -> truncate(s, 80)).reduce("", (a, b) -> a.isEmpty() ? b : a + " | " + b);
+                            String rowText = row == null ? "" : row.stream()
+                                    .filter(Objects::nonNull)
+                                    .map(OcrNewService::oneLine)
+                                    .map(s -> truncate(s, 80))
+                                    .reduce("", (a, b) -> a.isEmpty() ? b : a + " | " + b);
                             log.info("[OCR-NEW][DEBUG] table[{}] row[{}]: {}", i, r, truncate(rowText, 600));
                         }
                     }
