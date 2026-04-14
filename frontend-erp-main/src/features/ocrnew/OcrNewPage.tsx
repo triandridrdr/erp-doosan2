@@ -193,6 +193,8 @@ export function OcrNewPage() {
       const first = out?.[0]?.data ?? null;
       setData(first);
 
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
       if (out.length <= 1) {
         hydrateDraftsFromData(first);
       } else {
@@ -206,6 +208,8 @@ export function OcrNewPage() {
       setSalesOrderHeaderDraft({});
       setBomDraftRows([]);
       setSalesOrderDetailDraftRows([]);
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     },
   });
 
@@ -218,58 +222,6 @@ export function OcrNewPage() {
 
   return (
     <div className='space-y-6'>
-      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div>
-            <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
-          </div>
-          <div className='flex gap-2'>
-            <Button type='button' variant='primary' disabled={!data}>
-              Save Draft
-            </Button>
-            <Button type='button' variant='primary' disabled={!data}>
-              Attach Style
-            </Button>
-          </div>
-        </div>
-        <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : !hasHeaderDraft ? (
-            <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
-          ) : (
-            <div className='overflow-auto'>
-              <table className='min-w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {SALES_ORDER_HEADER_FIELDS.map((field) => (
-                    <tr key={field} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-900 align-top whitespace-nowrap'>{field}</td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top w-full'>
-                        <Input
-                          value={salesOrderHeaderDraft[field] ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
       <div className='bg-white rounded-2xl border border-gray-200 p-6'>
         <div className='flex items-start justify-between gap-4'>
           <div>
@@ -355,22 +307,57 @@ export function OcrNewPage() {
           </div>
         )}
 
-        <div className='mt-4'>
-          <div className='flex items-center justify-between'>
-            <div className='text-xs font-semibold text-gray-500'>MULTI-FILE TRACKING LOG</div>
-            <Button
-              type='button'
-              variant='secondary'
-              onClick={() => {
-                setMultiFileLogs([]);
-              }}
-            >
-              Clear
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div>
+            <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
+          </div>
+          <div className='flex gap-2'>
+            <Button type='button' variant='primary' disabled={!data}>
+              Save Draft
+            </Button>
+            <Button type='button' variant='primary' disabled={!data}>
+              Attach Style
             </Button>
           </div>
-          <pre className='mt-2 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl p-4 overflow-auto max-h-[24vh] whitespace-pre-wrap'>
-            {multiFileLogs.length === 0 ? 'No logs.' : multiFileLogs.join('\n')}
-          </pre>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : !hasHeaderDraft ? (
+            <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
+          ) : (
+            <div className='overflow-auto'>
+              <table className='min-w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {SALES_ORDER_HEADER_FIELDS.map((field) => (
+                    <tr key={field} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 text-sm text-gray-900 align-top whitespace-nowrap'>{field}</td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top w-full'>
+                        <Input
+                          value={salesOrderHeaderDraft[field] ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
