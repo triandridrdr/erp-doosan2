@@ -114,7 +114,10 @@ public class OcrNewService {
             String color = globalColor;
             if (color == null || color.isBlank()) color = "";
             if (!color.isBlank()) row.put("color", color);
-            if (!destinationCountry.isBlank()) row.put("destinationCountry", destinationCountry);
+            if (!destinationCountry.isBlank()) {
+                row.put("destinationCountry", destinationCountry);
+                row.put("countryOfDestination", destinationCountry);
+            }
 
             boolean inSolid = false;
             boolean sawAnySize = false;

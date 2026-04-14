@@ -31,7 +31,17 @@ export function OcrNewPage() {
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<Array<{ component: string; description: string; category: string; composition: string }>>([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
-    Array<{ color: string; XS: string; S: string; M: string; L: string; XL: string; total: string; editable: boolean }>
+    Array<{
+      countryOfDestination: string;
+      color: string;
+      XS: string;
+      S: string;
+      M: string;
+      L: string;
+      XL: string;
+      total: string;
+      editable: boolean;
+    }>
   >([]);
 
   const appendLog = (msg: string) => {
@@ -65,6 +75,7 @@ export function OcrNewPage() {
       setSalesOrderDetailDraftRows(
         backendDetail
           .map((m) => ({
+            countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
             XS: (m?.XS ?? m?.xs ?? '').toString(),
             S: (m?.S ?? m?.s ?? '').toString(),
@@ -74,7 +85,7 @@ export function OcrNewPage() {
             total: (m?.total ?? m?.Total ?? '').toString(),
             editable: true,
           }))
-          .filter((r) => [r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
+          .filter((r) => [r.countryOfDestination, r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
       );
     } else {
       setSalesOrderDetailDraftRows([]);
@@ -111,12 +122,23 @@ export function OcrNewPage() {
     }
     setBomDraftRows(bomRows);
 
-    let detailRows: Array<{ color: string; XS: string; S: string; M: string; L: string; XL: string; total: string; editable: boolean }> = [];
+    let detailRows: Array<{
+      countryOfDestination: string;
+      color: string;
+      XS: string;
+      S: string;
+      M: string;
+      L: string;
+      XL: string;
+      total: string;
+      editable: boolean;
+    }> = [];
     for (const r of out) {
       const backendDetail = r?.data?.salesOrderDetailSizeBreakdown ?? [];
       if (backendDetail.length > 0) {
         detailRows = backendDetail
           .map((m) => ({
+            countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
             XS: (m?.XS ?? m?.xs ?? '').toString(),
             S: (m?.S ?? m?.s ?? '').toString(),
@@ -126,7 +148,9 @@ export function OcrNewPage() {
             total: (m?.total ?? m?.Total ?? '').toString(),
             editable: true,
           }))
-          .filter((row) => [row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0));
+          .filter((row) =>
+            [row.countryOfDestination, row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0),
+          );
         if (detailRows.length > 0) break;
       }
     }
@@ -354,7 +378,10 @@ export function OcrNewPage() {
             variant='primary'
             disabled={!data}
             onClick={() => {
-              setSalesOrderDetailDraftRows((prev) => [...prev, { color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true }]);
+              setSalesOrderDetailDraftRows((prev) => [
+                ...prev,
+                { countryOfDestination: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true },
+              ]);
             }}
           >
             Add row
@@ -367,9 +394,10 @@ export function OcrNewPage() {
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
             <div className='overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[1350px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50'>
                   <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XS</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>S</th>
@@ -384,6 +412,17 @@ export function OcrNewPage() {
                 <tbody className='bg-white'>
                   {salesOrderDetailDraftRows.map((row, idx) => (
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.countryOfDestination}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)),
+                            );
+                          }}
+                        />
+                      </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
                           value={row.color}
