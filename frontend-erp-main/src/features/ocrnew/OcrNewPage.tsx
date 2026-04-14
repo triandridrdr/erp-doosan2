@@ -397,9 +397,9 @@ export function OcrNewPage() {
           ) : salesOrderDetailDraftRows.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
-            <div className='overflow-auto'>
+            <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[1550px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
@@ -541,9 +541,9 @@ export function OcrNewPage() {
           ) : bomDraftRows.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
           ) : (
-            <div className='overflow-auto'>
+            <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Component</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
