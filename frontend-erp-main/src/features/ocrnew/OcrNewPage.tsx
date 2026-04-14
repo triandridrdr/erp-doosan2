@@ -33,6 +33,7 @@ export function OcrNewPage() {
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
     Array<{
       countryOfDestination: string;
+      type: string;
       color: string;
       XS: string;
       S: string;
@@ -76,6 +77,7 @@ export function OcrNewPage() {
         backendDetail
           .map((m) => ({
             countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
+            type: (m?.type ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
             XS: (m?.XS ?? m?.xs ?? '').toString(),
             S: (m?.S ?? m?.s ?? '').toString(),
@@ -85,7 +87,7 @@ export function OcrNewPage() {
             total: (m?.total ?? m?.Total ?? '').toString(),
             editable: true,
           }))
-          .filter((r) => [r.countryOfDestination, r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
+          .filter((r) => [r.countryOfDestination, r.type, r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
       );
     } else {
       setSalesOrderDetailDraftRows([]);
@@ -124,6 +126,7 @@ export function OcrNewPage() {
 
     let detailRows: Array<{
       countryOfDestination: string;
+      type: string;
       color: string;
       XS: string;
       S: string;
@@ -139,6 +142,7 @@ export function OcrNewPage() {
         detailRows = backendDetail
           .map((m) => ({
             countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
+            type: (m?.type ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
             XS: (m?.XS ?? m?.xs ?? '').toString(),
             S: (m?.S ?? m?.s ?? '').toString(),
@@ -149,7 +153,7 @@ export function OcrNewPage() {
             editable: true,
           }))
           .filter((row) =>
-            [row.countryOfDestination, row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0),
+            [row.countryOfDestination, row.type, row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0),
           );
         if (detailRows.length > 0) break;
       }
@@ -380,7 +384,7 @@ export function OcrNewPage() {
             onClick={() => {
               setSalesOrderDetailDraftRows((prev) => [
                 ...prev,
-                { countryOfDestination: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true },
+                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true },
               ]);
             }}
           >
@@ -394,10 +398,11 @@ export function OcrNewPage() {
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
             <div className='overflow-auto'>
-              <table className='min-w-[1350px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[1550px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XS</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>S</th>
@@ -420,6 +425,15 @@ export function OcrNewPage() {
                             setSalesOrderDetailDraftRows((prev) =>
                               prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)),
                             );
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.type}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
                           }}
                         />
                       </td>

@@ -47,8 +47,8 @@ public class OcrNewService {
 
     private static final String PDF_CONTENT_TYPE = "application/pdf";
 
-    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d{1,7})\\s*$");
-    private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d{1,9})\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
+    private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
 
     private final PdfToImageRenderer pdfToImageRenderer = new PdfToImageRenderer();
     private final KeyValueParser keyValueParser = new KeyValueParser();
@@ -110,17 +110,13 @@ public class OcrNewService {
                 }
             }
 
-            Map<String, String> row = new LinkedHashMap<>();
             String color = globalColor;
             if (color == null || color.isBlank()) color = "";
-            if (!color.isBlank()) row.put("color", color);
-            if (!destinationCountry.isBlank()) {
-                row.put("destinationCountry", destinationCountry);
-                row.put("countryOfDestination", destinationCountry);
-            }
 
-            boolean inSolid = false;
-            boolean sawAnySize = false;
+            @SuppressWarnings("unchecked")
+            final Map<String, String>[] currentRow = (Map<String, String>[]) new Map[]{null};
+            final boolean[] sawAnySize = new boolean[]{false};
+
             for (int i = idxHeader; i < texts.size(); i++) {
                 String t = oneLine(texts.get(i));
                 if (t.isBlank()) continue;
@@ -128,38 +124,51 @@ public class OcrNewService {
                 String lower = t.toLowerCase(Locale.ROOT);
                 if (lower.startsWith("bill of material")) break;
 
-                if (lower.equals("solid") || lower.startsWith("solid ")) {
-                    inSolid = true;
+                if (lower.equals("assortment") || lower.startsWith("assortment ") ||
+                        lower.equals("solid") || lower.startsWith("solid ") ||
+                        lower.equals("total") || lower.startsWith("total ")) {
+                    if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total"))) {
+                        out.add(currentRow[0]);
+                    }
+                    String type = lower.startsWith("assortment") ? "Assortment" : (lower.startsWith("solid") ? "Solid" : "Total");
+                    currentRow[0] = new LinkedHashMap<>();
+                    sawAnySize[0] = false;
+                    if (!type.isBlank()) currentRow[0].put("type", type);
+                    if (!color.isBlank()) currentRow[0].put("color", color);
+                    if (!destinationCountry.isBlank()) {
+                        currentRow[0].put("destinationCountry", destinationCountry);
+                        currentRow[0].put("countryOfDestination", destinationCountry);
+                    }
                     continue;
                 }
-                if (!inSolid) continue;
+
+                if (currentRow[0] == null) continue;
 
                 Matcher qm = QUANTITY_LINE.matcher(t);
                 if (qm.matches()) {
-                    String q = qm.group(1);
-                    if (q != null && !q.isBlank()) row.put("total", q);
-                    if (sawAnySize || row.containsKey("total")) {
-                        out.add(row);
-                    }
-                    break;
+                    String q = normalizeNumber(qm.group(1));
+                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
+                    out.add(currentRow[0]);
+                    currentRow[0] = null;
+                    sawAnySize[0] = false;
+                    continue;
                 }
 
                 // Lines like: "XS (XS)* 236", "L(L)y* 622"
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
                     String sizeRaw = sm.group(1);
-                    String v = sm.group(2);
+                    String v = normalizeNumber(sm.group(2));
                     String size = normalizeSizeKey(sizeRaw);
                     if (size != null && v != null && !v.isBlank()) {
-                        row.put(size, v);
-                        sawAnySize = true;
+                        currentRow[0].put(size, v);
+                        sawAnySize[0] = true;
                     }
                 }
             }
 
-            // If Quantity line wasn't found but sizes exist, still output.
-            if (sawAnySize && out.stream().noneMatch(m -> m == row)) {
-                out.add(row);
+            if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total"))) {
+                out.add(currentRow[0]);
             }
         }
 
@@ -197,6 +206,11 @@ public class OcrNewService {
         if (s.equals("M")) return "M";
         if (s.equals("L")) return "L";
         return null;
+    }
+
+    private static String normalizeNumber(String raw) {
+        if (raw == null) return "";
+        return raw.replaceAll("\\s+", "").trim();
     }
 
     private static String firstNonBlank(String... xs) {
