@@ -355,7 +355,8 @@ public class TableParser {
                     curRaw.append(' ').append(wholeLine);
                 }
                 if (!cells.description.isBlank()) {
-                    cur.set(1, oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + cells.description));
+                    // Apply mergeSplitWords to fix broken words when appending description continuation
+                    cur.set(1, mergeSplitWords(oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + cells.description)));
                 }
                 if (!cells.composition.isBlank()) {
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
@@ -403,12 +404,16 @@ public class TableParser {
             if (startsNewRow || cur == null) {
                 BomRowStart parsed = parseBomRowStart(txt);
                 BomDescComp dc = splitBomTail(parsed.tail);
-                cur = new ArrayList<>(List.of(parsed.position, dc.description, parsed.type, dc.composition));
+                // Apply mergeSplitWords to fix broken words in description
+                String desc = mergeSplitWords(dc.description);
+                cur = new ArrayList<>(List.of(parsed.position, desc, parsed.type, dc.composition));
                 rows.add(cur);
             } else {
                 BomDescComp dc = splitBomTail(txt);
                 if (!dc.description.isBlank()) {
-                    cur.set(1, oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + dc.description));
+                    // Apply mergeSplitWords to fix broken words in description continuation
+                    String descCont = mergeSplitWords(dc.description);
+                    cur.set(1, mergeSplitWords(oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + descCont)));
                 }
                 if (!dc.composition.isBlank()) {
                     cur.set(3, oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + dc.composition));
@@ -502,7 +507,7 @@ public class TableParser {
         String pos = oneLine(position.toString());
         String plc = oneLine(placement.toString());
         String typ = oneLine(type.toString());
-        String desc = oneLine(description.toString());
+        String desc = mergeSplitWords(oneLine(description.toString()));  // Fix broken words in description
         String comp = oneLine(composition.toString());
 
         // Normalize comp first; it may become empty if it was only noise.
@@ -583,9 +588,10 @@ public class TableParser {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
 
-        // Common OCR line-break word splits in fibre names
-        r = r.replaceAll("(?i)\\bPOL\\s+YESTER\\b", "POLYESTER");
-        r = r.replaceAll("(?i)\\bPOLY\\s+ESTER\\b", "POLYESTER");
+        // Apply comprehensive word merge first
+        r = mergeSplitWords(r);
+        
+        // Additional specific fixes for composition context
         r = r.replaceAll("(?i)\\bRECYCLED\\s+P\\s*OLYESTER\\b", "RECYCLED POLYESTER");
         r = r.replaceAll("(?i)\\bRECY\\s*CLED\\s+POLYESTER\\b", "RECYCLED POLYESTER");
         // Dedupe circulose
@@ -599,6 +605,9 @@ public class TableParser {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
 
+        // First apply comprehensive word merge
+        r = mergeSplitWords(r);
+        
         // Fix common OCR broken tokens in continuation text across pages
         // irculose -> circulose
         r = r.replaceAll("(?i)\\birculose\\b", "circulose");
@@ -633,6 +642,764 @@ public class TableParser {
         r = r.replaceAll("(?i)\\brecycled\\s+polyester\\s+recycled\\s+polyester\\b", "recycled polyester");
         
         return oneLine(r);
+    }
+
+    /**
+     * Menggabungkan kata-kata yang terpotong di OCR output.
+     * Contoh: "INDONES IA" -> "INDONESIA", "POL YESTER" -> "POLYESTER"
+     * 
+     * Fungsi ini mendeteksi:
+     * 1. Fragment kata di akhir yang tidak lengkap
+     * 2. Fragment lanjutan di awal kata berikutnya
+     * 3. Menggabungkan menjadi kata utuh
+     */
+    public static String mergeSplitWords(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        String r = oneLine(raw);
+
+        // ===== FIBER/MATERIAL WORDS (ENTERPRISE GARMENT BOM) =====
+        // POLYESTER
+        r = r.replaceAll("(?i)\\bPOL\\s+YESTER\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bPOLY\\s+ESTER\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bPOLYEST\\s+ER\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bS0\\s+POL\\s+YESTER\\b", "SO POLYESTER");
+        r = r.replaceAll("(?i)\\bS0\\s+POLYESTER\\b", "SO POLYESTER");
+        r = r.replaceAll("(?i)\\bSO\\s+POL\\s+YESTER\\b", "SO POLYESTER");
+        // POLYAMIDE/NYLON
+        r = r.replaceAll("(?i)\\bPOLY\\s+AMIDE\\b", "POLYAMIDE");
+        r = r.replaceAll("(?i)\\bPOLYAM\\s+IDE\\b", "POLYAMIDE");
+        r = r.replaceAll("(?i)\\bNY\\s+LON\\b", "NYLON");
+        r = r.replaceAll("(?i)\\bNYL\\s+ON\\b", "NYLON");
+        // POLYPROPYLENE
+        r = r.replaceAll("(?i)\\bPOLY\\s+PROPYLENE\\b", "POLYPROPYLENE");
+        r = r.replaceAll("(?i)\\bPOLYPROP\\s+YLENE\\b", "POLYPROPYLENE");
+        // POLYURETHANE
+        r = r.replaceAll("(?i)\\bPOLY\\s+URETHANE\\b", "POLYURETHANE");
+        r = r.replaceAll("(?i)\\bPOLYURETH\\s+ANE\\b", "POLYURETHANE");
+        // VISCOSE/RAYON
+        r = r.replaceAll("(?i)\\bVIS\\s+COSE\\b", "VISCOSE");
+        r = r.replaceAll("(?i)\\bVISCO\\s+SE\\b", "VISCOSE");
+        r = r.replaceAll("(?i)\\bRAY\\s+ON\\b", "RAYON");
+        r = r.replaceAll("(?i)\\bRAYO\\s+N\\b", "RAYON");
+        // REVISCO/CIRCULOSE (Sustainable)
+        r = r.replaceAll("(?i)\\bREVIS\\s+CO\\b", "REVISCO");
+        r = r.replaceAll("(?i)\\bREVI\\s+SCO\\b", "REVISCO");
+        r = r.replaceAll("(?i)\\bCIRCUL\\s+OSE\\b", "CIRCULOSE");
+        r = r.replaceAll("(?i)\\bCIRCU\\s+LOSE\\b", "CIRCULOSE");
+        r = r.replaceAll("(?i)\\bCIRC\\s+ULOSE\\b", "CIRCULOSE");
+        r = r.replaceAll("(?i)\\bc\\s+irculose\\b", "circulose");
+        r = r.replaceAll("(?i)\\bC\\s+irculose\\b", "Circulose");
+        r = r.replaceAll("(?i)\\bc\\s+ircu\\s*lose\\b", "circulose");
+        r = r.replaceAll("(?i)\\birculose\\b", "circulose");  // Handle orphan fragment
+        // Handle "co Viscose" orphan fragment (from Revis-co split across lines)
+        r = r.replaceAll("(?i)\\bco\\s+Viscose\\b", "Revisco Viscose");
+        r = r.replaceAll("(?i)\\bRevis\\s+co\\s+Viscose\\b", "Revisco Viscose");
+        // RECYCLED
+        r = r.replaceAll("(?i)\\bRECY\\s+CLED\\b", "RECYCLED");
+        r = r.replaceAll("(?i)\\bRECYC\\s+LED\\b", "RECYCLED");
+        // COTTON
+        r = r.replaceAll("(?i)\\bCOT\\s+TON\\b", "COTTON");
+        r = r.replaceAll("(?i)\\bCOTT\\s+ON\\b", "COTTON");
+        // ORGANIC COTTON
+        r = r.replaceAll("(?i)\\bORGAN\\s+IC\\b", "ORGANIC");
+        r = r.replaceAll("(?i)\\bORGA\\s+NIC\\b", "ORGANIC");
+        // ELASTANE/SPANDEX/LYCRA
+        r = r.replaceAll("(?i)\\bELAS\\s+TANE\\b", "ELASTANE");
+        r = r.replaceAll("(?i)\\bELAST\\s+ANE\\b", "ELASTANE");
+        r = r.replaceAll("(?i)\\bSPAN\\s+DEX\\b", "SPANDEX");
+        r = r.replaceAll("(?i)\\bSPAND\\s+EX\\b", "SPANDEX");
+        r = r.replaceAll("(?i)\\bLYC\\s+RA\\b", "LYCRA");
+        r = r.replaceAll("(?i)\\bLYCR\\s+A\\b", "LYCRA");
+        // LINEN/FLAX
+        r = r.replaceAll("(?i)\\bLIN\\s+EN\\b", "LINEN");
+        r = r.replaceAll("(?i)\\bLINE\\s+N\\b", "LINEN");
+        r = r.replaceAll("(?i)\\bFLA\\s+X\\b", "FLAX");
+        // SILK
+        r = r.replaceAll("(?i)\\bSIL\\s+K\\b", "SILK");
+        // WOOL/MERINO
+        r = r.replaceAll("(?i)\\bWOO\\s+L\\b", "WOOL");
+        r = r.replaceAll("(?i)\\bMER\\s+INO\\b", "MERINO");
+        r = r.replaceAll("(?i)\\bMERI\\s+NO\\b", "MERINO");
+        // CASHMERE
+        r = r.replaceAll("(?i)\\bCASH\\s+MERE\\b", "CASHMERE");
+        r = r.replaceAll("(?i)\\bCASHM\\s+ERE\\b", "CASHMERE");
+        // ACRYLIC
+        r = r.replaceAll("(?i)\\bACRY\\s+LIC\\b", "ACRYLIC");
+        r = r.replaceAll("(?i)\\bACRYL\\s+IC\\b", "ACRYLIC");
+        // MODAL
+        r = r.replaceAll("(?i)\\bMOD\\s+AL\\b", "MODAL");
+        r = r.replaceAll("(?i)\\bMODA\\s+L\\b", "MODAL");
+        // TENCEL/LYOCELL
+        r = r.replaceAll("(?i)\\bTEN\\s+CEL\\b", "TENCEL");
+        r = r.replaceAll("(?i)\\bTENC\\s+EL\\b", "TENCEL");
+        r = r.replaceAll("(?i)\\bLYO\\s+CELL\\b", "LYOCELL");
+        r = r.replaceAll("(?i)\\bLYOC\\s+ELL\\b", "LYOCELL");
+        // BAMBOO
+        r = r.replaceAll("(?i)\\bBAM\\s+BOO\\b", "BAMBOO");
+        r = r.replaceAll("(?i)\\bBAMB\\s+OO\\b", "BAMBOO");
+        // HEMP
+        r = r.replaceAll("(?i)\\bHEM\\s+P\\b", "HEMP");
+        // JUTE
+        r = r.replaceAll("(?i)\\bJUT\\s+E\\b", "JUTE");
+        // ACETATE
+        r = r.replaceAll("(?i)\\bACE\\s+TATE\\b", "ACETATE");
+        r = r.replaceAll("(?i)\\bACET\\s+ATE\\b", "ACETATE");
+        // TRIACETATE
+        r = r.replaceAll("(?i)\\bTRI\\s+ACETATE\\b", "TRIACETATE");
+        r = r.replaceAll("(?i)\\bTRIACE\\s+TATE\\b", "TRIACETATE");
+        // CUPRO
+        r = r.replaceAll("(?i)\\bCUP\\s+RO\\b", "CUPRO");
+        r = r.replaceAll("(?i)\\bCUPR\\s+O\\b", "CUPRO");
+        // METALLIC
+        r = r.replaceAll("(?i)\\bMET\\s+ALLIC\\b", "METALLIC");
+        r = r.replaceAll("(?i)\\bMETAL\\s+LIC\\b", "METALLIC");
+        // LUREX
+        r = r.replaceAll("(?i)\\bLUR\\s+EX\\b", "LUREX");
+        r = r.replaceAll("(?i)\\bLURE\\s+X\\b", "LUREX");
+        // MICROFIBER
+        r = r.replaceAll("(?i)\\bMICRO\\s+FIBER\\b", "MICROFIBER");
+        r = r.replaceAll("(?i)\\bMICROFIB\\s+ER\\b", "MICROFIBER");
+        // FLEECE
+        r = r.replaceAll("(?i)\\bFLE\\s+ECE\\b", "FLEECE");
+        r = r.replaceAll("(?i)\\bFLEE\\s+CE\\b", "FLEECE");
+        // LEATHER
+        r = r.replaceAll("(?i)\\bLEA\\s+THER\\b", "LEATHER");
+        r = r.replaceAll("(?i)\\bLEATH\\s+ER\\b", "LEATHER");
+        // FAUX LEATHER/PU LEATHER
+        r = r.replaceAll("(?i)\\bFAU\\s+X\\b", "FAUX");
+        r = r.replaceAll("(?i)\\bSYN\\s+THETIC\\b", "SYNTHETIC");
+        r = r.replaceAll("(?i)\\bSYNTHE\\s+TIC\\b", "SYNTHETIC");
+
+        // ===== COUNTRY NAMES (TEXTILE MANUFACTURING HUBS) =====
+        r = r.replaceAll("(?i)\\bINDONES\\s+IA\\b", "INDONESIA");
+        r = r.replaceAll("(?i)\\bINDO\\s+NESIA\\b", "INDONESIA");
+        r = r.replaceAll("(?i)\\bN\\s*DONESIA\\b", "INDONESIA");
+        r = r.replaceAll("(?i)\\bI\\s+NDONESIA\\b", "INDONESIA");
+        r = r.replaceAll("(?i)\\bCHI\\s+NA\\b", "CHINA");
+        r = r.replaceAll("(?i)\\bVIET\\s+NAM\\b", "VIETNAM");
+        r = r.replaceAll("(?i)\\bVIETN\\s+AM\\b", "VIETNAM");
+        r = r.replaceAll("(?i)\\bBANGLA\\s+DESH\\b", "BANGLADESH");
+        r = r.replaceAll("(?i)\\bBANGLAD\\s+ESH\\b", "BANGLADESH");
+        r = r.replaceAll("(?i)\\bTHAI\\s+LAND\\b", "THAILAND");
+        r = r.replaceAll("(?i)\\bTHAIL\\s+AND\\b", "THAILAND");
+        r = r.replaceAll("(?i)\\bMALAY\\s+SIA\\b", "MALAYSIA");
+        r = r.replaceAll("(?i)\\bMALAYS\\s+IA\\b", "MALAYSIA");
+        r = r.replaceAll("(?i)\\bPAKIS\\s+TAN\\b", "PAKISTAN");
+        r = r.replaceAll("(?i)\\bPAKIST\\s+AN\\b", "PAKISTAN");
+        r = r.replaceAll("(?i)\\bCAMBO\\s+DIA\\b", "CAMBODIA");
+        r = r.replaceAll("(?i)\\bCAMBOD\\s+IA\\b", "CAMBODIA");
+        r = r.replaceAll("(?i)\\bMYAN\\s+MAR\\b", "MYANMAR");
+        r = r.replaceAll("(?i)\\bMYANM\\s+AR\\b", "MYANMAR");
+        r = r.replaceAll("(?i)\\bSRI\\s+LANKA\\b", "SRI LANKA");
+        r = r.replaceAll("(?i)\\bSRIL\\s+ANKA\\b", "SRILANKA");
+        r = r.replaceAll("(?i)\\bIN\\s+DIA\\b", "INDIA");
+        r = r.replaceAll("(?i)\\bIND\\s+IA\\b", "INDIA");
+        r = r.replaceAll("(?i)\\bPHILIP\\s+PINES\\b", "PHILIPPINES");
+        r = r.replaceAll("(?i)\\bPHILIPP\\s+INES\\b", "PHILIPPINES");
+        r = r.replaceAll("(?i)\\bTUR\\s+KEY\\b", "TURKEY");
+        r = r.replaceAll("(?i)\\bTURK\\s+EY\\b", "TURKEY");
+        r = r.replaceAll("(?i)\\bEGY\\s+PT\\b", "EGYPT");
+        r = r.replaceAll("(?i)\\bEGYP\\s+T\\b", "EGYPT");
+        r = r.replaceAll("(?i)\\bMORO\\s+CCO\\b", "MOROCCO");
+        r = r.replaceAll("(?i)\\bMOROC\\s+CO\\b", "MOROCCO");
+        r = r.replaceAll("(?i)\\bTUNI\\s+SIA\\b", "TUNISIA");
+        r = r.replaceAll("(?i)\\bTUNIS\\s+IA\\b", "TUNISIA");
+        r = r.replaceAll("(?i)\\bPOR\\s+TUGAL\\b", "PORTUGAL");
+        r = r.replaceAll("(?i)\\bPORTU\\s+GAL\\b", "PORTUGAL");
+        r = r.replaceAll("(?i)\\bITA\\s+LY\\b", "ITALY");
+        r = r.replaceAll("(?i)\\bITAL\\s+Y\\b", "ITALY");
+        r = r.replaceAll("(?i)\\bGER\\s+MANY\\b", "GERMANY");
+        r = r.replaceAll("(?i)\\bGERM\\s+ANY\\b", "GERMANY");
+        r = r.replaceAll("(?i)\\bJA\\s+PAN\\b", "JAPAN");
+        r = r.replaceAll("(?i)\\bJAP\\s+AN\\b", "JAPAN");
+        r = r.replaceAll("(?i)\\bKO\\s+REA\\b", "KOREA");
+        r = r.replaceAll("(?i)\\bKOR\\s+EA\\b", "KOREA");
+        r = r.replaceAll("(?i)\\bTAI\\s+WAN\\b", "TAIWAN");
+        r = r.replaceAll("(?i)\\bTAIW\\s+AN\\b", "TAIWAN");
+        r = r.replaceAll("(?i)\\bHONG\\s+KONG\\b", "HONGKONG");
+        r = r.replaceAll("(?i)\\bSINGA\\s+PORE\\b", "SINGAPORE");
+        r = r.replaceAll("(?i)\\bSINGAP\\s+ORE\\b", "SINGAPORE");
+        r = r.replaceAll("(?i)\\bUNI\\s+TED\\b", "UNITED");
+        r = r.replaceAll("(?i)\\bKING\\s+DOM\\b", "KINGDOM");
+        r = r.replaceAll("(?i)\\bSTA\\s+TES\\b", "STATES");
+        r = r.replaceAll("(?i)\\bAMER\\s+ICA\\b", "AMERICA");
+        r = r.replaceAll("(?i)\\bAUS\\s+TRALIA\\b", "AUSTRALIA");
+        r = r.replaceAll("(?i)\\bAUSTRAL\\s+IA\\b", "AUSTRALIA");
+        r = r.replaceAll("(?i)\\bNETHER\\s+LANDS\\b", "NETHERLANDS");
+        r = r.replaceAll("(?i)\\bNETHERL\\s+ANDS\\b", "NETHERLANDS");
+        r = r.replaceAll("(?i)\\bSWE\\s+DEN\\b", "SWEDEN");
+        r = r.replaceAll("(?i)\\bSWED\\s+EN\\b", "SWEDEN");
+        r = r.replaceAll("(?i)\\bFRA\\s+NCE\\b", "FRANCE");
+        r = r.replaceAll("(?i)\\bFRAN\\s+CE\\b", "FRANCE");
+        r = r.replaceAll("(?i)\\bSPA\\s+IN\\b", "SPAIN");
+        r = r.replaceAll("(?i)\\bSPAI\\s+N\\b", "SPAIN");
+        r = r.replaceAll("(?i)\\bBRA\\s+ZIL\\b", "BRAZIL");
+        r = r.replaceAll("(?i)\\bBRAZ\\s+IL\\b", "BRAZIL");
+        r = r.replaceAll("(?i)\\bMEX\\s+ICO\\b", "MEXICO");
+        r = r.replaceAll("(?i)\\bMEXI\\s+CO\\b", "MEXICO");
+        r = r.replaceAll("(?i)\\bCAN\\s+ADA\\b", "CANADA");
+        r = r.replaceAll("(?i)\\bCANA\\s+DA\\b", "CANADA");
+
+        // ===== COMPANY/SUPPLIER TERMS =====
+        r = r.replaceAll("(?i)\\bTRAD\\s+ING\\b", "TRADING");
+        r = r.replaceAll("(?i)\\bTRADI\\s+NG\\b", "TRADING");
+        r = r.replaceAll("(?i)\\bEXPO\\s+RT\\b", "EXPORT");
+        r = r.replaceAll("(?i)\\bIMPO\\s+RT\\b", "IMPORT");
+        r = r.replaceAll("(?i)\\bGAR\\s+MENT\\b", "GARMENT");
+        r = r.replaceAll("(?i)\\bGARME\\s+NT\\b", "GARMENT");
+        r = r.replaceAll("(?i)\\bTEX\\s+TILE\\b", "TEXTILE");
+        r = r.replaceAll("(?i)\\bTEXTI\\s+LE\\b", "TEXTILE");
+        r = r.replaceAll("(?i)\\bACCESS\\s+ORIES\\b", "ACCESSORIES");
+        r = r.replaceAll("(?i)\\bACCESSOR\\s+IES\\b", "ACCESSORIES");
+        r = r.replaceAll("(?i)\\bPRINT\\s+ING\\b", "PRINTING");
+        r = r.replaceAll("(?i)\\bPRINTI\\s+NG\\b", "PRINTING");
+        r = r.replaceAll("(?i)\\bDYE\\s+ING\\b", "DYEING");
+        r = r.replaceAll("(?i)\\bDYEI\\s+NG\\b", "DYEING");
+        
+        // BROTHREAD (supplier name)
+        r = r.replaceAll("(?i)\\bB\\s*ROTHREAD\\b", "BROTHREAD");
+        r = r.replaceAll("(?i)\\bBRO\\s+THREAD\\b", "BROTHREAD");
+        r = r.replaceAll("(?i)\\bBROTHR\\s+EAD\\b", "BROTHREAD");
+        
+        // SAMJIN (supplier name)
+        r = r.replaceAll("(?i)\\bSAMJIN\\s*B\\s*ROTHREAD\\b", "SAMJIN BROTHREAD");
+        r = r.replaceAll("(?i)\\bSAM\\s+JIN\\b", "SAMJIN");
+
+        // ===== GARMENT DESCRIPTION TERMS (ENTERPRISE BOM) =====
+        // Thread/Sewing
+        r = r.replaceAll("(?i)\\bthr\\s+ead\\b", "thread");
+        r = r.replaceAll("(?i)\\bthre\\s+ad\\b", "thread");
+        r = r.replaceAll("(?i)\\bSEW\\s+ING\\b", "SEWING");
+        r = r.replaceAll("(?i)\\bSEWI\\s+NG\\b", "SEWING");
+        r = r.replaceAll("(?i)\\bSTITCH\\s+ING\\b", "STITCHING");
+        r = r.replaceAll("(?i)\\bSTITCHI\\s+NG\\b", "STITCHING");
+        r = r.replaceAll("(?i)\\bEMBROI\\s+DERY\\b", "EMBROIDERY");
+        r = r.replaceAll("(?i)\\bEMBROID\\s+ERY\\b", "EMBROIDERY");
+        // Smocking/Shirring
+        r = r.replaceAll("(?i)\\bsmock\\s+ing\\b", "smocking");
+        r = r.replaceAll("(?i)\\bsmocki\\s+ng\\b", "smocking");
+        r = r.replaceAll("(?i)\\bSHIRR\\s+ING\\b", "SHIRRING");
+        r = r.replaceAll("(?i)\\bSHIRRI\\s+NG\\b", "SHIRRING");
+        // Elastic/Drawstring
+        r = r.replaceAll("(?i)\\bElas\\s+tic\\b", "Elastic");
+        r = r.replaceAll("(?i)\\bElast\\s+ic\\b", "Elastic");
+        r = r.replaceAll("(?i)\\bDRAW\\s+STRING\\b", "DRAWSTRING");
+        r = r.replaceAll("(?i)\\bDRAWSTR\\s+ING\\b", "DRAWSTRING");
+        // Buckle/Clasp/Hook
+        r = r.replaceAll("(?i)\\bBuck\\s+le\\b", "Buckle");
+        r = r.replaceAll("(?i)\\bBuckl\\s+e\\b", "Buckle");
+        r = r.replaceAll("(?i)\\bCLA\\s+SP\\b", "CLASP");
+        r = r.replaceAll("(?i)\\bCLAS\\s+P\\b", "CLASP");
+        r = r.replaceAll("(?i)\\bHOO\\s+K\\b", "HOOK");
+        r = r.replaceAll("(?i)\\bEYE\\s+LET\\b", "EYELET");
+        r = r.replaceAll("(?i)\\bEYEL\\s+ET\\b", "EYELET");
+        r = r.replaceAll("(?i)\\bGROM\\s+MET\\b", "GROMMET");
+        r = r.replaceAll("(?i)\\bGROMM\\s+ET\\b", "GROMMET");
+        // Hanger/Loop/Ring
+        r = r.replaceAll("(?i)\\bHang\\s+er\\b", "Hanger");
+        r = r.replaceAll("(?i)\\bhange\\s+r\\b", "hanger");
+        r = r.replaceAll("(?i)\\blo\\s+op\\b", "loop");
+        r = r.replaceAll("(?i)\\bD\\s+RING\\b", "D-RING");
+        r = r.replaceAll("(?i)\\bO\\s+RING\\b", "O-RING");
+        // Label/Tag
+        r = r.replaceAll("(?i)\\bLab\\s+el\\b", "Label");
+        r = r.replaceAll("(?i)\\bLabe\\s+l\\b", "Label");
+        r = r.replaceAll("(?i)\\bWO\\s+VEN\\b", "WOVEN");
+        r = r.replaceAll("(?i)\\bWOV\\s+EN\\b", "WOVEN");
+        r = r.replaceAll("(?i)\\bPRIN\\s+TED\\b", "PRINTED");
+        r = r.replaceAll("(?i)\\bPRINT\\s+ED\\b", "PRINTED");
+        r = r.replaceAll("(?i)\\bHANG\\s+TAG\\b", "HANGTAG");
+        r = r.replaceAll("(?i)\\bHANGT\\s+AG\\b", "HANGTAG");
+        r = r.replaceAll("(?i)\\bCARE\\s+LABEL\\b", "CARE LABEL");
+        r = r.replaceAll("(?i)\\bSIZE\\s+LABEL\\b", "SIZE LABEL");
+        r = r.replaceAll("(?i)\\bMAIN\\s+LABEL\\b", "MAIN LABEL");
+        r = r.replaceAll("(?i)\\bBRAND\\s+LABEL\\b", "BRAND LABEL");
+        r = r.replaceAll("(?i)\\bCONTENT\\s+LABEL\\b", "CONTENT LABEL");
+        r = r.replaceAll("(?i)\\bWASH\\s+CARE\\b", "WASH CARE");
+        // Button/Snap/Stud
+        r = r.replaceAll("(?i)\\bBut\\s+ton\\b", "Button");
+        r = r.replaceAll("(?i)\\bButt\\s+on\\b", "Button");
+        r = r.replaceAll("(?i)\\bSNA\\s+P\\b", "SNAP");
+        r = r.replaceAll("(?i)\\bSTU\\s+D\\b", "STUD");
+        r = r.replaceAll("(?i)\\bPRE\\s+SS\\b", "PRESS");
+        r = r.replaceAll("(?i)\\bRIV\\s+ET\\b", "RIVET");
+        r = r.replaceAll("(?i)\\bRIVE\\s+T\\b", "RIVET");
+        r = r.replaceAll("(?i)\\bJEAN\\s+S\\b", "JEANS");
+        r = r.replaceAll("(?i)\\bSHAN\\s+K\\b", "SHANK");
+        // Zipper/Slider
+        r = r.replaceAll("(?i)\\bZip\\s+per\\b", "Zipper");
+        r = r.replaceAll("(?i)\\bZipp\\s+er\\b", "Zipper");
+        r = r.replaceAll("(?i)\\bSLID\\s+ER\\b", "SLIDER");
+        r = r.replaceAll("(?i)\\bSLI\\s+DER\\b", "SLIDER");
+        r = r.replaceAll("(?i)\\bPUL\\s+LER\\b", "PULLER");
+        r = r.replaceAll("(?i)\\bPULL\\s+ER\\b", "PULLER");
+        r = r.replaceAll("(?i)\\bCOI\\s+L\\b", "COIL");
+        r = r.replaceAll("(?i)\\bVIS\\s+LON\\b", "VISLON");
+        r = r.replaceAll("(?i)\\bMET\\s+AL\\b", "METAL");
+        r = r.replaceAll("(?i)\\bMETA\\s+L\\b", "METAL");
+        r = r.replaceAll("(?i)\\bINVIS\\s+IBLE\\b", "INVISIBLE");
+        r = r.replaceAll("(?i)\\bINVISI\\s+BLE\\b", "INVISIBLE");
+        // Ribbon/Tape/Binding
+        r = r.replaceAll("(?i)\\bRib\\s+bon\\b", "Ribbon");
+        r = r.replaceAll("(?i)\\bRibb\\s+on\\b", "Ribbon");
+        r = r.replaceAll("(?i)\\bTA\\s+PE\\b", "TAPE");
+        r = r.replaceAll("(?i)\\bTAP\\s+E\\b", "TAPE");
+        r = r.replaceAll("(?i)\\bBIND\\s+ING\\b", "BINDING");
+        r = r.replaceAll("(?i)\\bBINDI\\s+NG\\b", "BINDING");
+        r = r.replaceAll("(?i)\\bPIP\\s+ING\\b", "PIPING");
+        r = r.replaceAll("(?i)\\bPIPI\\s+NG\\b", "PIPING");
+        r = r.replaceAll("(?i)\\bCOR\\s+D\\b", "CORD");
+        r = r.replaceAll("(?i)\\bCOR\\s+DING\\b", "CORDING");
+        r = r.replaceAll("(?i)\\bLAC\\s+E\\b", "LACE");
+        r = r.replaceAll("(?i)\\bLACE\\s+S\\b", "LACES");
+        r = r.replaceAll("(?i)\\bBRA\\s+ID\\b", "BRAID");
+        r = r.replaceAll("(?i)\\bBRAI\\s+D\\b", "BRAID");
+        r = r.replaceAll("(?i)\\bTWI\\s+LL\\b", "TWILL");
+        r = r.replaceAll("(?i)\\bTWIL\\s+L\\b", "TWILL");
+        r = r.replaceAll("(?i)\\bGROS\\s+GRAIN\\b", "GROSGRAIN");
+        r = r.replaceAll("(?i)\\bGROSGRA\\s+IN\\b", "GROSGRAIN");
+        r = r.replaceAll("(?i)\\bSAT\\s+IN\\b", "SATIN");
+        r = r.replaceAll("(?i)\\bSATI\\s+N\\b", "SATIN");
+        r = r.replaceAll("(?i)\\bVEL\\s+VET\\b", "VELVET");
+        r = r.replaceAll("(?i)\\bVELV\\s+ET\\b", "VELVET");
+        // Interlining/Interfacing/Padding
+        r = r.replaceAll("(?i)\\bINTER\\s+LINING\\b", "INTERLINING");
+        r = r.replaceAll("(?i)\\bINTERLIN\\s+ING\\b", "INTERLINING");
+        r = r.replaceAll("(?i)\\bINTER\\s+FACING\\b", "INTERFACING");
+        r = r.replaceAll("(?i)\\bINTERFAC\\s+ING\\b", "INTERFACING");
+        r = r.replaceAll("(?i)\\bFUS\\s+IBLE\\b", "FUSIBLE");
+        r = r.replaceAll("(?i)\\bFUSI\\s+BLE\\b", "FUSIBLE");
+        r = r.replaceAll("(?i)\\bPAD\\s+DING\\b", "PADDING");
+        r = r.replaceAll("(?i)\\bPADDI\\s+NG\\b", "PADDING");
+        r = r.replaceAll("(?i)\\bWAD\\s+DING\\b", "WADDING");
+        r = r.replaceAll("(?i)\\bWADDI\\s+NG\\b", "WADDING");
+        r = r.replaceAll("(?i)\\bINSU\\s+LATION\\b", "INSULATION");
+        r = r.replaceAll("(?i)\\bINSULAT\\s+ION\\b", "INSULATION");
+        r = r.replaceAll("(?i)\\bQUIL\\s+TING\\b", "QUILTING");
+        r = r.replaceAll("(?i)\\bQUILTI\\s+NG\\b", "QUILTING");
+        // Garment Parts
+        r = r.replaceAll("(?i)\\bCOL\\s+LAR\\b", "COLLAR");
+        r = r.replaceAll("(?i)\\bCOLLA\\s+R\\b", "COLLAR");
+        r = r.replaceAll("(?i)\\bCUF\\s+F\\b", "CUFF");
+        r = r.replaceAll("(?i)\\bCUFF\\s+S\\b", "CUFFS");
+        r = r.replaceAll("(?i)\\bSLE\\s+EVE\\b", "SLEEVE");
+        r = r.replaceAll("(?i)\\bSLEEV\\s+E\\b", "SLEEVE");
+        r = r.replaceAll("(?i)\\bPOC\\s+KET\\b", "POCKET");
+        r = r.replaceAll("(?i)\\bPOCKE\\s+T\\b", "POCKET");
+        r = r.replaceAll("(?i)\\bHEM\\s+LINE\\b", "HEMLINE");
+        r = r.replaceAll("(?i)\\bWAIST\\s+BAND\\b", "WAISTBAND");
+        r = r.replaceAll("(?i)\\bWAISTB\\s+AND\\b", "WAISTBAND");
+        r = r.replaceAll("(?i)\\bPLAC\\s+KET\\b", "PLACKET");
+        r = r.replaceAll("(?i)\\bPLACKE\\s+T\\b", "PLACKET");
+        r = r.replaceAll("(?i)\\bYOK\\s+E\\b", "YOKE");
+        r = r.replaceAll("(?i)\\bGUS\\s+SET\\b", "GUSSET");
+        r = r.replaceAll("(?i)\\bGUSSE\\s+T\\b", "GUSSET");
+        r = r.replaceAll("(?i)\\bGODE\\s+T\\b", "GODET");
+        r = r.replaceAll("(?i)\\bFLAP\\s+S\\b", "FLAPS");
+        r = r.replaceAll("(?i)\\bPLE\\s+AT\\b", "PLEAT");
+        r = r.replaceAll("(?i)\\bPLEA\\s+T\\b", "PLEAT");
+        r = r.replaceAll("(?i)\\bDAR\\s+T\\b", "DART");
+        r = r.replaceAll("(?i)\\bDART\\s+S\\b", "DARTS");
+        r = r.replaceAll("(?i)\\bRUF\\s+FLE\\b", "RUFFLE");
+        r = r.replaceAll("(?i)\\bRUFF\\s+LE\\b", "RUFFLE");
+        r = r.replaceAll("(?i)\\bFRI\\s+LL\\b", "FRILL");
+        r = r.replaceAll("(?i)\\bFRIL\\s+L\\b", "FRILL");
+        r = r.replaceAll("(?i)\\bLIN\\s+ING\\b", "LINING");
+        r = r.replaceAll("(?i)\\bLINI\\s+NG\\b", "LINING");
+        // Packaging
+        r = r.replaceAll("(?i)\\bPOLY\\s+BAG\\b", "POLYBAG");
+        r = r.replaceAll("(?i)\\bPOLYB\\s+AG\\b", "POLYBAG");
+        r = r.replaceAll("(?i)\\bCAR\\s+TON\\b", "CARTON");
+        r = r.replaceAll("(?i)\\bCARTO\\s+N\\b", "CARTON");
+        r = r.replaceAll("(?i)\\bTIS\\s+SUE\\b", "TISSUE");
+        r = r.replaceAll("(?i)\\bTISSU\\s+E\\b", "TISSUE");
+        r = r.replaceAll("(?i)\\bPIN\\s+S\\b", "PINS");
+        r = r.replaceAll("(?i)\\bCLIP\\s+S\\b", "CLIPS");
+        r = r.replaceAll("(?i)\\bBAR\\s+CODE\\b", "BARCODE");
+        r = r.replaceAll("(?i)\\bBARCO\\s+DE\\b", "BARCODE");
+        r = r.replaceAll("(?i)\\bSTIC\\s+KER\\b", "STICKER");
+        r = r.replaceAll("(?i)\\bSTICK\\s+ER\\b", "STICKER");
+        // Fabric Types
+        r = r.replaceAll("(?i)\\bDEN\\s+IM\\b", "DENIM");
+        r = r.replaceAll("(?i)\\bDENI\\s+M\\b", "DENIM");
+        r = r.replaceAll("(?i)\\bCHAM\\s+BRAY\\b", "CHAMBRAY");
+        r = r.replaceAll("(?i)\\bCHAMBR\\s+AY\\b", "CHAMBRAY");
+        r = r.replaceAll("(?i)\\bCAM\\s+BRIC\\b", "CAMBRIC");
+        r = r.replaceAll("(?i)\\bCAMBR\\s+IC\\b", "CAMBRIC");
+        r = r.replaceAll("(?i)\\bPOP\\s+LIN\\b", "POPLIN");
+        r = r.replaceAll("(?i)\\bPOPL\\s+IN\\b", "POPLIN");
+        r = r.replaceAll("(?i)\\bOX\\s+FORD\\b", "OXFORD");
+        r = r.replaceAll("(?i)\\bOXFO\\s+RD\\b", "OXFORD");
+        r = r.replaceAll("(?i)\\bJER\\s+SEY\\b", "JERSEY");
+        r = r.replaceAll("(?i)\\bJERS\\s+EY\\b", "JERSEY");
+        r = r.replaceAll("(?i)\\bINTER\\s+LOCK\\b", "INTERLOCK");
+        r = r.replaceAll("(?i)\\bINTERLO\\s+CK\\b", "INTERLOCK");
+        r = r.replaceAll("(?i)\\bRIB\\s+KNIT\\b", "RIB KNIT");
+        r = r.replaceAll("(?i)\\bPIQ\\s+UE\\b", "PIQUE");
+        r = r.replaceAll("(?i)\\bPIQU\\s+E\\b", "PIQUE");
+        r = r.replaceAll("(?i)\\bFREN\\s+CH\\b", "FRENCH");
+        r = r.replaceAll("(?i)\\bFRENC\\s+H\\b", "FRENCH");
+        r = r.replaceAll("(?i)\\bTER\\s+RY\\b", "TERRY");
+        r = r.replaceAll("(?i)\\bTERR\\s+Y\\b", "TERRY");
+        r = r.replaceAll("(?i)\\bVOI\\s+LE\\b", "VOILE");
+        r = r.replaceAll("(?i)\\bVOIL\\s+E\\b", "VOILE");
+        r = r.replaceAll("(?i)\\bCHIF\\s+FON\\b", "CHIFFON");
+        r = r.replaceAll("(?i)\\bCHIFF\\s+ON\\b", "CHIFFON");
+        r = r.replaceAll("(?i)\\bGEOR\\s+GETTE\\b", "GEORGETTE");
+        r = r.replaceAll("(?i)\\bGEORGE\\s+TTE\\b", "GEORGETTE");
+        r = r.replaceAll("(?i)\\bCRE\\s+PE\\b", "CREPE");
+        r = r.replaceAll("(?i)\\bCREP\\s+E\\b", "CREPE");
+        r = r.replaceAll("(?i)\\bCHAR\\s+MEUSE\\b", "CHARMEUSE");
+        r = r.replaceAll("(?i)\\bCHARME\\s+USE\\b", "CHARMEUSE");
+        r = r.replaceAll("(?i)\\bORGAN\\s+ZA\\b", "ORGANZA");
+        r = r.replaceAll("(?i)\\bORGANZ\\s+A\\b", "ORGANZA");
+        r = r.replaceAll("(?i)\\bTUL\\s+LE\\b", "TULLE");
+        r = r.replaceAll("(?i)\\bTULL\\s+E\\b", "TULLE");
+        r = r.replaceAll("(?i)\\bMES\\s+H\\b", "MESH");
+        r = r.replaceAll("(?i)\\bNET\\s+TING\\b", "NETTING");
+        r = r.replaceAll("(?i)\\bNETTI\\s+NG\\b", "NETTING");
+        r = r.replaceAll("(?i)\\bCAN\\s+VAS\\b", "CANVAS");
+        r = r.replaceAll("(?i)\\bCANVA\\s+S\\b", "CANVAS");
+        r = r.replaceAll("(?i)\\bTWE\\s+ED\\b", "TWEED");
+        r = r.replaceAll("(?i)\\bTWEE\\s+D\\b", "TWEED");
+        r = r.replaceAll("(?i)\\bFLAN\\s+NEL\\b", "FLANNEL");
+        r = r.replaceAll("(?i)\\bFLANN\\s+EL\\b", "FLANNEL");
+        r = r.replaceAll("(?i)\\bCOR\\s+DUROY\\b", "CORDUROY");
+        r = r.replaceAll("(?i)\\bCORDU\\s+ROY\\b", "CORDUROY");
+        r = r.replaceAll("(?i)\\bVEL\\s+OUR\\b", "VELOUR");
+        r = r.replaceAll("(?i)\\bVELO\\s+UR\\b", "VELOUR");
+        r = r.replaceAll("(?i)\\bSUE\\s+DE\\b", "SUEDE");
+        r = r.replaceAll("(?i)\\bSUED\\s+E\\b", "SUEDE");
+        r = r.replaceAll("(?i)\\bSHEER\\s+S\\b", "SHEERS");
+        r = r.replaceAll("(?i)\\bSHE\\s+ER\\b", "SHEER");
+
+        // ===== COMMON WORDS =====
+        r = r.replaceAll("(?i)\\bwit\\s+h\\b", "with");
+        r = r.replaceAll("(?i)\\bwi\\s+th\\b", "with");
+        // sizes
+        r = r.replaceAll("(?i)\\bsi\\s+zes\\b", "sizes");
+        r = r.replaceAll("(?i)\\bsiz\\s+es\\b", "sizes");
+        // gsm (grams per square meter) - OCR sometimes reads "80gsm" as "Ogsm" or "0gsm"
+        r = r.replaceAll("(?i)\\bOgsm\\b", "0gsm");
+        r = r.replaceAll("(\\d+)\\s+gsm\\b", "$1gsm");
+        r = r.replaceAll("(\\d)\\s*Ogsm\\b", "$10gsm");  // e.g., 8 Ogsm -> 80gsm
+        // Voile
+        r = r.replaceAll("(?i)\\bVoi\\s+le\\b", "Voile");
+        r = r.replaceAll("(?i)\\bNoile\\b", "Voile");  // OCR misread
+
+        // ===== CITY NAMES (TEXTILE HUBS) =====
+        // China
+        r = r.replaceAll("(?i)\\bHANG\\s+ZHOU\\b", "HANGZHOU");
+        r = r.replaceAll("(?i)\\bHANGZH\\s+OU\\b", "HANGZHOU");
+        r = r.replaceAll("(?i)\\bSUZ\\s+HOU\\b", "SUZHOU");
+        r = r.replaceAll("(?i)\\bSUZH\\s+OU\\b", "SUZHOU");
+        r = r.replaceAll("(?i)\\bSHAO\\s+XING\\b", "SHAOXING");
+        r = r.replaceAll("(?i)\\bSHAOX\\s+ING\\b", "SHAOXING");
+        r = r.replaceAll("(?i)\\bNING\\s+BO\\b", "NINGBO");
+        r = r.replaceAll("(?i)\\bNINGB\\s+O\\b", "NINGBO");
+        r = r.replaceAll("(?i)\\bGUANG\\s+ZHOU\\b", "GUANGZHOU");
+        r = r.replaceAll("(?i)\\bGUANGZH\\s+OU\\b", "GUANGZHOU");
+        r = r.replaceAll("(?i)\\bSHEN\\s+ZHEN\\b", "SHENZHEN");
+        r = r.replaceAll("(?i)\\bSHENZH\\s+EN\\b", "SHENZHEN");
+        r = r.replaceAll("(?i)\\bDONG\\s+GUAN\\b", "DONGGUAN");
+        r = r.replaceAll("(?i)\\bDONGGU\\s+AN\\b", "DONGGUAN");
+        r = r.replaceAll("(?i)\\bQING\\s+DAO\\b", "QINGDAO");
+        r = r.replaceAll("(?i)\\bQINGD\\s+AO\\b", "QINGDAO");
+        r = r.replaceAll("(?i)\\bSHANG\\s+HAI\\b", "SHANGHAI");
+        r = r.replaceAll("(?i)\\bSHANGH\\s+AI\\b", "SHANGHAI");
+        r = r.replaceAll("(?i)\\bBEI\\s+JING\\b", "BEIJING");
+        r = r.replaceAll("(?i)\\bBEIJ\\s+ING\\b", "BEIJING");
+        r = r.replaceAll("(?i)\\bWU\\s+XI\\b", "WUXI");
+        r = r.replaceAll("(?i)\\bWUX\\s+I\\b", "WUXI");
+        r = r.replaceAll("(?i)\\bNAN\\s+TONG\\b", "NANTONG");
+        r = r.replaceAll("(?i)\\bNANTO\\s+NG\\b", "NANTONG");
+        // Bangladesh
+        r = r.replaceAll("(?i)\\bDHA\\s+KA\\b", "DHAKA");
+        r = r.replaceAll("(?i)\\bDHAK\\s+A\\b", "DHAKA");
+        r = r.replaceAll("(?i)\\bCHIT\\s+TAGONG\\b", "CHITTAGONG");
+        r = r.replaceAll("(?i)\\bCHITTA\\s+GONG\\b", "CHITTAGONG");
+        // Indonesia
+        r = r.replaceAll("(?i)\\bJAK\\s+ARTA\\b", "JAKARTA");
+        r = r.replaceAll("(?i)\\bJAKAR\\s+TA\\b", "JAKARTA");
+        r = r.replaceAll("(?i)\\bSURA\\s+BAYA\\b", "SURABAYA");
+        r = r.replaceAll("(?i)\\bSURABA\\s+YA\\b", "SURABAYA");
+        r = r.replaceAll("(?i)\\bBAN\\s+DUNG\\b", "BANDUNG");
+        r = r.replaceAll("(?i)\\bBANDU\\s+NG\\b", "BANDUNG");
+        r = r.replaceAll("(?i)\\bSEMA\\s+RANG\\b", "SEMARANG");
+        r = r.replaceAll("(?i)\\bSEMARA\\s+NG\\b", "SEMARANG");
+        // Vietnam
+        r = r.replaceAll("(?i)\\bHO\\s+CHI\\b", "HO CHI");
+        r = r.replaceAll("(?i)\\bHA\\s+NOI\\b", "HANOI");
+        r = r.replaceAll("(?i)\\bHANO\\s+I\\b", "HANOI");
+        // India
+        r = r.replaceAll("(?i)\\bMUM\\s+BAI\\b", "MUMBAI");
+        r = r.replaceAll("(?i)\\bMUMB\\s+AI\\b", "MUMBAI");
+        r = r.replaceAll("(?i)\\bDEL\\s+HI\\b", "DELHI");
+        r = r.replaceAll("(?i)\\bDELH\\s+I\\b", "DELHI");
+        r = r.replaceAll("(?i)\\bTIRU\\s+PUR\\b", "TIRUPUR");
+        r = r.replaceAll("(?i)\\bTIRUP\\s+UR\\b", "TIRUPUR");
+        r = r.replaceAll("(?i)\\bCOIM\\s+BATORE\\b", "COIMBATORE");
+        r = r.replaceAll("(?i)\\bCOIMBA\\s+TORE\\b", "COIMBATORE");
+        r = r.replaceAll("(?i)\\bAHMED\\s+ABAD\\b", "AHMEDABAD");
+        r = r.replaceAll("(?i)\\bAHMEDA\\s+BAD\\b", "AHMEDABAD");
+        r = r.replaceAll("(?i)\\bSUR\\s+AT\\b", "SURAT");
+        r = r.replaceAll("(?i)\\bSURA\\s+T\\b", "SURAT");
+
+        // ===== TREATMENT/FINISHING TERMS =====
+        r = r.replaceAll("(?i)\\bWASH\\s+ED\\b", "WASHED");
+        r = r.replaceAll("(?i)\\bWASHE\\s+D\\b", "WASHED");
+        r = r.replaceAll("(?i)\\bGAR\\s+MENT\\s+WASH\\b", "GARMENT WASH");
+        r = r.replaceAll("(?i)\\bSTONE\\s+WASH\\b", "STONEWASH");
+        r = r.replaceAll("(?i)\\bSTONEW\\s+ASH\\b", "STONEWASH");
+        r = r.replaceAll("(?i)\\bACID\\s+WASH\\b", "ACID WASH");
+        r = r.replaceAll("(?i)\\bBLE\\s+ACH\\b", "BLEACH");
+        r = r.replaceAll("(?i)\\bBLEAC\\s+H\\b", "BLEACH");
+        r = r.replaceAll("(?i)\\bBLEACH\\s+ED\\b", "BLEACHED");
+        r = r.replaceAll("(?i)\\bDYE\\s+D\\b", "DYED");
+        r = r.replaceAll("(?i)\\bDYED\\s+S\\b", "DYEDS");
+        r = r.replaceAll("(?i)\\bPIG\\s+MENT\\b", "PIGMENT");
+        r = r.replaceAll("(?i)\\bPIGME\\s+NT\\b", "PIGMENT");
+        r = r.replaceAll("(?i)\\bREAC\\s+TIVE\\b", "REACTIVE");
+        r = r.replaceAll("(?i)\\bREACTI\\s+VE\\b", "REACTIVE");
+        r = r.replaceAll("(?i)\\bPRIN\\s+T\\b", "PRINT");
+        r = r.replaceAll("(?i)\\bPRINT\\s+S\\b", "PRINTS");
+        r = r.replaceAll("(?i)\\bDIG\\s+ITAL\\b", "DIGITAL");
+        r = r.replaceAll("(?i)\\bDIGIT\\s+AL\\b", "DIGITAL");
+        r = r.replaceAll("(?i)\\bSCR\\s+EEN\\b", "SCREEN");
+        r = r.replaceAll("(?i)\\bSCREE\\s+N\\b", "SCREEN");
+        r = r.replaceAll("(?i)\\bROT\\s+ARY\\b", "ROTARY");
+        r = r.replaceAll("(?i)\\bROTA\\s+RY\\b", "ROTARY");
+        r = r.replaceAll("(?i)\\bTRANS\\s+FER\\b", "TRANSFER");
+        r = r.replaceAll("(?i)\\bTRANSF\\s+ER\\b", "TRANSFER");
+        r = r.replaceAll("(?i)\\bSUBLI\\s+MATION\\b", "SUBLIMATION");
+        r = r.replaceAll("(?i)\\bSUBLIMA\\s+TION\\b", "SUBLIMATION");
+        r = r.replaceAll("(?i)\\bFLOC\\s+K\\b", "FLOCK");
+        r = r.replaceAll("(?i)\\bFLOCK\\s+ING\\b", "FLOCKING");
+        r = r.replaceAll("(?i)\\bFOI\\s+L\\b", "FOIL");
+        r = r.replaceAll("(?i)\\bPUF\\s+F\\b", "PUFF");
+        r = r.replaceAll("(?i)\\bGLIT\\s+TER\\b", "GLITTER");
+        r = r.replaceAll("(?i)\\bGLITT\\s+ER\\b", "GLITTER");
+        r = r.replaceAll("(?i)\\bMETAL\\s+LIC\\b", "METALLIC");
+        r = r.replaceAll("(?i)\\bCOAT\\s+ED\\b", "COATED");
+        r = r.replaceAll("(?i)\\bCOATE\\s+D\\b", "COATED");
+        r = r.replaceAll("(?i)\\bLAMIN\\s+ATED\\b", "LAMINATED");
+        r = r.replaceAll("(?i)\\bLAMINA\\s+TED\\b", "LAMINATED");
+        r = r.replaceAll("(?i)\\bBOND\\s+ED\\b", "BONDED");
+        r = r.replaceAll("(?i)\\bBONDE\\s+D\\b", "BONDED");
+        r = r.replaceAll("(?i)\\bBRUSH\\s+ED\\b", "BRUSHED");
+        r = r.replaceAll("(?i)\\bBRUSHE\\s+D\\b", "BRUSHED");
+        r = r.replaceAll("(?i)\\bPEACH\\s+ED\\b", "PEACHED");
+        r = r.replaceAll("(?i)\\bPEACHE\\s+D\\b", "PEACHED");
+        r = r.replaceAll("(?i)\\bSAND\\s+ED\\b", "SANDED");
+        r = r.replaceAll("(?i)\\bSANDE\\s+D\\b", "SANDED");
+        r = r.replaceAll("(?i)\\bSUE\\s+DED\\b", "SUEDED");
+        r = r.replaceAll("(?i)\\bSUEDE\\s+D\\b", "SUEDED");
+        r = r.replaceAll("(?i)\\bMER\\s+CERIZED\\b", "MERCERIZED");
+        r = r.replaceAll("(?i)\\bMERCER\\s+IZED\\b", "MERCERIZED");
+        r = r.replaceAll("(?i)\\bSANFOR\\s+IZED\\b", "SANFORIZED");
+        r = r.replaceAll("(?i)\\bSANFORI\\s+ZED\\b", "SANFORIZED");
+        r = r.replaceAll("(?i)\\bPRE\\s+SHRUNK\\b", "PRESHRUNK");
+        r = r.replaceAll("(?i)\\bPRESHR\\s+UNK\\b", "PRESHRUNK");
+        r = r.replaceAll("(?i)\\bWATER\\s+PROOF\\b", "WATERPROOF");
+        r = r.replaceAll("(?i)\\bWATERPR\\s+OOF\\b", "WATERPROOF");
+        r = r.replaceAll("(?i)\\bWATER\\s+REPELLENT\\b", "WATER REPELLENT");
+        r = r.replaceAll("(?i)\\bWRIN\\s+KLE\\b", "WRINKLE");
+        r = r.replaceAll("(?i)\\bWRINKL\\s+E\\b", "WRINKLE");
+        r = r.replaceAll("(?i)\\bANTI\\s+BACTERIAL\\b", "ANTIBACTERIAL");
+        r = r.replaceAll("(?i)\\bANTI\\s+MICROBIAL\\b", "ANTIMICROBIAL");
+        r = r.replaceAll("(?i)\\bUV\\s+PROTECTION\\b", "UV PROTECTION");
+        r = r.replaceAll("(?i)\\bFIRE\\s+RETARDANT\\b", "FIRE RETARDANT");
+        r = r.replaceAll("(?i)\\bFLAME\\s+RETARDANT\\b", "FLAME RETARDANT");
+        r = r.replaceAll("(?i)\\bMOIS\\s+TURE\\b", "MOISTURE");
+        r = r.replaceAll("(?i)\\bMOISTU\\s+RE\\b", "MOISTURE");
+        r = r.replaceAll("(?i)\\bWICK\\s+ING\\b", "WICKING");
+        r = r.replaceAll("(?i)\\bWICKI\\s+NG\\b", "WICKING");
+        r = r.replaceAll("(?i)\\bBREATH\\s+ABLE\\b", "BREATHABLE");
+        r = r.replaceAll("(?i)\\bBREATHA\\s+BLE\\b", "BREATHABLE");
+        r = r.replaceAll("(?i)\\bSTRET\\s+CH\\b", "STRETCH");
+        r = r.replaceAll("(?i)\\bSTRETC\\s+H\\b", "STRETCH");
+
+        // ===== PRODUCT CODES =====
+        // JY8064-circulose type splits
+        r = r.replaceAll("(?i)(JY\\d+)-?circul\\s+ose\\b", "$1-circulose");
+        r = r.replaceAll("(?i)(JY\\d+)-?circu\\s+lose\\b", "$1-circulose");
+        // Handle JY8064-CIRCULOSE (uppercase) to lowercase for consistency
+        r = r.replaceAll("(JY\\d+)-CIRCULOSE\\b", "$1-circulose");
+        // Fix split product description patterns
+        r = r.replaceAll("(?i)(JY\\d+-circulose)\\s+Revisco\\s+Viscose", "$1 80%Revisco Viscose");
+        r = r.replaceAll("(?i)(\\d+%-?circulose)\\s+Revisco\\s+Viscose", "$1 80%Revisco Viscose");
+        
+        // ===== MEASUREMENT UNITS =====
+        r = r.replaceAll("(?i)\\bgram\\s*/\\s*km\\b", "gram/km");
+        r = r.replaceAll("(?i)\\bg\\s*/\\s*m\\b", "g/m");
+        r = r.replaceAll("(?i)\\bg\\s*/\\s*m2\\b", "g/m2");
+        r = r.replaceAll("(?i)(\\d+)\\s*g\\s*/\\s*sm\\b", "$1g/sm");
+        r = r.replaceAll("(?i)(\\d+)\\s+gsm\\b", "$1gsm");
+        // Fix "8 Ogsm" or "8 0gsm" patterns -> 80gsm (OCR splits 80 into 8 + Ogsm/0gsm)
+        r = r.replaceAll("(\\d)\\s+Ogsm\\b", "$10gsm");
+        r = r.replaceAll("(\\d)\\s+ogsm\\b", "$10gsm");
+        r = r.replaceAll("(\\d)\\s+0gsm\\b", "$10gsm");
+        // Fix split dimension specs like "20*32 +32/163*85 8" -> "20*32+32/163*85"
+        r = r.replaceAll("(\\d+\\*\\d+)\\s+\\+(\\d+)", "$1+$2");
+        // Fix "85 8 Ogsm" -> "85 80gsm" pattern (trailing number before Ogsm)
+        r = r.replaceAll("(\\d+)\\s+(\\d)\\s+Ogsm\\b", "$1 $20gsm");
+        r = r.replaceAll("(\\d+)\\s+(\\d)\\s+0gsm\\b", "$1 $20gsm");
+
+        // ===== SPLIT NUMBERS/SPECS =====
+        // 80 %Revis -> 80% Revis
+        r = r.replaceAll("(\\d+)\\s+%", "$1%");
+        // x32/1 splits
+        r = r.replaceAll("(?i)x(\\d+)\\s*/\\s*(\\d+)", "x$1/$2");
+        // +32/163*85 splits (construction spec)
+        r = r.replaceAll("\\+(\\d+)\\s*/\\s*(\\d+)\\s*\\*\\s*(\\d+)", "+$1/$2*$3");
+
+        return oneLine(r);
+    }
+
+    /**
+     * Mendeteksi apakah sebuah baris adalah lanjutan dari baris sebelumnya.
+     * Returns true jika baris terlihat seperti fragment lanjutan.
+     */
+    public static boolean isLineContinuation(String prevLine, String currentLine) {
+        if (prevLine == null || prevLine.isBlank() || currentLine == null || currentLine.isBlank()) {
+            return false;
+        }
+        
+        String prev = oneLine(prevLine);
+        String curr = oneLine(currentLine);
+        
+        // Check if prev line ends with incomplete word fragment
+        String[] prevWords = prev.split("\\s+");
+        if (prevWords.length == 0) return false;
+        
+        String lastWord = prevWords[prevWords.length - 1];
+        
+        // Check if current line starts with lowercase or fragment
+        String[] currWords = curr.split("\\s+");
+        if (currWords.length == 0) return false;
+        
+        String firstWord = currWords[0];
+        
+        // Case 1: Previous ends with uppercase fragment, current starts with uppercase continuation
+        // e.g., "INDONES" + "IA", "POL" + "YESTER"
+        if (lastWord.matches("[A-Z]{2,}") && firstWord.matches("[A-Z]{2,}")) {
+            String combined = lastWord + firstWord;
+            if (isKnownWord(combined.toLowerCase())) {
+                return true;
+            }
+        }
+        
+        // Case 2: Previous ends with mixed case fragment, current continues
+        // e.g., "thr" + "ead", "circul" + "ose"
+        if (lastWord.matches("[a-zA-Z]{2,4}") && firstWord.matches("[a-zA-Z]{2,}")) {
+            String combined = lastWord + firstWord;
+            if (isKnownWord(combined.toLowerCase())) {
+                return true;
+            }
+        }
+        
+        // Case 3: Previous ends with single letter continuation marker
+        // e.g., "wit" + "h"
+        if (lastWord.length() <= 3 && firstWord.length() == 1) {
+            return true;
+        }
+        
+        // Case 4: Current line starts with lowercase (likely continuation)
+        if (Character.isLowerCase(firstWord.charAt(0)) && firstWord.length() <= 5) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if a word is a known complete word in garment/textile context (ENTERPRISE BOM)
+     */
+    private static boolean isKnownWord(String word) {
+        if (word == null || word.isBlank()) return false;
+        String low = word.toLowerCase();
+        return KNOWN_GARMENT_WORDS.contains(low);
+    }
+
+    // Enterprise BoM vocabulary for garment industry
+    private static final java.util.Set<String> KNOWN_GARMENT_WORDS = java.util.Set.of(
+        // Fiber/Materials
+        "polyester", "polyamide", "polypropylene", "polyurethane", "viscose", "rayon",
+        "revisco", "circulose", "recycled", "cotton", "organic", "elastane", "spandex",
+        "lycra", "linen", "flax", "silk", "wool", "merino", "cashmere", "acrylic",
+        "modal", "tencel", "lyocell", "bamboo", "hemp", "jute", "acetate", "triacetate",
+        "cupro", "metallic", "lurex", "microfiber", "fleece", "leather", "faux", "synthetic", "nylon",
+        // Countries
+        "indonesia", "china", "vietnam", "bangladesh", "thailand", "malaysia", "pakistan",
+        "cambodia", "myanmar", "india", "philippines", "turkey", "egypt", "morocco",
+        "tunisia", "portugal", "italy", "germany", "japan", "korea", "taiwan", "hongkong",
+        "singapore", "united", "kingdom", "states", "america", "australia", "netherlands",
+        "sweden", "france", "spain", "brazil", "mexico", "canada", "srilanka",
+        // Cities
+        "hangzhou", "suzhou", "shaoxing", "ningbo", "guangzhou", "shenzhen", "dongguan",
+        "qingdao", "shanghai", "beijing", "wuxi", "nantong", "dhaka", "chittagong",
+        "jakarta", "surabaya", "bandung", "semarang", "hanoi", "mumbai", "delhi",
+        "tirupur", "coimbatore", "ahmedabad", "surat",
+        // Company Terms
+        "trading", "export", "import", "garment", "textile", "accessories", "printing",
+        "dyeing", "brothread", "limited", "company", "corporation", "enterprise",
+        // Garment Components
+        "thread", "sewing", "stitching", "embroidery", "smocking", "shirring", "elastic",
+        "drawstring", "buckle", "clasp", "hook", "eyelet", "grommet", "hanger", "loop",
+        "label", "woven", "printed", "hangtag", "button", "snap", "stud", "rivet", "shank",
+        "zipper", "slider", "puller", "coil", "vislon", "metal", "invisible",
+        "ribbon", "tape", "binding", "piping", "cord", "cording", "lace", "braid",
+        "twill", "grosgrain", "satin", "velvet", "interlining", "interfacing", "fusible",
+        "padding", "wadding", "insulation", "quilting",
+        // Garment Parts
+        "collar", "cuff", "cuffs", "sleeve", "pocket", "hemline", "waistband", "placket",
+        "yoke", "gusset", "godet", "flaps", "pleat", "dart", "darts", "ruffle", "frill", "lining",
+        // Packaging
+        "polybag", "carton", "tissue", "pins", "clips", "barcode", "sticker",
+        // Fabric Types
+        "denim", "chambray", "cambric", "poplin", "oxford", "jersey", "interlock",
+        "pique", "french", "terry", "voile", "chiffon", "georgette", "crepe", "charmeuse",
+        "organza", "tulle", "mesh", "netting", "canvas", "tweed", "flannel", "corduroy",
+        "velour", "suede", "sheer", "sheers",
+        // Treatment/Finishing
+        "washed", "stonewash", "bleach", "bleached", "dyed", "pigment", "reactive",
+        "print", "prints", "digital", "screen", "rotary", "transfer", "sublimation",
+        "flock", "flocking", "foil", "puff", "glitter", "coated", "laminated", "bonded",
+        "brushed", "peached", "sanded", "sueded", "mercerized", "sanforized", "preshrunk",
+        "waterproof", "wrinkle", "antibacterial", "antimicrobial", "moisture", "wicking",
+        "breathable", "stretch",
+        // Common words
+        "with", "and"
+    );
+
+    /**
+     * Menggabungkan array of lines yang mungkin terpotong menjadi string utuh.
+     */
+    public static String mergeFragmentedLines(List<String> lines) {
+        if (lines == null || lines.isEmpty()) return "";
+        
+        StringBuilder result = new StringBuilder();
+        String prevLine = null;
+        
+        for (String line : lines) {
+            if (line == null || line.isBlank()) continue;
+            
+            String current = oneLine(line);
+            
+            if (prevLine == null) {
+                result.append(current);
+            } else if (isLineContinuation(prevLine, current)) {
+                // Don't add space, merge directly
+                result.append(current);
+            } else {
+                result.append(" ").append(current);
+            }
+            
+            prevLine = current;
+        }
+        
+        // Apply word merge fixes
+        return mergeSplitWords(result.toString());
     }
 
     private static String stripPunctKeepPercent(String s) {
@@ -881,6 +1648,8 @@ public class TableParser {
     private static String cleanCompositionTokens(String raw) {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
+        // Apply comprehensive word merge first
+        r = mergeSplitWords(r);
         String[] parts = r.split("\\s+");
         StringBuilder sb = new StringBuilder();
         String prevKeptLow = "";
@@ -1045,23 +1814,36 @@ public class TableParser {
 
     private static boolean isFiberWord(String low) {
         if (low == null || low.isBlank()) return false;
-        return low.contains("viscose")
-                || low.contains("revis")
-                || low.contains("revisco")
-                || low.contains("circulose")
-                || low.contains("irculose")
-                || low.contains("polyamide")
-                || low.contains("polyester")
-                || low.contains("polyeste")
-                || low.contains("olyester")
-                || low.contains("cotton")
-                || low.contains("elastane")
-                || low.contains("spandex")
-                || low.contains("recycled")
-                || low.equals("recy")
-                || low.equals("cled")
-                || low.equals("pol")
-                || low.equals("yester");
+        // Core fibers
+        return low.contains("viscose") || low.contains("rayon")
+                || low.contains("revis") || low.contains("revisco")
+                || low.contains("circulose") || low.contains("irculose")
+                || low.contains("polyamide") || low.contains("polyester")
+                || low.contains("polyeste") || low.contains("olyester")
+                || low.contains("polypropylene") || low.contains("polyurethane")
+                || low.contains("cotton") || low.contains("organic")
+                || low.contains("elastane") || low.contains("spandex") || low.contains("lycra")
+                || low.contains("nylon")
+                || low.contains("linen") || low.contains("flax")
+                || low.contains("silk") || low.contains("wool") || low.contains("merino")
+                || low.contains("cashmere") || low.contains("acrylic")
+                || low.contains("modal") || low.contains("tencel") || low.contains("lyocell")
+                || low.contains("bamboo") || low.contains("hemp") || low.contains("jute")
+                || low.contains("acetate") || low.contains("triacetate")
+                || low.contains("cupro") || low.contains("metallic") || low.contains("lurex")
+                || low.contains("microfiber") || low.contains("fleece")
+                || low.contains("recycled") || low.contains("synthetic")
+                // Fragments for OCR splits
+                || low.equals("recy") || low.equals("cled")
+                || low.equals("pol") || low.equals("yester")
+                || low.equals("span") || low.equals("dex")
+                || low.equals("elas") || low.equals("tane")
+                || low.equals("vis") || low.equals("cose")
+                || low.equals("ny") || low.equals("lon")
+                || low.equals("cot") || low.equals("ton")
+                || low.equals("lin") || low.equals("en")
+                || low.equals("mod") || low.equals("al")
+                || low.equals("ten") || low.equals("cel");
     }
 
     private static BomRowStart parseBomRowStart(String txt) {
