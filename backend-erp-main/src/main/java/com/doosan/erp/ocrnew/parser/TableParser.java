@@ -204,7 +204,30 @@ public class TableParser {
                     if (!contText.isBlank()) {
                         List<String> last = mergedRows.get(mergedRows.size() - 1);
                         if (last != null && last.size() >= 2) {
-                            last.set(1, oneLine(last.get(1) + (last.get(1).isBlank() ? "" : " ") + contText));
+                            // Normalize continuation text for description (fix broken OCR tokens)
+                            String contDesc = normalizeBomDescriptionContinuation(contText);
+                            last.set(1, oneLine(last.get(1) + (last.get(1).isBlank() ? "" : " ") + contDesc));
+
+                            // Also extract and append composition tokens if last row had composition
+                            if (last.size() >= 4) {
+                                String lastComp = last.get(3);
+                                boolean lastHasComp = lastComp != null && !lastComp.isBlank() && TOKEN_HAS_PERCENT.matcher(lastComp).find();
+                                if (lastHasComp && looksLikeCompositionContinuation(contText)) {
+                                    String compTokens = extractCompositionContinuationTokens(contText);
+                                    // Also check for RECYCLED POLYESTER fragments
+                                    String contLow = contText.toLowerCase();
+                                    if ((contLow.contains("recycled") || contLow.contains("recy")) && 
+                                        (contLow.contains("polyester") || contLow.contains("olyester") || contLow.contains("polyeste"))) {
+                                        if (!compTokens.toLowerCase().contains("polyester")) {
+                                            compTokens = oneLine(compTokens + " RECYCLED POLYESTER");
+                                        }
+                                    }
+                                    if (!compTokens.isBlank()) {
+                                        String newComp = oneLine(lastComp + (lastComp.endsWith("%") ? " " : ", ") + compTokens);
+                                        last.set(3, normalizeBomComposition(newComp));
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -563,6 +586,52 @@ public class TableParser {
         // Common OCR line-break word splits in fibre names
         r = r.replaceAll("(?i)\\bPOL\\s+YESTER\\b", "POLYESTER");
         r = r.replaceAll("(?i)\\bPOLY\\s+ESTER\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bRECYCLED\\s+P\\s*OLYESTER\\b", "RECYCLED POLYESTER");
+        r = r.replaceAll("(?i)\\bRECY\\s*CLED\\s+POLYESTER\\b", "RECYCLED POLYESTER");
+        // Dedupe circulose
+        r = r.replaceAll("(?i)\\bcirculose\\s+circulose\\b", "circulose");
+        r = r.replaceAll("(?i)\\bwith\\s+c\\s+circulose\\b", "with circulose");
+        r = r.replaceAll("(?i)\\bwith\\s+c\\s+irculose\\b", "with circulose");
+        return oneLine(r);
+    }
+
+    private static String normalizeBomDescriptionContinuation(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+
+        // Fix common OCR broken tokens in continuation text across pages
+        // irculose -> circulose
+        r = r.replaceAll("(?i)\\birculose\\b", "circulose");
+        // recy -> recycled (but not if already followed by 'cled')
+        r = r.replaceAll("(?i)\\brecy\\s+RECYCLED\\b", "recycled");
+        r = r.replaceAll("(?i)\\brecy\\b(?!\\s*cled)", "recycled");
+        // cled polyeste -> recycled polyester (continuation fragment)
+        r = r.replaceAll("(?i)\\bcled\\s+polyeste\\b", "recycled polyester");
+        // RECYCLED P ... OLYESTER -> RECYCLED POLYESTER
+        r = r.replaceAll("(?i)\\bRECYCLED\\s+P\\s+OLYESTER\\b", "RECYCLED POLYESTER");
+        r = r.replaceAll("(?i)\\bRECYCLED\\s+P\\b", "RECYCLED");
+        r = r.replaceAll("(?i)\\bOLYESTER\\b", "POLYESTER");
+        // polyeste OLYESTER -> polyester
+        r = r.replaceAll("(?i)\\bpolyeste\\s+POLYESTER\\b", "polyester");
+        r = r.replaceAll("(?i)\\bpolyeste\\b", "polyester");
+        // Fix 'with c circulose' or 'with c irculose'
+        r = r.replaceAll("(?i)\\bwith\\s+c\\s+circulose\\b", "with circulose");
+        r = r.replaceAll("(?i)\\bwith\\s+c\\s+irculose\\b", "with circulose");
+        // Remove duplicate 'circulose circulose'
+        r = r.replaceAll("(?i)\\bcirculose\\s+circulose\\b", "circulose");
+        // Fix 'r 20dx45s' -> '20dx45s' (stray 'r' from polyester split)
+        r = r.replaceAll("(?i)\\br\\s+(\\d+dx\\d+s)\\b", "$1");
+        // Fix '75g/sm 5 5"CW' -> '75g/sm 55"CW' (split digit)
+        r = r.replaceAll("(\\d+g/sm)\\s+(\\d)\\s+(\\d)\"", "$1 $2$3\"");
+        // Fix 'x94' standalone -> merge with previous '150' if present
+        r = r.replaceAll("(\\d{3})\\s+x(\\d{2})\\b", "$1x$2");
+        // Clean duplicate RECYCLED
+        r = r.replaceAll("(?i)\\brecycled\\s+recycled\\b", "recycled");
+        // Clean duplicate polyester
+        r = r.replaceAll("(?i)\\bpolyester\\s+polyester\\b", "polyester");
+        // Clean 'recycled recycled polyester' pattern
+        r = r.replaceAll("(?i)\\brecycled\\s+polyester\\s+recycled\\s+polyester\\b", "recycled polyester");
+        
         return oneLine(r);
     }
 
@@ -903,6 +972,7 @@ public class TableParser {
             if (SUPPLIER_STOPWORD.matcher(tokClean).matches()) break;
             if (ID_LIKE_TOKEN.matcher(tokClean).matches()) break;
 
+            // Normalize common OCR fragments
             if (low.equals("irculose")) {
                 tokClean = "circulose";
                 low = "circulose";
@@ -915,13 +985,33 @@ public class TableParser {
                 tokClean = "YESTER";
                 low = "yester";
             }
+            if (low.equals("olyester")) {
+                tokClean = "POLYESTER";
+                low = "polyester";
+            }
+            if (low.equals("polyeste")) {
+                tokClean = "POLYESTER";
+                low = "polyester";
+            }
+            if (low.equals("recy")) {
+                tokClean = "RECYCLED";
+                low = "recycled";
+            }
+            if (low.equals("cled")) {
+                // Skip 'cled' as it's a fragment of 'recycled' - already handled
+                continue;
+            }
 
             boolean keep = isFiberWord(low) || isCompositionGlueWord(low) || (tokClean.length() == 1 && i > 0 && parts[i - 1].equalsIgnoreCase("with"));
             if (!keep) continue;
             if (sb.length() > 0) sb.append(' ');
             sb.append(tokClean);
         }
-        return oneLine(sb.toString());
+        // Post-process to merge RECYCLED + POLYESTER patterns
+        String result = oneLine(sb.toString());
+        result = result.replaceAll("(?i)\\bRECYCLED\\s+POLYESTER\\s+RECYCLED\\s+POLYESTER\\b", "RECYCLED POLYESTER");
+        result = result.replaceAll("(?i)\\bPOLYESTER\\s+POLYESTER\\b", "POLYESTER");
+        return oneLine(result);
     }
 
     private static String joinParts(String[] parts, int start, int end) {
@@ -940,7 +1030,14 @@ public class TableParser {
     private static boolean looksLikeCompositionContinuation(String txt) {
         String lower = oneLine(txt).toLowerCase();
         if (lower.isBlank()) return false;
-        if (lower.contains("viscose") || lower.contains("polyamide") || lower.contains("polyester") || lower.contains("nylon") || lower.contains("cotton") || lower.contains("elastane") || lower.contains("spandex") || lower.contains("circulose") || lower.contains("revisco") || lower.contains("yester") || lower.contains(" so pol") || lower.contains(" wit ") || lower.endsWith(" wit")) {
+        // Common fiber words and OCR fragments
+        if (lower.contains("viscose") || lower.contains("polyamide") || lower.contains("polyester") 
+            || lower.contains("polyeste") || lower.contains("olyester")
+            || lower.contains("nylon") || lower.contains("cotton") || lower.contains("elastane") 
+            || lower.contains("spandex") || lower.contains("circulose") || lower.contains("irculose")
+            || lower.contains("revisco") || lower.contains("yester")
+            || lower.contains("recycled") || lower.contains("recy") || lower.contains("cled")
+            || lower.contains(" so pol") || lower.contains(" wit ") || lower.endsWith(" wit")) {
             return true;
         }
         return false;
@@ -952,11 +1049,17 @@ public class TableParser {
                 || low.contains("revis")
                 || low.contains("revisco")
                 || low.contains("circulose")
+                || low.contains("irculose")
                 || low.contains("polyamide")
                 || low.contains("polyester")
+                || low.contains("polyeste")
+                || low.contains("olyester")
                 || low.contains("cotton")
                 || low.contains("elastane")
                 || low.contains("spandex")
+                || low.contains("recycled")
+                || low.equals("recy")
+                || low.equals("cled")
                 || low.equals("pol")
                 || low.equals("yester");
     }
