@@ -548,12 +548,22 @@ public class TableParser {
             if (lowRaw.contains("yester") && !lowSeg.contains("yester")) {
                 seg = oneLine(seg + " YESTER");
             }
-            return oneLine(seg);
+            return fixKnownBrokenWords(oneLine(seg));
         }
 
         BomDescComp dc = splitBomTail(r);
-        if (!dc.composition.isBlank()) return dc.composition;
-        return extractMinimalComposition(r);
+        if (!dc.composition.isBlank()) return fixKnownBrokenWords(dc.composition);
+        return fixKnownBrokenWords(extractMinimalComposition(r));
+    }
+
+    private static String fixKnownBrokenWords(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+
+        // Common OCR line-break word splits in fibre names
+        r = r.replaceAll("(?i)\\bPOL\\s+YESTER\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bPOLY\\s+ESTER\\b", "POLYESTER");
+        return oneLine(r);
     }
 
     private static String stripPunctKeepPercent(String s) {
