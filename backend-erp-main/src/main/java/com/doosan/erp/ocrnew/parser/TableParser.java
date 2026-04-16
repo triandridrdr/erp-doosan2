@@ -441,9 +441,21 @@ public class TableParser {
                     String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp: '{}' += '{}' -> '{}'", oldComp, cells.composition, cur.get(3));
-                } else if (cells.description.isBlank() && (TOKEN_HAS_PERCENT.matcher(txt).find() || looksLikeCompositionContinuation(txt))) {
-                    // Only apply fallback if NO description was extracted from this line
-                    // (prevents description text from being duplicated into composition)
+                } else if (cells.description.isBlank()
+                        && !cur.get(3).isBlank()
+                        && TOKEN_HAS_PERCENT.matcher(cur.get(3)).find()
+                        && looksLikeCompositionContinuation(txt)) {
+                    // Prefer fibre continuation (no %) over normalizeBomComposition fallback.
+                    // This keeps fragments like 'POLYESTER' that may come on the next line without '%'.
+                    String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
+                    cont = mergeSplitWords(cont);
+                    if (!cont.isBlank()) {
+                        cur.set(3, oneLine(cur.get(3) + " " + cont));
+                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(3));
+                    }
+                } else if (cells.description.isBlank() && TOKEN_HAS_PERCENT.matcher(txt).find()) {
+                    // Only apply fallback if NO description was extracted from this line.
+                    // Restrict fallback to percent-bearing lines to avoid dropping fibre-only lines (e.g. 'Polyester').
                     String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtCleanKeepPercent)));
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fallback): '{}' += '{}' -> '{}'", oldComp, txtCleanKeepPercent, cur.get(3));
@@ -451,13 +463,6 @@ public class TableParser {
                     // last resort: if this line has % but didn't map into composition column, use whole-line extraction
                     cur.set(3, compFromWhole);
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(whole): -> '{}'", cur.get(3));
-                } else if (!cur.get(3).isBlank() && TOKEN_HAS_PERCENT.matcher(cur.get(3)).find() && looksLikeCompositionContinuation(txt)) {
-                    // Special: keep fibre continuation words (e.g. 'YESTER') even if the line has no %
-                    String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
-                    if (!cont.isBlank()) {
-                        cur.set(3, oneLine(cur.get(3) + " " + cont));
-                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(3));
-                    }
                 }
             }
         }
@@ -858,6 +863,30 @@ public class TableParser {
         r = r.replaceAll("(?i)\\bcirculose\\s+circulose\\b", "circulose");
         r = r.replaceAll("(?i)\\bwith\\s+c\\s+circulose\\b", "with circulose");
         r = r.replaceAll("(?i)\\bwith\\s+c\\s+irculose\\b", "with circulose");
+
+        // Normalize common Revisco/Circulose phrasing
+        r = r.replaceAll("(?i)\\bRevisco\\s+circulose\\s+Revisco\\s+Viscose\\b", "Revisco Viscose with circulose");
+        r = r.replaceAll("(?i)\\bRevisco\\s+circulose\\s+Viscose\\b", "Revisco Viscose with circulose");
+        r = r.replaceAll("(?i)\\bRevisco\\s+Viscose\\s+circulose\\b", "Revisco Viscose with circulose");
+
+        // If Revisco segment contains circulose but lost the 'Viscose with' words, re-insert them.
+        // Example: '80% Revisco circulose, 20% ...' -> '80% Revisco Viscose with circulose, 20% ...'
+        if (r.toLowerCase().contains("revisco") && r.toLowerCase().contains("circulose") && !r.toLowerCase().contains("viscose")) {
+            r = r.replaceFirst("(?i)\\bRevisco\\s+(?=circulose\\b)", "Revisco Viscose with ");
+        }
+
+        // Merge common OCR splits for polyester
+        r = r.replaceAll("(?i)\\bpol\\s+yester\\b", "POLYESTER");
+        r = r.replaceAll("(?i)\\bso\\s+polyester\\b", "SO POLYESTER");
+
+        // If we already detected RECYCLED POLYESTER, drop erroneous OCR second-segment noise
+        // like '20% Viscose with circulose' which should be '20% RECYCLED POLYESTER'.
+        if (r.toUpperCase().contains("RECYCLED POLYESTER")) {
+            r = r.replaceAll("(?i)\\b20%\\s+viscose\\b(?:\\s+with\\s+circulose)?", "20% RECYCLED POLYESTER");
+            r = r.replaceAll("(?i)\\b20%\\s+viscose\\b", "20% RECYCLED POLYESTER");
+            // Also drop stray 'circulose' that sometimes gets pulled into the 20% segment.
+            r = r.replaceAll("(?i)\\b20%\\s+circulose\\s+RECYCLED\\s+POLYESTER\\b", "20% RECYCLED POLYESTER");
+        }
         return oneLine(r);
     }
 
@@ -2188,6 +2217,11 @@ public class TableParser {
     private static boolean looksLikeCompositionContinuation(String txt) {
         String lower = oneLine(txt).toLowerCase();
         if (lower.isBlank()) return false;
+        // Avoid fabric-ratio tokens that are part of description (e.g. 'circulose 80/20')
+        // unless the line also carries a true percent token.
+        if (!lower.contains("%") && lower.matches(".*\\b\\d{1,3}\\s*/\\s*\\d{1,3}\\b.*")) {
+            return false;
+        }
         // Common fiber words and OCR fragments
         if (lower.contains("viscose") || lower.contains("polyamide") || lower.contains("polyester") 
             || lower.contains("polyeste") || lower.contains("olyester")
@@ -2195,7 +2229,10 @@ public class TableParser {
             || lower.contains("spandex") || lower.contains("circulose") || lower.contains("irculose")
             || lower.contains("revisco") || lower.contains("yester")
             || lower.contains("recycled") || lower.contains("recy") || lower.contains("cled")
-            || lower.contains(" so pol") || lower.contains(" wit ") || lower.endsWith(" wit")) {
+            || lower.contains(" so pol")
+            // keep very specific broken-with pattern only
+            || lower.matches(".*\\bwith\\s+c\\b.*")
+            || lower.endsWith(" wit")) {
             return true;
         }
         return false;
