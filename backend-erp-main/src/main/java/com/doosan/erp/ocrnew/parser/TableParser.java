@@ -146,6 +146,8 @@ public class TableParser {
         List<List<String>> mergedRows = new ArrayList<>();
         mergedRows.add(List.of("Component", "Description", "Category", "Composition"));
 
+        boolean bomOpen = false;
+
         List<Integer> pages = byPage.keySet().stream().sorted().toList();
         for (Integer page : pages) {
             List<OcrNewLine> pageLines = byPage.get(page).stream()
@@ -161,7 +163,19 @@ public class TableParser {
                     break;
                 }
             }
-            if (startIdx < 0) continue;
+
+            boolean continuationPage = false;
+            if (startIdx < 0) {
+                // Continuation pages may not repeat the 'Bill of Material: Materials and Trims' title.
+                // If we already parsed a BOM section on a previous page, try to continue parsing from the top.
+                if (!bomOpen) {
+                    continue;
+                }
+                continuationPage = true;
+                startIdx = -1; // scan whole page
+            } else {
+                bomOpen = true;
+            }
 
             List<OcrNewLine> section = new ArrayList<>();
             List<OcrNewLine> headerLines = new ArrayList<>();
@@ -170,12 +184,17 @@ public class TableParser {
             boolean sawPositionKeyword = false;
             boolean sawDescriptionKeyword = false;
             
-            for (int i = startIdx + 1; i < pageLines.size(); i++) {
+            int scanStart = continuationPage ? 0 : (startIdx + 1);
+            for (int i = scanStart; i < pageLines.size(); i++) {
                 OcrNewLine l = pageLines.get(i);
                 String txt = oneLine(l.getText());
                 if (txt.isBlank()) continue;
                 String lowerTxt = txt.toLowerCase();
-                if (BOM_SECTION_ANY.matcher(txt).find() && !BOM_SECTION_START.matcher(txt).find()) break;
+                if (BOM_SECTION_ANY.matcher(txt).find() && !BOM_SECTION_START.matcher(txt).find()) {
+                    // hit another BOM section => current one ended
+                    bomOpen = false;
+                    break;
+                }
                 if (lowerTxt.contains("production units") || lowerTxt.contains("processing capabilities") || lowerTxt.contains("yarn source")) break;
                 if (CREATED_LINE.matcher(txt).find()) break;
                 if (txt.toLowerCase().contains("page") && txt.contains("/")) break;
@@ -200,6 +219,11 @@ public class TableParser {
                         if (lowerTxt.contains("description")) {
                             sawDescriptionKeyword = true;
                         }
+                    }
+
+                    // On continuation pages, don't start collecting body/section until we've seen at least part of the header.
+                    if (continuationPage && !sawPositionKeyword && !sawDescriptionKeyword) {
+                        continue;
                     }
                     
                     // Start body when we see a row start pattern after header keywords
@@ -417,8 +441,9 @@ public class TableParser {
                     String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp: '{}' += '{}' -> '{}'", oldComp, cells.composition, cur.get(3));
-                } else if (TOKEN_HAS_PERCENT.matcher(txt).find() || looksLikeCompositionContinuation(txt)) {
-                    // if OCR lost column alignment but line clearly looks like composition, append raw text to composition
+                } else if (cells.description.isBlank() && (TOKEN_HAS_PERCENT.matcher(txt).find() || looksLikeCompositionContinuation(txt))) {
+                    // Only apply fallback if NO description was extracted from this line
+                    // (prevents description text from being duplicated into composition)
                     String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtCleanKeepPercent)));
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fallback): '{}' += '{}' -> '{}'", oldComp, txtCleanKeepPercent, cur.get(3));
@@ -437,13 +462,21 @@ public class TableParser {
             }
         }
 
+        // Only use raw-text fallback if composition is still empty after column-based extraction
         for (int ri = 1; ri < rows.size() && ri < rawRowText.size(); ri++) {
             List<String> r = rows.get(ri);
             if (r == null || r.size() < 4) continue;
+            // Skip if we already have composition from column-based extraction
+            if (!r.get(3).isBlank() && TOKEN_HAS_PERCENT.matcher(r.get(3)).find()) {
+                continue;
+            }
             String mergedRaw = oneLine(rawRowText.get(ri).toString());
             if (!mergedRaw.isBlank() && TOKEN_HAS_PERCENT.matcher(mergedRaw).find()) {
                 String comp = normalizeBomComposition(mergedRaw);
-                if (!comp.isBlank()) r.set(3, comp);
+                if (!comp.isBlank()) {
+                    r.set(3, comp);
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: comp='{}'", ri, comp);
+                }
             }
         }
 
@@ -789,10 +822,10 @@ public class TableParser {
                 seg = insertBeforePercent(seg, "20%", circTok);
                 lowSeg = seg.toLowerCase();
             }
-            // If OCR dropped the 'Viscose with c' middle phrase (often split around supplier tokens), put it back.
-            if (lowRaw.contains("viscose") && !lowSeg.contains("viscose")) {
-                // Insert after the first percent+material token, so formatter can render it as line 2.
-                seg = seg.replaceFirst("^(\\d{1,3}%\\s+\\S+)(?:\\s+|$)", "$1 Viscose with c ");
+            // If OCR dropped the 'Viscose' token in Revisco compositions, put it back (but avoid adding noisy 'with c').
+            if ((lowRaw.contains("revisco") || lowRaw.contains("revisc")) && lowRaw.contains("viscose") && !lowSeg.contains("viscose")) {
+                // Insert after the first percent+material token.
+                seg = seg.replaceFirst("^(\\d{1,3}%\\s+\\S+)(?:\\s+|$)", "$1 Viscose ");
                 seg = oneLine(seg);
                 lowSeg = seg.toLowerCase();
             }
