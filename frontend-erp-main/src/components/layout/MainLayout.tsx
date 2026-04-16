@@ -11,15 +11,19 @@ export function MainLayout() {
   const location = useLocation();
 
   // 현재 경로에 따라 헤더 제목을 동적으로 설정합니다.
+  const pageTitleByPath: Record<string, string> = {
+    '/': 'Dashboard',
+    '/sales': 'Sales Orders',
+    '/sales-order-prototype': 'Sales Order Prototype',
+    '/inventory': 'Inventory',
+    '/accounting': 'Accounting',
+    '/ocr': 'OCR',
+    '/ocr-new': 'OCR New',
+  };
+
   const pageTitle =
-    {
-      '/': 'Dashboard',
-      '/sales': 'Sales Orders',
-      '/inventory': 'Inventory',
-      '/accounting': 'Accounting',
-      '/ocr': 'OCR',
-      '/ocr-new': 'OCR New',
-    }[location.pathname] || 'Overview';
+    pageTitleByPath[location.pathname] ||
+    (location.pathname.startsWith('/sales-order-prototype/') ? 'Sales Order Prototype' : 'Overview');
 
   return (
     <div className='min-h-screen bg-slate-50 font-sans text-gray-900'>

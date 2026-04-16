@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ocrNewApi } from './api';
 import type { OcrNewDocumentAnalysisResponseData } from './types';
+import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
 
 const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
@@ -29,7 +30,16 @@ export function OcrNewPage() {
   const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
-  const [bomDraftRows, setBomDraftRows] = useState<Array<{ component: string; description: string; category: string; composition: string }>>([]);
+  const [bomDraftRows, setBomDraftRows] = useState<
+    Array<{
+      position: string;
+      placement: string;
+      type: string;
+      description: string;
+      composition: string;
+      materialSupplier: string;
+    }>
+  >([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
     Array<{
       countryOfDestination: string;
@@ -61,10 +71,12 @@ export function OcrNewPage() {
     const bomTable = (d?.tables ?? []).find((t) => isBomDraftTable(t.rows));
     if (bomTable?.rows?.length) {
       const rows = bomTable.rows.slice(1).map((r) => ({
-        component: r?.[0] ?? '',
-        description: r?.[1] ?? '',
-        category: r?.[2] ?? '',
-        composition: r?.[3] ?? '',
+        position: r?.[0] ?? '',
+        placement: r?.[1] ?? '',
+        type: r?.[2] ?? '',
+        description: r?.[3] ?? '',
+        composition: r?.[4] ?? '',
+        materialSupplier: r?.[5] ?? '',
       }));
       setBomDraftRows(rows);
     } else {
@@ -109,15 +121,24 @@ export function OcrNewPage() {
     }
     setSalesOrderHeaderDraft(mergedHeader);
 
-    let bomRows: Array<{ component: string; description: string; category: string; composition: string }> = [];
+    let bomRows: Array<{
+      position: string;
+      placement: string;
+      type: string;
+      description: string;
+      composition: string;
+      materialSupplier: string;
+    }> = [];
     for (const r of out) {
       const bomTable = (r?.data?.tables ?? []).find((t) => isBomDraftTable(t.rows));
       if (bomTable?.rows?.length) {
         bomRows = bomTable.rows.slice(1).map((row) => ({
-          component: row?.[0] ?? '',
-          description: row?.[1] ?? '',
-          category: row?.[2] ?? '',
-          composition: row?.[3] ?? '',
+          position: row?.[0] ?? '',
+          placement: row?.[1] ?? '',
+          type: row?.[2] ?? '',
+          description: row?.[3] ?? '',
+          composition: row?.[4] ?? '',
+          materialSupplier: row?.[5] ?? '',
         }));
         break;
       }
@@ -215,6 +236,28 @@ export function OcrNewPage() {
 
   const isPending = analyzeMutation.isPending;
 
+  const saveDraftMutation = useMutation({
+    mutationFn: async () => {
+      if (!data) throw new Error('No data.');
+      const payload = {
+        source: 'ocr-new',
+        analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
+        formFields: salesOrderHeaderDraft,
+        bomDraftRows,
+        salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
+        raw: data,
+      };
+      return salesOrderPrototypeApi.create(payload);
+    },
+    onSuccess: (res) => {
+      const id = (res as any)?.data?.id;
+      alert(`Saved to Sales Order Prototype${id ? ` (id=${id})` : ''}.`);
+    },
+    onError: (e: Error) => {
+      alert(`Failed to save draft: ${e.message}`);
+    },
+  });
+
 
   const hasHeaderDraft = useMemo(() => {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
@@ -226,7 +269,6 @@ export function OcrNewPage() {
         <div className='flex items-start justify-between gap-4'>
           <div>
             <h3 className='text-lg font-bold text-gray-900'>OCR New</h3>
-            <p className='text-sm text-gray-500 mt-1'>Offline OCR (no Textract). PDF will be rendered to PNG (300 DPI) then analyzed.</p>
           </div>
         </div>
 
@@ -315,11 +357,13 @@ export function OcrNewPage() {
             <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
           </div>
           <div className='flex gap-2'>
-            <Button type='button' variant='primary' disabled={!data}>
+            <Button
+              type='button'
+              variant='primary'
+              disabled={!data || saveDraftMutation.isPending}
+              onClick={() => saveDraftMutation.mutate()}
+            >
               Save Draft
-            </Button>
-            <Button type='button' variant='primary' disabled={!data}>
-              Attach Style
             </Button>
           </div>
         </div>
@@ -516,7 +560,10 @@ export function OcrNewPage() {
             variant='primary'
             disabled={!data}
             onClick={() => {
-              setBomDraftRows((prev) => [...prev, { component: '', description: '', category: '', composition: '' }]);
+              setBomDraftRows((prev) => [
+                ...prev,
+                { position: '', placement: '', type: '', description: '', composition: '', materialSupplier: '' },
+              ]);
             }}
           >
             Add row
@@ -529,13 +576,15 @@ export function OcrNewPage() {
             <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Component</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Position</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Placement</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Type</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Category</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -543,10 +592,28 @@ export function OcrNewPage() {
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.component}
+                          value={row.position}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, component: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, position: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.placement}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, placement: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.type}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
                           }}
                         />
                       </td>
@@ -562,15 +629,6 @@ export function OcrNewPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.category}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, category: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
                         <textarea
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.composition}
@@ -578,6 +636,17 @@ export function OcrNewPage() {
                           onChange={(e) => {
                             const v = e.target.value;
                             setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.materialSupplier}
+                          rows={2}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
                           }}
                         />
                       </td>
@@ -597,11 +666,13 @@ function isBomDraftTable(rows: Array<Array<string>> | undefined): boolean {
   if (!rows || rows.length === 0) return false;
   const header = rows[0] ?? [];
   const norm = (s: string | undefined) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  if (header.length < 4) return false;
+  if (header.length < 6) return false;
   return (
-    norm(header[0]) === 'component' &&
-    norm(header[1]) === 'description' &&
-    norm(header[2]) === 'category' &&
-    norm(header[3]) === 'composition'
+    norm(header[0]) === 'position' &&
+    norm(header[1]) === 'placement' &&
+    norm(header[2]) === 'type' &&
+    norm(header[3]) === 'description' &&
+    norm(header[4]) === 'composition' &&
+    norm(header[5]) === 'material supplier'
   );
 }

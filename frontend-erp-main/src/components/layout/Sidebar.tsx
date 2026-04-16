@@ -13,6 +13,7 @@ import { cn } from '../../lib/utils';
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Sales Orders', href: '/sales', icon: ShoppingCart },
+  { name: 'Sales Order Prototype', href: '/sales-order-prototype', icon: ShoppingCart },
   { name: 'Inventory', href: '/inventory', icon: Package },
   { name: 'Accounting', href: '/accounting', icon: FileText },
   { name: 'OCR', href: '/ocr', icon: ScanLine },

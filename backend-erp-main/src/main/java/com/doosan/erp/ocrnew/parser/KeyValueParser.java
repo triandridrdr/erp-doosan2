@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
 public class KeyValueParser {
 
     private static final Pattern COLON_KV = Pattern.compile("^\\s*(.{2,80}?)\\s*[:：]\\s*(.{1,200}?)\\s*$");
+    private static final Pattern COLON_KEY_ONLY = Pattern.compile("^\\s*(.{2,80}?)\\s*[:：]\\s*$");
 
     private static final Pattern ISO_DATE = Pattern.compile("\\b(\\d{4})[\\./-](\\d{1,2})[\\./-](\\d{1,2})\\b");
 
@@ -29,7 +30,10 @@ public class KeyValueParser {
 
     public List<OcrNewKeyValuePairDto> parseKeyValuePairs(List<OcrNewLine> lines) {
         List<OcrNewKeyValuePairDto> out = new ArrayList<>();
-        for (OcrNewLine line : lines) {
+        if (lines == null || lines.isEmpty()) return out;
+
+        for (int i = 0; i < lines.size(); i++) {
+            OcrNewLine line = lines.get(i);
             String text = safe(line.getText());
             if (text.isBlank()) continue;
 
@@ -46,6 +50,23 @@ public class KeyValueParser {
                             .build());
                 }
                 continue;
+            }
+
+            Matcher keyOnly = COLON_KEY_ONLY.matcher(text);
+            if (keyOnly.find()) {
+                String key = normalizeKey(keyOnly.group(1));
+                if (looksLikeKey(key)) {
+                    String val = normalizeValue(findRightSideValue(lines, i, line));
+                    if (!key.isBlank() && !val.isBlank()) {
+                        out.add(OcrNewKeyValuePairDto.builder()
+                                .page(line.getPage())
+                                .key(key)
+                                .value(val)
+                                .confidence(line.getConfidence())
+                                .build());
+                        continue;
+                    }
+                }
             }
 
             // Fallback: split by long whitespace gap
@@ -71,6 +92,44 @@ public class KeyValueParser {
             }
         }
         return out;
+    }
+
+    private static String findRightSideValue(List<OcrNewLine> lines, int keyIdx, OcrNewLine keyLine) {
+        if (lines == null || keyLine == null) return "";
+        int page = keyLine.getPage();
+        int keyTop = keyLine.getTop();
+        int keyBottom = keyLine.getBottom();
+        int keyRight = keyLine.getRight();
+
+        String best = "";
+        int bestDx = Integer.MAX_VALUE;
+        for (int j = keyIdx + 1; j < lines.size(); j++) {
+            OcrNewLine v = lines.get(j);
+            if (v == null) continue;
+            if (v.getPage() != page) break;
+
+            int vTop = v.getTop();
+            int vBottom = v.getBottom();
+            if (Math.abs(vTop - keyTop) > 6 && vTop > keyBottom + 6) {
+                break;
+            }
+            boolean sameRow = Math.abs(vTop - keyTop) <= 6 || Math.abs(vBottom - keyBottom) <= 6;
+            if (!sameRow) continue;
+
+            if (v.getLeft() <= keyRight + 20) continue;
+
+            String vt = safe(v.getText()).trim();
+            if (vt.isBlank()) continue;
+            if (COLON_KEY_ONLY.matcher(vt).find()) continue;
+            if (vt.length() > 120) continue;
+
+            int dx = v.getLeft() - keyRight;
+            if (dx < bestDx) {
+                bestDx = dx;
+                best = vt;
+            }
+        }
+        return best;
     }
 
     public Map<String, String> toFieldMap(List<OcrNewKeyValuePairDto> pairs) {

@@ -144,7 +144,7 @@ public class TableParser {
         Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
         List<OcrNewTableDto> out = new ArrayList<>();
         List<List<String>> mergedRows = new ArrayList<>();
-        mergedRows.add(List.of("Component", "Description", "Category", "Composition"));
+        mergedRows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier"));
 
         boolean bomOpen = false;
 
@@ -274,11 +274,13 @@ public class TableParser {
                         if (last != null && last.size() >= 2) {
                             // Normalize continuation text for description (fix broken OCR tokens)
                             String contDesc = normalizeBomDescriptionContinuation(contText);
-                            last.set(1, oneLine(last.get(1) + (last.get(1).isBlank() ? "" : " ") + contDesc));
+                            if (last.size() > 3) {
+                                last.set(3, oneLine(last.get(3) + (last.get(3).isBlank() ? "" : " ") + contDesc));
+                            }
 
                             // Also extract and append composition tokens if last row had composition
-                            if (last.size() >= 4) {
-                                String lastComp = last.get(3);
+                            if (last.size() >= 5) {
+                                String lastComp = last.get(4);
                                 boolean lastHasComp = lastComp != null && !lastComp.isBlank() && TOKEN_HAS_PERCENT.matcher(lastComp).find();
                                 if (lastHasComp && looksLikeCompositionContinuation(contText)) {
                                     String compTokens = extractCompositionContinuationTokens(contText);
@@ -292,7 +294,7 @@ public class TableParser {
                                     }
                                     if (!compTokens.isBlank()) {
                                         String newComp = oneLine(lastComp + (lastComp.endsWith("%") ? " " : ", ") + compTokens);
-                                        last.set(3, normalizeBomComposition(newComp));
+                                        last.set(4, normalizeBomComposition(newComp));
                                     }
                                 }
                             }
@@ -337,7 +339,7 @@ public class TableParser {
                 .page(1)
                 .index(null)
                 .rowCount(mergedRows.size())
-                .columnCount(4)
+                .columnCount(6)
                 .cells(cells)
                 .rows(mergedRows)
                 .build());
@@ -347,7 +349,7 @@ public class TableParser {
 
     private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
         List<List<String>> rows = new ArrayList<>();
-        rows.add(List.of("Component", "Description", "Category", "Composition"));
+        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
 
         List<StringBuilder> rawRowText = new ArrayList<>();
@@ -394,7 +396,8 @@ public class TableParser {
                 }
             }
 
-            boolean isRowStart = !cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find();
+            boolean lineStartsRow = BOM_ROW_START.matcher(txt).find();
+            boolean isRowStart = lineStartsRow || (!cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find());
             boolean isContinuation = !isRowStart && cur != null;
             
             if (BOM_DEBUG) {
@@ -412,17 +415,42 @@ public class TableParser {
             }
 
             if (!isContinuation) {
+                // If column-based extraction failed to capture the leading Position/Placement/Type tokens
+                // (common with hOCR line segmentation), fall back to token parsing of the whole line.
+                BomRowStart parsed = null;
+                if (lineStartsRow) {
+                    parsed = parseBomRowStart(txt);
+                }
+                BomDescComp dc = null;
+                if (parsed != null && parsed.tail != null && !parsed.tail.isBlank()) {
+                    dc = splitBomTail(parsed.tail);
+                }
+
+                String pos = !cells.position.isBlank() ? cells.position : (parsed == null ? "" : parsed.position);
+                String plc = !cells.placement.isBlank() ? cells.placement : (parsed == null ? "" : parsed.placement);
+                String typ = !cells.type.isBlank() ? cells.type : (parsed == null ? "" : parsed.type);
+                String desc = !cells.description.isBlank() ? cells.description : (dc == null ? "" : mergeSplitWords(dc.description));
+
+                String comp = cells.composition.isBlank() ? compFromWhole : cells.composition;
+                if ((comp == null || comp.isBlank()) && dc != null && dc.composition != null && !dc.composition.isBlank()) {
+                    comp = normalizeBomComposition(dc.composition);
+                }
+
+                String ms = cells.materialSupplier;
+
                 cur = new ArrayList<>(List.of(
-                        cells.position,
-                        cells.description,
-                        cells.type,
-                        (cells.composition.isBlank() ? compFromWhole : cells.composition)
+                        pos,
+                        typ,
+                        desc,
+                        (comp == null ? "" : comp),
+                        (ms == null ? "" : ms)
                 ));
+                cur.add(1, plc);
                 rows.add(cur);
                 curRaw = new StringBuilder();
                 curRaw.append(wholeLine);
                 rawRowText.add(curRaw);
-                if (BOM_DEBUG) log.debug("[BOM-ROW] NEW ROW #{}: desc='{}' comp='{}'", rows.size()-1, cur.get(1), cur.get(3));
+                if (BOM_DEBUG) log.debug("[BOM-ROW] NEW ROW #{}: desc='{}' comp='{}'", rows.size()-1, cur.get(3), cur.get(4));
             } else {
                 // Append continuation into description/composition based on which column has data
                 if (cur == null) {
@@ -431,38 +459,70 @@ public class TableParser {
                 if (curRaw != null) {
                     curRaw.append(' ').append(wholeLine);
                 }
-                if (!cells.description.isBlank()) {
-                    // Apply mergeSplitWords to fix broken words when appending description continuation
-                    String oldDesc = cur.get(1);
-                    cur.set(1, mergeSplitWords(oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + cells.description)));
-                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(1));
+                // If this continuation line contains percent-bearing composition, treat it as composition
+                // even if column assignment put it under Description due to slight x-shifts.
+                String compFromLine = "";
+                if (TOKEN_HAS_PERCENT.matcher(txt).find()) {
+                    compFromLine = normalizeBomComposition(txtCleanKeepPercent);
                 }
-                if (!cells.composition.isBlank()) {
-                    String oldComp = cur.get(3);
-                    cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
-                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp: '{}' += '{}' -> '{}'", oldComp, cells.composition, cur.get(3));
+
+                boolean consumedAsComposition = false;
+                if (!compFromLine.isBlank()) {
+                    String oldComp = cur.get(4);
+                    cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + (cur.get(4).isBlank() ? "" : " ") + compFromLine)));
+                    consumedAsComposition = true;
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(from-line%): '{}' += '{}' -> '{}'", oldComp, compFromLine, cur.get(4));
+                }
+
+                if (BOM_DEBUG && TOKEN_HAS_PERCENT.matcher(txt).find()) {
+                    log.debug("[BOM-ROW] CONT %line: txt='{}' keepPct='{}' cells.desc='{}' cells.comp='{}' compFromLine='{}'",
+                            txt,
+                            txtCleanKeepPercent,
+                            cells.description,
+                            cells.composition,
+                            compFromLine);
+                }
+
+                if (!consumedAsComposition && !cells.description.isBlank()) {
+                    // Apply mergeSplitWords to fix broken words when appending description continuation
+                    String oldDesc = cur.get(3);
+                    cur.set(3, mergeSplitWords(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.description)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(3));
+                }
+
+                if (!consumedAsComposition && !cells.composition.isBlank()) {
+                    String oldComp = cur.get(4);
+                    cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + (cur.get(4).isBlank() ? "" : " ") + cells.composition)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp: '{}' += '{}' -> '{}'", oldComp, cells.composition, cur.get(4));
                 } else if (cells.description.isBlank()
-                        && !cur.get(3).isBlank()
-                        && TOKEN_HAS_PERCENT.matcher(cur.get(3)).find()
+                        && !cur.get(4).isBlank()
+                        && TOKEN_HAS_PERCENT.matcher(cur.get(4)).find()
                         && looksLikeCompositionContinuation(txt)) {
                     // Prefer fibre continuation (no %) over normalizeBomComposition fallback.
                     // This keeps fragments like 'POLYESTER' that may come on the next line without '%'.
                     String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
                     cont = mergeSplitWords(cont);
                     if (!cont.isBlank()) {
-                        cur.set(3, oneLine(cur.get(3) + " " + cont));
-                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(3));
+                        cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + " " + cont)));
+                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(4));
                     }
                 } else if (cells.description.isBlank() && TOKEN_HAS_PERCENT.matcher(txt).find()) {
                     // Only apply fallback if NO description was extracted from this line.
                     // Restrict fallback to percent-bearing lines to avoid dropping fibre-only lines (e.g. 'Polyester').
-                    String oldComp = cur.get(3);
-                    cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtCleanKeepPercent)));
-                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fallback): '{}' += '{}' -> '{}'", oldComp, txtCleanKeepPercent, cur.get(3));
-                } else if (cur.get(3).isBlank() && !compFromWhole.isBlank()) {
+                    String oldComp = cur.get(4);
+                    cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + (cur.get(4).isBlank() ? "" : " ") + txtCleanKeepPercent)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fallback): '{}' += '{}' -> '{}'", oldComp, txtCleanKeepPercent, cur.get(4));
+                } else if (cur.get(4).isBlank() && !compFromWhole.isBlank()) {
                     // last resort: if this line has % but didn't map into composition column, use whole-line extraction
-                    cur.set(3, compFromWhole);
-                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(whole): -> '{}'", cur.get(3));
+                    cur.set(4, compFromWhole);
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(whole): -> '{}'", cur.get(4));
+                }
+
+                if (!cells.materialSupplier.isBlank()) {
+                    String oldMs = cur.size() > 5 ? cur.get(5) : "";
+                    if (cur.size() > 5) {
+                        cur.set(5, oneLine(oldMs + (oldMs.isBlank() ? "" : " ") + cells.materialSupplier));
+                    }
                 }
             }
         }
@@ -470,17 +530,33 @@ public class TableParser {
         // Only use raw-text fallback if composition is still empty after column-based extraction
         for (int ri = 1; ri < rows.size() && ri < rawRowText.size(); ri++) {
             List<String> r = rows.get(ri);
-            if (r == null || r.size() < 4) continue;
+            if (r == null || r.size() < 5) continue;
             // Skip if we already have composition from column-based extraction
-            if (!r.get(3).isBlank() && TOKEN_HAS_PERCENT.matcher(r.get(3)).find()) {
+            if (!r.get(4).isBlank() && TOKEN_HAS_PERCENT.matcher(r.get(4)).find()) {
                 continue;
             }
             String mergedRaw = oneLine(rawRowText.get(ri).toString());
+
+            // Normal case: any percent-bearing raw row can be normalized into composition.
             if (!mergedRaw.isBlank() && TOKEN_HAS_PERCENT.matcher(mergedRaw).find()) {
                 String comp = normalizeBomComposition(mergedRaw);
                 if (!comp.isBlank()) {
-                    r.set(3, comp);
+                    r.set(4, comp);
                     if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: comp='{}'", ri, comp);
+                    continue;
+                }
+            }
+
+            // Targeted fix: some rows have truncated fibre tokens that must be kept even if other heuristics fail.
+            // Example raw: '... 100% SO POL ... Polyester' where 'YESTER' arrives later.
+            if (r.get(4).isBlank() && !mergedRaw.isBlank()) {
+                String low = mergedRaw.toLowerCase();
+                if (low.matches(".*\\b\\d{1,3}\\s*%\\s+so\\s+pol\\b.*")) {
+                    String comp = normalizeBomComposition(mergedRaw);
+                    if (!comp.isBlank()) {
+                        r.set(4, comp);
+                        if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX so-pol row#{}: comp='{}'", ri, comp);
+                    }
                 }
             }
         }
@@ -490,7 +566,7 @@ public class TableParser {
 
     private static List<List<String>> normalizeBomRowsFallback(List<OcrNewLine> sectionLines) {
         List<List<String>> rows = new ArrayList<>();
-        rows.add(List.of("Component", "Description", "Category", "Composition"));
+        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
 
         List<String> cur = null;
@@ -505,17 +581,17 @@ public class TableParser {
                 BomDescComp dc = splitBomTail(parsed.tail);
                 // Apply mergeSplitWords to fix broken words in description
                 String desc = mergeSplitWords(dc.description);
-                cur = new ArrayList<>(List.of(parsed.position, desc, parsed.type, dc.composition));
+                cur = new ArrayList<>(List.of(parsed.position, parsed.placement, parsed.type, desc, dc.composition, ""));
                 rows.add(cur);
             } else {
                 BomDescComp dc = splitBomTail(txt);
                 if (!dc.description.isBlank()) {
                     // Apply mergeSplitWords to fix broken words in description continuation
                     String descCont = mergeSplitWords(dc.description);
-                    cur.set(1, mergeSplitWords(oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + descCont)));
+                    cur.set(3, mergeSplitWords(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + descCont)));
                 }
                 if (!dc.composition.isBlank()) {
-                    cur.set(3, oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + dc.composition));
+                    cur.set(4, oneLine(cur.get(4) + (cur.get(4).isBlank() ? "" : " ") + dc.composition));
                 }
             }
         }
@@ -526,13 +602,13 @@ public class TableParser {
     private record BomRowStart(String position, String placement, String type, String tail) {
     }
 
-    private record BomColumnCenters(int xPosition, int xPlacement, int xType, int xDescription, int xAppearance, int xComposition) {
+    private record BomColumnCenters(int xPosition, int xPlacement, int xType, int xDescription, int xAppearance, int xComposition, int xMaterialSupplier) {
         boolean valid() {
             return xPosition > 0 && xPlacement > 0 && xType > 0 && xDescription > 0 && xComposition > 0;
         }
     }
 
-    private record BomLineCells(String position, String placement, String type, String description, String composition) {
+    private record BomLineCells(String position, String placement, String type, String description, String composition, String materialSupplier) {
     }
 
     private static BomColumnCenters deriveBomColumnCenters(OcrNewLine headerLine) {
@@ -541,7 +617,7 @@ public class TableParser {
 
     private static BomColumnCenters deriveBomColumnCenters(List<OcrNewLine> headerLines) {
         if (headerLines == null || headerLines.isEmpty()) {
-            return new BomColumnCenters(-1, -1, -1, -1, -1, -1);
+            return new BomColumnCenters(-1, -1, -1, -1, -1, -1, -1);
         }
 
         Integer xPosition = null;
@@ -550,6 +626,7 @@ public class TableParser {
         Integer xDescription = null;
         Integer xAppearance = null;
         Integer xComposition = null;
+        Integer xMaterialSupplier = null;
 
         // Collect column centers from ALL header lines (handles hOCR split headers)
         for (OcrNewLine headerLine : headerLines) {
@@ -571,6 +648,7 @@ public class TableParser {
                     else if (xDescription == null && t.equalsIgnoreCase("Description")) xDescription = cx;
                     else if (xAppearance == null && t.equalsIgnoreCase("Appearance")) xAppearance = cx;
                     else if (xComposition == null && t.equalsIgnoreCase("Composition")) xComposition = cx;
+                    else if (xMaterialSupplier == null && t.equalsIgnoreCase("Supplier") && cx > 1500) xMaterialSupplier = cx;
                 }
             } else {
                 // Fallback to line-level extraction when words not available
@@ -580,6 +658,7 @@ public class TableParser {
                 if (xDescription == null && lineText.equals("description")) xDescription = lineCx;
                 if (xAppearance == null && lineText.contains("appearance")) xAppearance = lineCx;
                 if (xComposition == null && lineText.contains("composition")) xComposition = lineCx;
+                if (xMaterialSupplier == null && lineText.contains("material supplier")) xMaterialSupplier = lineCx;
             }
         }
 
@@ -608,6 +687,9 @@ public class TableParser {
         if (xComposition == null) {
             xComposition = 1280;
         }
+        if (xMaterialSupplier == null) {
+            xMaterialSupplier = 1750;
+        }
 
         return new BomColumnCenters(
                 xPosition == null ? -1 : xPosition,
@@ -615,13 +697,14 @@ public class TableParser {
                 xType == null ? -1 : xType,
                 xDescription == null ? -1 : xDescription,
                 xAppearance == null ? -1 : xAppearance,
-                xComposition == null ? -1 : xComposition
+                xComposition == null ? -1 : xComposition,
+                xMaterialSupplier == null ? -1 : xMaterialSupplier
         );
     }
 
     private static BomLineCells extractBomLineCells(OcrNewLine line, BomColumnCenters centers) {
         if (line == null) {
-            return new BomLineCells("", "", "", "", "");
+            return new BomLineCells("", "", "", "", "", "");
         }
         
         String lineText = oneLine(line.getText());
@@ -641,8 +724,8 @@ public class TableParser {
             int lineCx = (line.getLeft() + line.getRight()) / 2;
             
             // Skip lines beyond tracked columns (Consumption, Weight, Supplier)
-            if (lineCx > 1600) {
-                return new BomLineCells("", "", "", "", "");
+            if (lineCx > 2200) {
+                return new BomLineCells("", "", "", "", "", "");
             }
             
             // Calculate conservative boundaries for column assignment
@@ -657,19 +740,19 @@ public class TableParser {
             // Assign based on x-position boundaries
             // Composition zone: cx >= compMinX or has composition indicator
             if (lineCx >= compMinX || hasCompositionIndicator) {
-                return new BomLineCells("", "", "", "", lineText);
+                return new BomLineCells("", "", "", "", lineText, "");
             } else if (lineCx > descMaxX && lineCx < compMinX) {
-                // Material Appearance zone - skip
-                return new BomLineCells("", "", "", "", "");
+                return new BomLineCells("", "", "", "", "", "");
+            } else if (lineCx >= centers.xMaterialSupplier) {
+                return new BomLineCells("", "", "", "", "", lineText);
             } else if (lineCx > centers.xType && lineCx <= descMaxX) {
-                // Description zone
-                return new BomLineCells("", "", "", lineText, "");
+                return new BomLineCells("", "", "", lineText, "", "");
             } else if (lineCx > centers.xPlacement && lineCx <= centers.xType) {
-                return new BomLineCells("", "", lineText, "", "");
+                return new BomLineCells("", "", lineText, "", "", "");
             } else if (lineCx > centers.xPosition && lineCx <= centers.xPlacement) {
-                return new BomLineCells("", lineText, "", "", "");
+                return new BomLineCells("", lineText, "", "", "", "");
             } else {
-                return new BomLineCells(lineText, "", "", "", "");
+                return new BomLineCells(lineText, "", "", "", "", "");
             }
         }
 
@@ -678,10 +761,11 @@ public class TableParser {
         StringBuilder type = new StringBuilder();
         StringBuilder description = new StringBuilder();
         StringBuilder composition = new StringBuilder();
+        StringBuilder materialSupplier = new StringBuilder();
 
         // Calculate column boundaries to avoid pollution from other columns (Consumption, Weight, Supplier)
         // These columns typically start at x > 1500, so we limit tracked data to x < 1600
-        int compositionMaxX = 1600; // Composition typically ends before Consumption/Weight columns
+        int materialSupplierMaxX = 2200;
         
         // Calculate boundary between Description and Appearance columns
         // Use conservative boundary: 150px before Appearance center to ensure no Appearance/Composition words leak into Description
@@ -696,8 +780,18 @@ public class TableParser {
             int cx = (w.getLeft() + w.getRight()) / 2;
 
             // Skip words that are beyond our tracked columns (Consumption, Weight, Supplier at x > 1600)
-            if (cx > compositionMaxX) {
-                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} SKIPPED (> compositionMaxX={})", t, cx, compositionMaxX);
+            if (cx > materialSupplierMaxX) {
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} SKIPPED (> materialSupplierMaxX={})", t, cx, materialSupplierMaxX);
+                continue;
+            }
+
+            // Percent-bearing tokens (e.g. '100%') are composition by definition.
+            // Some PDFs shift these tokens left so the nearest-column heuristic misclassifies them as Position/Description,
+            // which can incorrectly start a new row and drop composition for the real row.
+            if (TOKEN_HAS_PERCENT.matcher(t).find()) {
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} -> composition(%-force)", t, cx);
+                if (composition.length() > 0) composition.append(' ');
+                composition.append(t);
                 continue;
             }
 
@@ -740,6 +834,10 @@ public class TableParser {
                 target = composition;
                 targetName = "composition";
             }
+            else if (cx >= centers.xMaterialSupplier) {
+                target = materialSupplier;
+                targetName = "materialSupplier";
+            }
             else if (cx >= compositionMinX && hasPercentSign) {
                 // Word is past composition boundary AND contains % - likely composition data
                 target = composition;
@@ -761,6 +859,7 @@ public class TableParser {
         String typ = oneLine(type.toString());
         String desc = mergeSplitWords(oneLine(description.toString()));  // Fix broken words in description
         String comp = oneLine(composition.toString());
+        String ms = oneLine(materialSupplier.toString());
         
         if (BOM_DEBUG) {
             log.debug("[BOM] after word loop: desc='{}', comp='{}'", desc, comp);
@@ -799,7 +898,7 @@ public class TableParser {
         if (BOM_DEBUG) {
             log.debug("[BOM] FINAL: pos='{}', typ='{}', desc='{}', comp='{}'", pos, typ, desc, comp);
         }
-        return new BomLineCells(pos, plc, typ, desc, comp);
+        return new BomLineCells(pos, plc, typ, desc, comp, ms);
     }
 
     private static String normalizeBomComposition(String raw) {
@@ -809,6 +908,13 @@ public class TableParser {
         // If there's no percent at all, this is almost certainly consumption/weight/supplier noise.
         if (!TOKEN_HAS_PERCENT.matcher(r).find()) {
             return "";
+        }
+
+        // Keep truncated fibre tokens so they can be completed by a continuation line.
+        // Example: first line has '100% SO POL' and next line has 'YESTER'.
+        String lowR = r.toLowerCase();
+        if (lowR.matches(".*\\b\\d{1,3}%\\s+so\\s+pol\\b.*")) {
+            return fixKnownBrokenWords(r);
         }
 
         String seg = extractCompositionSegments(r);
@@ -846,7 +952,12 @@ public class TableParser {
 
         BomDescComp dc = splitBomTail(r);
         if (!dc.composition.isBlank()) return fixKnownBrokenWords(dc.composition);
-        return fixKnownBrokenWords(extractMinimalComposition(r));
+
+        String min = fixKnownBrokenWords(extractMinimalComposition(r));
+        if (!min.isBlank()) return min;
+
+        // Last resort: do not drop a percent-bearing string even if fibre token is incomplete.
+        return fixKnownBrokenWords(r);
     }
 
     private static String fixKnownBrokenWords(String raw) {
