@@ -36,9 +36,30 @@ public class OcrNewController {
                     content = @Content(mediaType = MediaType.MULTIPART_FORM_DATA_VALUE)
             )
             @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "debug", required = false) Boolean debug,
+            @Parameter(description = "Use hOCR mode for better handling of fragmented text (split words across lines)")
+            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr
+    ) {
+        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file, debug, Boolean.TRUE.equals(useHocr));
+        return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW analysis completed"));
+    }
+
+    @Operation(
+            summary = "Document analysis with hOCR (recommended for complex text)",
+            description = "Uses hOCR extraction for better handling of split words, line continuations, and multi-page text. " +
+                    "Recommended for textile/garment documents with complex Description and Composition fields."
+    )
+    @PostMapping(value = "/analyze-hocr", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<OcrNewDocumentAnalysisResponse>> analyzeWithHocr(
+            @Parameter(
+                    description = "PDF/PNG/JPG file",
+                    required = true,
+                    content = @Content(mediaType = MediaType.MULTIPART_FORM_DATA_VALUE)
+            )
+            @RequestParam("file") MultipartFile file,
             @RequestParam(value = "debug", required = false) Boolean debug
     ) {
-        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file, debug);
-        return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW analysis completed"));
+        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file, debug, true);
+        return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW (hOCR mode) analysis completed"));
     }
 }

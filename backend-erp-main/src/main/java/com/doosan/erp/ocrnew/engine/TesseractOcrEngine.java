@@ -2,8 +2,14 @@ package com.doosan.erp.ocrnew.engine;
 
 import com.doosan.erp.common.constant.ErrorCode;
 import com.doosan.erp.common.exception.BusinessException;
+import com.doosan.erp.ocrnew.hocr.HocrLine;
+import com.doosan.erp.ocrnew.hocr.HocrPage;
+import com.doosan.erp.ocrnew.hocr.HocrParser;
+import com.doosan.erp.ocrnew.hocr.HocrWord;
+import com.doosan.erp.ocrnew.hocr.TextileTextReconstructor;
 import com.doosan.erp.ocrnew.model.OcrNewLine;
 import com.doosan.erp.ocrnew.model.OcrNewWord;
+import com.doosan.erp.ocrnew.parser.TableParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.sourceforge.tess4j.Tesseract;
@@ -145,5 +151,171 @@ public class TesseractOcrEngine {
     private static String normalizeText(String s) {
         if (s == null) return "";
         return s.replace('\u00A0', ' ').trim();
+    }
+
+    // ==================== hOCR Methods ====================
+
+    private final HocrParser hocrParser = new HocrParser();
+    private final TextileTextReconstructor textReconstructor = new TextileTextReconstructor();
+
+    /**
+     * Generate hOCR HTML from image using Tesseract.
+     * hOCR contains bounding box information for better text reconstruction.
+     */
+    public String generateHocr(BufferedImage image) {
+        try {
+            Tesseract tesseract = new Tesseract();
+            String lang = (language == null || language.isBlank()) ? "eng" : language;
+            configureDatapath(tesseract, lang);
+            tesseract.setLanguage(lang);
+            
+            // Enable hOCR output
+            tesseract.setTessVariable("tessedit_create_hocr", "1");
+            tesseract.setPageSegMode(3); // PSM_AUTO
+            tesseract.setTessVariable("preserve_interword_spaces", "1");
+            
+            return tesseract.doOCR(image);
+        } catch (Throwable e) {
+            log.error("hOCR generation failed: {}", e.getMessage());
+            throw new BusinessException(ErrorCode.OCR_PROCESSING_FAILED, e);
+        }
+    }
+
+    /**
+     * Extract lines using hOCR with enhanced fragment merging.
+     * This method provides better handling of split words across lines.
+     */
+    public List<OcrNewLine> extractLinesWithHocr(BufferedImage image, int pageIndex) {
+        try {
+            String hocrHtml = generateHocr(image);
+            List<HocrPage> pages = hocrParser.parseHocr(hocrHtml);
+            
+            if (pages.isEmpty()) {
+                log.warn("No pages found in hOCR, falling back to standard extraction");
+                return extractLinesFromImage(image, pageIndex);
+            }
+
+            List<OcrNewLine> result = new ArrayList<>();
+            int pageNum = pageIndex + 1;
+
+            for (HocrPage page : pages) {
+                for (HocrLine hLine : page.getLines()) {
+                    List<OcrNewWord> words = new ArrayList<>();
+                    
+                    for (HocrWord hWord : hLine.getWords()) {
+                        words.add(OcrNewWord.builder()
+                                .page(pageNum)
+                                .text(hWord.getText())
+                                .left(hWord.getX())
+                                .top(hWord.getY())
+                                .right(hWord.getRight())
+                                .bottom(hWord.getBottom())
+                                .confidence(hWord.getConfidence())
+                                .build());
+                    }
+
+                    // Merge fragmented words using TextileTextReconstructor
+                    String mergedText = textReconstructor.mergeFragmentedWordsInLine(hLine);
+                    // Apply TableParser.mergeSplitWords for additional normalization
+                    mergedText = TableParser.mergeSplitWords(mergedText);
+
+                    if (!mergedText.isBlank()) {
+                        result.add(OcrNewLine.builder()
+                                .page(pageNum)
+                                .text(mergedText)
+                                .left(hLine.getX())
+                                .top(hLine.getY())
+                                .right(hLine.getRight())
+                                .bottom(hLine.getBottom())
+                                .confidence(100f) // hOCR doesn't always have line confidence
+                                .words(words)
+                                .build());
+                    }
+                }
+            }
+
+            log.info("hOCR extracted {} lines from page {}", result.size(), pageNum);
+            return result;
+
+        } catch (Exception e) {
+            log.warn("hOCR extraction failed, falling back to standard: {}", e.getMessage());
+            return extractLinesFromImage(image, pageIndex);
+        }
+    }
+
+    /**
+     * Reconstruct full text from multiple images using hOCR with multi-page handling.
+     * This handles text that continues across page boundaries.
+     */
+    public String reconstructTextFromImages(List<BufferedImage> images) {
+        StringBuilder combined = new StringBuilder();
+        
+        for (int i = 0; i < images.size(); i++) {
+            String hocrHtml = generateHocr(images.get(i));
+            List<HocrPage> pages = hocrParser.parseHocr(hocrHtml);
+            
+            String pageText = textReconstructor.reconstructText(pages);
+            pageText = TableParser.mergeSplitWords(pageText);
+            
+            if (combined.length() > 0 && !pageText.isEmpty()) {
+                // Check if we need to merge across pages
+                String lastLine = getLastLine(combined.toString());
+                String firstLine = getFirstLine(pageText);
+                
+                if (shouldMergeAcrossPages(lastLine, firstLine)) {
+                    // Remove last newline and merge
+                    while (combined.length() > 0 && 
+                           (combined.charAt(combined.length() - 1) == '\n' || 
+                            combined.charAt(combined.length() - 1) == ' ')) {
+                        combined.deleteCharAt(combined.length() - 1);
+                    }
+                    combined.append(' ');
+                } else {
+                    combined.append('\n');
+                }
+            }
+            combined.append(pageText);
+        }
+        
+        return TableParser.mergeSplitWords(combined.toString().trim());
+    }
+
+    private String getLastLine(String text) {
+        if (text == null || text.isEmpty()) return "";
+        int lastNewline = text.lastIndexOf('\n');
+        return lastNewline >= 0 ? text.substring(lastNewline + 1) : text;
+    }
+
+    private String getFirstLine(String text) {
+        if (text == null || text.isEmpty()) return "";
+        int firstNewline = text.indexOf('\n');
+        return firstNewline >= 0 ? text.substring(0, firstNewline) : text;
+    }
+
+    private boolean shouldMergeAcrossPages(String lastLine, String firstLine) {
+        if (lastLine == null || lastLine.isEmpty()) return false;
+        if (firstLine == null || firstLine.isEmpty()) return false;
+
+        // Check if last line ends without terminal punctuation
+        char lastChar = lastLine.trim().charAt(lastLine.trim().length() - 1);
+        boolean endsWithTerminal = ".!?;:".indexOf(lastChar) >= 0;
+
+        // Check if first line starts with lowercase
+        char firstChar = firstLine.trim().charAt(0);
+        boolean startsLowercase = Character.isLowerCase(firstChar);
+
+        // Strong indicator for continuation
+        if (!endsWithTerminal && startsLowercase) {
+            return true;
+        }
+
+        // Check if last line ends with fragment
+        String[] lastWords = lastLine.trim().split("\\s+");
+        String lastWord = lastWords[lastWords.length - 1];
+        if (lastWord.length() <= 3 && !lastWord.matches(".*[aeiouAEIOU]$")) {
+            return true;
+        }
+
+        return false;
     }
 }

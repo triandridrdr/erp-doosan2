@@ -224,10 +224,21 @@ public class OcrNewService {
     }
 
     public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file) {
-        return analyzeDocument(file, null);
+        return analyzeDocument(file, null, true);  // hOCR default for better fragment handling
     }
 
     public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file, Boolean debugOverride) {
+        return analyzeDocument(file, debugOverride, true);  // hOCR default for better fragment handling
+    }
+
+    /**
+     * Analyze document with optional hOCR mode for better fragment handling.
+     * 
+     * @param file The uploaded file
+     * @param debugOverride Enable debug logging
+     * @param useHocr Use hOCR extraction for better handling of split words
+     */
+    public OcrNewDocumentAnalysisResponse analyzeDocument(MultipartFile file, Boolean debugOverride, boolean useHocr) {
         validateFile(file);
 
         boolean effectiveDebug = debugLogging || Boolean.TRUE.equals(debugOverride);
@@ -252,7 +263,7 @@ public class OcrNewService {
             }
 
             if (effectiveDebug) {
-                log.info("[OCR-NEW][DEBUG] rendered pages: pageCount={}", pageImages.size());
+                log.info("[OCR-NEW][DEBUG] rendered pages: pageCount={}, useHocr={}", pageImages.size(), useHocr);
                 for (int i = 0; i < Math.min(pageImages.size(), 5); i++) {
                     BufferedImage img = pageImages.get(i);
                     log.info("[OCR-NEW][DEBUG] pageImage[{}]: width={}, height={}", i, img.getWidth(), img.getHeight());
@@ -264,7 +275,13 @@ public class OcrNewService {
 
             List<OcrNewLine> allLines = new ArrayList<>();
             for (int i = 0; i < pageImages.size(); i++) {
-                allLines.addAll(ocrEngine.extractLinesFromImage(pageImages.get(i), i));
+                if (useHocr) {
+                    // Use hOCR extraction with enhanced fragment merging
+                    allLines.addAll(ocrEngine.extractLinesWithHocr(pageImages.get(i), i));
+                } else {
+                    // Use standard word-level extraction
+                    allLines.addAll(ocrEngine.extractLinesFromImage(pageImages.get(i), i));
+                }
             }
 
             allLines.sort(Comparator

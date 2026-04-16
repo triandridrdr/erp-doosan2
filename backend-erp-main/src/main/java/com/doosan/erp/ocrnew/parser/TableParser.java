@@ -6,6 +6,9 @@ import com.doosan.erp.ocrnew.dto.OcrNewTableDto;
 import com.doosan.erp.ocrnew.model.OcrNewLine;
 import com.doosan.erp.ocrnew.model.OcrNewWord;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -16,6 +19,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class TableParser {
+
+    private static final Logger log = LoggerFactory.getLogger(TableParser.class);
+    
+    // Enable BOM coordinate debug logging (set to true to trace word assignments)
+    private static final boolean BOM_DEBUG = true;
 
     private static final Pattern BOM_SECTION_START = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\s*Materials\\s+and\\s+Trims\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern BOM_SECTION_ANY = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\b", Pattern.CASE_INSENSITIVE);
@@ -33,6 +41,7 @@ public class TableParser {
     private static final Pattern SUPPLIER_STOPWORD = Pattern.compile("^(import|export|ltd|limited|co|company|trading|printing|dyeing|hangzhou|shao?xing|pt|indonesia)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern NYLON_WORD = Pattern.compile("^%?nylon$", Pattern.CASE_INSENSITIVE);
     private static final Pattern STAR_SPEC = Pattern.compile("^\\d{1,3}\\*\\d{1,3}$");
+    private static final Pattern COMPOSITION_WORD = Pattern.compile("(?i)^(polyester|cotton|viscose|nylon|elastane|spandex|wool|silk|linen|rayon|acrylic|recycled|revisco|circulose|so|pol|yester|ester)$");
 
     public List<OcrNewTableDto> parseTables(List<OcrNewLine> lines) {
         // Heuristic table detection:
@@ -155,8 +164,12 @@ public class TableParser {
             if (startIdx < 0) continue;
 
             List<OcrNewLine> section = new ArrayList<>();
+            List<OcrNewLine> headerLines = new ArrayList<>();
             boolean inBody = false;
-            OcrNewLine headerLine = null;
+            // Track if we've seen header keywords
+            boolean sawPositionKeyword = false;
+            boolean sawDescriptionKeyword = false;
+            
             for (int i = startIdx + 1; i < pageLines.size(); i++) {
                 OcrNewLine l = pageLines.get(i);
                 String txt = oneLine(l.getText());
@@ -168,10 +181,41 @@ public class TableParser {
                 if (txt.toLowerCase().contains("page") && txt.contains("/")) break;
 
                 if (!inBody) {
+                    // Traditional single-line header detection
                     if (BOM_HEADER_HINT.matcher(txt).find() && BOM_HEADER_REQUIRED.matcher(txt).find()) {
                         inBody = true;
-                        headerLine = l;
+                        headerLines.add(l);
+                        continue;
                     }
+                    
+                    // hOCR multi-line header detection: collect all potential header lines
+                    if (lowerTxt.contains("position") || lowerTxt.contains("placement")) {
+                        sawPositionKeyword = true;
+                        headerLines.add(l);
+                    } else if (lowerTxt.contains("description") || lowerTxt.contains("composition") ||
+                               lowerTxt.contains("appearance") || lowerTxt.contains("material") ||
+                               lowerTxt.contains("component") || lowerTxt.contains("consumption")) {
+                        // Collect other header-related lines
+                        headerLines.add(l);
+                        if (lowerTxt.contains("description")) {
+                            sawDescriptionKeyword = true;
+                        }
+                    }
+                    
+                    // Start body when we see a row start pattern after header keywords
+                    if (sawPositionKeyword && sawDescriptionKeyword && BOM_ROW_START.matcher(txt).find()) {
+                        inBody = true;
+                        section.add(l); // Include this line as first body line
+                        continue;
+                    }
+                    
+                    // Also start body if we see a clear row start and have seen at least position keyword
+                    if (sawPositionKeyword && BOM_ROW_START.matcher(txt).find()) {
+                        inBody = true;
+                        section.add(l);
+                        continue;
+                    }
+                    
                     continue;
                 }
 
@@ -235,7 +279,7 @@ public class TableParser {
                 }
             }
 
-            List<List<String>> rows = normalizeBomRows(section, headerLine);
+            List<List<String>> rows = normalizeBomRows(section, headerLines);
             if (rows.size() <= 1) continue;
 
             // Merge data rows (skip header row at index 0)
@@ -277,7 +321,7 @@ public class TableParser {
         return out;
     }
 
-    private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, OcrNewLine headerLine) {
+    private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
         List<List<String>> rows = new ArrayList<>();
         rows.add(List.of("Component", "Description", "Category", "Composition"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
@@ -285,7 +329,7 @@ public class TableParser {
         List<StringBuilder> rawRowText = new ArrayList<>();
         rawRowText.add(new StringBuilder());
 
-        BomColumnCenters centers = deriveBomColumnCenters(headerLine);
+        BomColumnCenters centers = deriveBomColumnCenters(headerLines);
         if (!centers.valid()) {
             // fallback to older heuristic if header didn't yield usable columns
             return normalizeBomRowsFallback(sectionLines);
@@ -328,10 +372,18 @@ public class TableParser {
 
             boolean isRowStart = !cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find();
             boolean isContinuation = !isRowStart && cur != null;
+            
+            if (BOM_DEBUG) {
+                log.debug("[BOM-ROW] page={} isRowStart={} isCont={} pos='{}' desc='{}' comp='{}'",
+                        l.getPage(), isRowStart, isContinuation, cells.position, 
+                        cells.description.length() > 30 ? cells.description.substring(0, 30) + "..." : cells.description,
+                        cells.composition.length() > 30 ? cells.composition.substring(0, 30) + "..." : cells.composition);
+            }
 
             // If we haven't started any row yet, ignore stray lines that don't start a row.
             // This prevents carry-over description/composition lines on the next page from becoming their own rows.
             if (cur == null && !isRowStart) {
+                if (BOM_DEBUG) log.debug("[BOM-ROW] SKIPPED (no cur, not rowStart)");
                 continue;
             }
 
@@ -346,6 +398,7 @@ public class TableParser {
                 curRaw = new StringBuilder();
                 curRaw.append(wholeLine);
                 rawRowText.add(curRaw);
+                if (BOM_DEBUG) log.debug("[BOM-ROW] NEW ROW #{}: desc='{}' comp='{}'", rows.size()-1, cur.get(1), cur.get(3));
             } else {
                 // Append continuation into description/composition based on which column has data
                 if (cur == null) {
@@ -356,21 +409,29 @@ public class TableParser {
                 }
                 if (!cells.description.isBlank()) {
                     // Apply mergeSplitWords to fix broken words when appending description continuation
+                    String oldDesc = cur.get(1);
                     cur.set(1, mergeSplitWords(oneLine(cur.get(1) + (cur.get(1).isBlank() ? "" : " ") + cells.description)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(1));
                 }
                 if (!cells.composition.isBlank()) {
+                    String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.composition)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp: '{}' += '{}' -> '{}'", oldComp, cells.composition, cur.get(3));
                 } else if (TOKEN_HAS_PERCENT.matcher(txt).find() || looksLikeCompositionContinuation(txt)) {
                     // if OCR lost column alignment but line clearly looks like composition, append raw text to composition
+                    String oldComp = cur.get(3);
                     cur.set(3, normalizeBomComposition(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + txtCleanKeepPercent)));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fallback): '{}' += '{}' -> '{}'", oldComp, txtCleanKeepPercent, cur.get(3));
                 } else if (cur.get(3).isBlank() && !compFromWhole.isBlank()) {
                     // last resort: if this line has % but didn't map into composition column, use whole-line extraction
                     cur.set(3, compFromWhole);
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(whole): -> '{}'", cur.get(3));
                 } else if (!cur.get(3).isBlank() && TOKEN_HAS_PERCENT.matcher(cur.get(3)).find() && looksLikeCompositionContinuation(txt)) {
                     // Special: keep fibre continuation words (e.g. 'YESTER') even if the line has no %
                     String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
                     if (!cont.isBlank()) {
                         cur.set(3, oneLine(cur.get(3) + " " + cont));
+                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(3));
                     }
                 }
             }
@@ -427,7 +488,7 @@ public class TableParser {
     private record BomRowStart(String position, String placement, String type, String tail) {
     }
 
-    private record BomColumnCenters(int xPosition, int xPlacement, int xType, int xDescription, int xComposition) {
+    private record BomColumnCenters(int xPosition, int xPlacement, int xType, int xDescription, int xAppearance, int xComposition) {
         boolean valid() {
             return xPosition > 0 && xPlacement > 0 && xType > 0 && xDescription > 0 && xComposition > 0;
         }
@@ -437,26 +498,77 @@ public class TableParser {
     }
 
     private static BomColumnCenters deriveBomColumnCenters(OcrNewLine headerLine) {
-        if (headerLine == null || headerLine.getWords() == null || headerLine.getWords().isEmpty()) {
-            return new BomColumnCenters(-1, -1, -1, -1, -1);
+        return deriveBomColumnCenters(headerLine == null ? List.of() : List.of(headerLine));
+    }
+
+    private static BomColumnCenters deriveBomColumnCenters(List<OcrNewLine> headerLines) {
+        if (headerLines == null || headerLines.isEmpty()) {
+            return new BomColumnCenters(-1, -1, -1, -1, -1, -1);
         }
 
         Integer xPosition = null;
         Integer xPlacement = null;
         Integer xType = null;
         Integer xDescription = null;
+        Integer xAppearance = null;
         Integer xComposition = null;
 
-        for (OcrNewWord w : headerLine.getWords()) {
-            String t = oneLine(w.getText());
-            if (t.isBlank()) continue;
-            int cx = (w.getLeft() + w.getRight()) / 2;
+        // Collect column centers from ALL header lines (handles hOCR split headers)
+        for (OcrNewLine headerLine : headerLines) {
+            if (headerLine == null) continue;
+            
+            String lineText = oneLine(headerLine.getText()).toLowerCase();
+            int lineCx = (headerLine.getLeft() + headerLine.getRight()) / 2;
+            
+            // Try word-level extraction first
+            if (headerLine.getWords() != null && !headerLine.getWords().isEmpty()) {
+                for (OcrNewWord w : headerLine.getWords()) {
+                    String t = oneLine(w.getText());
+                    if (t.isBlank()) continue;
+                    int cx = (w.getLeft() + w.getRight()) / 2;
 
-            if (xPosition == null && t.equalsIgnoreCase("Position")) xPosition = cx;
-            else if (xPlacement == null && t.equalsIgnoreCase("Placement")) xPlacement = cx;
-            else if (xType == null && t.equalsIgnoreCase("Type")) xType = cx;
-            else if (xDescription == null && t.equalsIgnoreCase("Description")) xDescription = cx;
-            else if (xComposition == null && t.equalsIgnoreCase("Composition")) xComposition = cx;
+                    if (xPosition == null && t.equalsIgnoreCase("Position")) xPosition = cx;
+                    else if (xPlacement == null && t.equalsIgnoreCase("Placement")) xPlacement = cx;
+                    else if (xType == null && t.equalsIgnoreCase("Type")) xType = cx;
+                    else if (xDescription == null && t.equalsIgnoreCase("Description")) xDescription = cx;
+                    else if (xAppearance == null && t.equalsIgnoreCase("Appearance")) xAppearance = cx;
+                    else if (xComposition == null && t.equalsIgnoreCase("Composition")) xComposition = cx;
+                }
+            } else {
+                // Fallback to line-level extraction when words not available
+                if (xPosition == null && lineText.contains("position")) xPosition = lineCx;
+                if (xPlacement == null && lineText.contains("placement")) xPlacement = lineCx;
+                if (xType == null && lineText.contains("type")) xType = lineCx;
+                if (xDescription == null && lineText.equals("description")) xDescription = lineCx;
+                if (xAppearance == null && lineText.contains("appearance")) xAppearance = lineCx;
+                if (xComposition == null && lineText.contains("composition")) xComposition = lineCx;
+            }
+        }
+
+        // Robust fallbacks based on typical document layout
+        // Position column typically starts at left edge (~75px)
+        if (xPosition == null) {
+            xPosition = 75;
+        }
+        // Placement typically follows Position (~250px)
+        if (xPlacement == null && xPosition != null) {
+            xPlacement = xPosition + 175;
+        }
+        // Type typically follows Placement (~500px)
+        if (xType == null && xPlacement != null) {
+            xType = xPlacement + 250;
+        }
+        // Description typically at ~800-900px
+        if (xDescription == null) {
+            xDescription = 850;
+        }
+        // Material Appearance typically at ~1040-1135px (between Description and Composition)
+        if (xAppearance == null) {
+            xAppearance = 1080;
+        }
+        // Composition typically at ~1280px
+        if (xComposition == null) {
+            xComposition = 1280;
         }
 
         return new BomColumnCenters(
@@ -464,14 +576,63 @@ public class TableParser {
                 xPlacement == null ? -1 : xPlacement,
                 xType == null ? -1 : xType,
                 xDescription == null ? -1 : xDescription,
+                xAppearance == null ? -1 : xAppearance,
                 xComposition == null ? -1 : xComposition
         );
     }
 
     private static BomLineCells extractBomLineCells(OcrNewLine line, BomColumnCenters centers) {
-        if (line == null || line.getWords() == null || line.getWords().isEmpty()) {
-            String t = line == null ? "" : oneLine(line.getText());
-            return new BomLineCells("", "", "", t, "");
+        if (line == null) {
+            return new BomLineCells("", "", "", "", "");
+        }
+        
+        String lineText = oneLine(line.getText());
+        
+        // Debug log: column centers and line info
+        if (BOM_DEBUG) {
+            log.debug("[BOM] extractBomLineCells: line='{}', bbox=[{},{}-{},{}], centers=[pos={},plc={},typ={},desc={},app={},comp={}]",
+                    lineText.length() > 50 ? lineText.substring(0, 50) + "..." : lineText,
+                    line.getLeft(), line.getTop(), line.getRight(), line.getBottom(),
+                    centers.xPosition, centers.xPlacement, centers.xType, 
+                    centers.xDescription, centers.xAppearance, centers.xComposition);
+        }
+        
+        // When words are not available, use LINE's x-position to determine column
+        if (line.getWords() == null || line.getWords().isEmpty()) {
+            // Use line's bounding box center to determine column assignment
+            int lineCx = (line.getLeft() + line.getRight()) / 2;
+            
+            // Skip lines beyond tracked columns (Consumption, Weight, Supplier)
+            if (lineCx > 1600) {
+                return new BomLineCells("", "", "", "", "");
+            }
+            
+            // Calculate conservative boundaries for column assignment
+            // Use 150px buffer before Appearance to ensure no spillover
+            int descMaxX = centers.xAppearance > 0 ? centers.xAppearance - 150 : 950;
+            int compMinX = centers.xComposition > 0 ? centers.xComposition - 80 : 1200;
+            
+            // Check if text contains composition indicators (%, material names)
+            boolean hasCompositionIndicator = TOKEN_HAS_PERCENT.matcher(lineText).find() ||
+                    lineText.toLowerCase().matches(".*\\b(polyester|cotton|viscose|nylon|elastane|spandex|wool|silk|linen|rayon|acrylic|recycled)\\b.*");
+            
+            // Assign based on x-position boundaries
+            // Composition zone: cx >= compMinX or has composition indicator
+            if (lineCx >= compMinX || hasCompositionIndicator) {
+                return new BomLineCells("", "", "", "", lineText);
+            } else if (lineCx > descMaxX && lineCx < compMinX) {
+                // Material Appearance zone - skip
+                return new BomLineCells("", "", "", "", "");
+            } else if (lineCx > centers.xType && lineCx <= descMaxX) {
+                // Description zone
+                return new BomLineCells("", "", "", lineText, "");
+            } else if (lineCx > centers.xPlacement && lineCx <= centers.xType) {
+                return new BomLineCells("", "", lineText, "", "");
+            } else if (lineCx > centers.xPosition && lineCx <= centers.xPlacement) {
+                return new BomLineCells("", lineText, "", "", "");
+            } else {
+                return new BomLineCells(lineText, "", "", "", "");
+            }
         }
 
         StringBuilder position = new StringBuilder();
@@ -480,26 +641,79 @@ public class TableParser {
         StringBuilder description = new StringBuilder();
         StringBuilder composition = new StringBuilder();
 
+        // Calculate column boundaries to avoid pollution from other columns (Consumption, Weight, Supplier)
+        // These columns typically start at x > 1500, so we limit tracked data to x < 1600
+        int compositionMaxX = 1600; // Composition typically ends before Consumption/Weight columns
+        
+        // Calculate boundary between Description and Appearance columns
+        // Use conservative boundary: 150px before Appearance center to ensure no Appearance/Composition words leak into Description
+        // Description header ends ~980, Appearance starts ~1041
+        int descriptionMaxX = centers.xAppearance > 0 ? centers.xAppearance - 150 : 950;
+        // Composition boundary - 50px before Composition center
+        int compositionMinX = centers.xComposition > 0 ? centers.xComposition - 80 : 1200;
+        
         for (OcrNewWord w : line.getWords()) {
             String t = oneLine(w.getText());
             if (t.isBlank()) continue;
             int cx = (w.getLeft() + w.getRight()) / 2;
+
+            // Skip words that are beyond our tracked columns (Consumption, Weight, Supplier at x > 1600)
+            if (cx > compositionMaxX) {
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} SKIPPED (> compositionMaxX={})", t, cx, compositionMaxX);
+                continue;
+            }
 
             int col = nearestIndex(List.of(
                     centers.xPosition,
                     centers.xPlacement,
                     centers.xType,
                     centers.xDescription,
+                    centers.xAppearance,
                     centers.xComposition
             ), cx);
 
-            StringBuilder target;
-            if (col == 0) target = position;
-            else if (col == 1) target = placement;
-            else if (col == 2) target = type;
-            else if (col == 3) target = description;
-            else target = composition;
+            // Check if word is a composition indicator (%, material name)
+            // Only use this for words in the composition zone, not for description
+            boolean hasPercentSign = TOKEN_HAS_PERCENT.matcher(t).find();
 
+            StringBuilder target;
+            String targetName;
+            if (col == 0) { target = position; targetName = "position"; }
+            else if (col == 1) { target = placement; targetName = "placement"; }
+            else if (col == 2) { target = type; targetName = "type"; }
+            else if (col == 3) {
+                // Description column - verify word is not past the Appearance column boundary
+                if (cx > descriptionMaxX) {
+                    // Word is past Description boundary - skip it (Appearance column)
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col=3 SKIPPED (cx > descMaxX={})", t, cx, descriptionMaxX);
+                    continue;
+                }
+                // Stay in description even if it contains fiber words (they're part of fabric code)
+                target = description;
+                targetName = "description";
+            }
+            else if (col == 4) {
+                // Material Appearance column - skip (don't add to any field)
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col=4 SKIPPED (Appearance)", t, cx);
+                continue;
+            }
+            else if (col == 5) {
+                // Composition column
+                target = composition;
+                targetName = "composition";
+            }
+            else if (cx >= compositionMinX && hasPercentSign) {
+                // Word is past composition boundary AND contains % - likely composition data
+                target = composition;
+                targetName = "composition(fallback)";
+            }
+            else {
+                // Fallback - skip unknown
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} SKIPPED (unknown)", t, cx, col);
+                continue;
+            }
+
+            if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> {}", t, cx, col, targetName);
             if (target.length() > 0) target.append(' ');
             target.append(t);
         }
@@ -509,23 +723,33 @@ public class TableParser {
         String typ = oneLine(type.toString());
         String desc = mergeSplitWords(oneLine(description.toString()));  // Fix broken words in description
         String comp = oneLine(composition.toString());
+        
+        if (BOM_DEBUG) {
+            log.debug("[BOM] after word loop: desc='{}', comp='{}'", desc, comp);
+        }
 
         // Normalize comp first; it may become empty if it was only noise.
         comp = normalizeBomComposition(comp);
 
-        // Fallback 1: if comp became empty but desc contains %, extract from desc.
-        if (comp.isBlank() && TOKEN_HAS_PERCENT.matcher(desc).find()) {
+        // Fallback 1: if comp became empty but desc contains composition-like %, extract from desc.
+        // Only trigger if desc has actual composition (e.g., "80% Viscose"), NOT fabric ratios like "80/20%"
+        // Composition pattern: digit(s) + % + space + fiber word
+        if (comp.isBlank() && desc.matches(".*\\b\\d{1,3}%\\s+(?i)(viscose|polyester|cotton|nylon|elastane|spandex|wool|silk|revisco|recycled|polyamide|acrylic).*")) {
+            if (BOM_DEBUG) log.debug("[BOM] Fallback1: extracting comp from desc='{}'", desc);
             BomDescComp dc = splitBomTail(desc);
             desc = dc.description;
             comp = normalizeBomComposition(dc.composition);
+            if (BOM_DEBUG) log.debug("[BOM] Fallback1 result: desc='{}', comp='{}'", desc, comp);
         }
 
         // Fallback 2: if still empty, try from whole line text (handles column mis-assignment).
         if (comp.isBlank()) {
             String whole = oneLine(line.getText());
             if (TOKEN_HAS_PERCENT.matcher(whole).find()) {
+                if (BOM_DEBUG) log.debug("[BOM] Fallback2: extracting comp from wholeLine='{}'", whole);
                 BomDescComp dc = splitBomTail(whole);
                 comp = normalizeBomComposition(dc.composition);
+                if (BOM_DEBUG) log.debug("[BOM] Fallback2 result: comp='{}'", comp);
             }
         }
 
@@ -534,6 +758,9 @@ public class TableParser {
             desc = "";
         }
 
+        if (BOM_DEBUG) {
+            log.debug("[BOM] FINAL: pos='{}', typ='{}', desc='{}', comp='{}'", pos, typ, desc, comp);
+        }
         return new BomLineCells(pos, plc, typ, desc, comp);
     }
 
@@ -1253,7 +1480,131 @@ public class TableParser {
         // +32/163*85 splits (construction spec)
         r = r.replaceAll("\\+(\\d+)\\s*/\\s*(\\d+)\\s*\\*\\s*(\\d+)", "+$1/$2*$3");
 
+        // ===== PRODUCT CODE FRAGMENT MERGING =====
+        // "ZCX56027-ci Solid rculose" -> "ZCX56027-circulose" (remove Solid noise)
+        // "ZCX56027-ci Solid circulose" -> "ZCX56027-circulose" (remove Solid noise)
+        r = r.replaceAll("(?i)(\\w+-ci)\\s+Solid\\s+rculose\\b", "$1rculose");
+        r = r.replaceAll("(?i)(\\w+-ci)\\s+Solid\\s+circulose\\b", "$1rculose");
+        r = r.replaceAll("(?i)(\\w+-ci)\\s+rculose\\b", "$1rculose");
+        r = r.replaceAll("(?i)(\\w+-cir)\\s+culose\\b", "$1culose");
+        r = r.replaceAll("(?i)(\\w+-circ)\\s+ulose\\b", "$1ulose");
+        // Handle "ci rculose" without hyphen prefix
+        r = r.replaceAll("(?i)\\bci\\s+rculose\\b", "circulose");
+        r = r.replaceAll("(?i)\\bcir\\s+culose\\b", "circulose");
+        // Handle "_culose" orphan -> circulose
+        r = r.replaceAll("(?i)\\b_culose\\b", "circulose");
+        r = r.replaceAll("(?i)\\brculose\\b", "circulose");
+        
+        // ===== FIX DUPLICATE/FRAGMENTED COMPOSITION =====
+        // Fix "withc" typo -> "with c" or "with"
+        r = r.replaceAll("(?i)\\bwithc\\b", "with");
+        // "viscose with c circulose" -> "Viscose with circulose"
+        r = r.replaceAll("(?i)\\bviscose\\s+with\\s+c\\s+circulose\\b", "Viscose with circulose");
+        r = r.replaceAll("(?i)\\bviscose\\s+with\\s+circulose\\b", "Viscose with circulose");
+        // "Revisco Viscose" -> keep as "Revisco Viscose" (don't merge)
+        // "Reviscose" alone (OCR error) -> "Revisco Viscose"
+        r = r.replaceAll("(?i)\\bReviscose\\s+circulose\\b", "Revisco Viscose with circulose");
+        r = r.replaceAll("(?i)\\bReviscose\\s+viscose\\b", "Revisco Viscose");
+        r = r.replaceAll("(?i)\\bReviscose\\b(?!\\s+Viscose)", "Revisco Viscose");
+        // Handle fragmented "% Reviscose irculose" -> "% Revisco Viscose with circulose"
+        r = r.replaceAll("(?i)%\\s*Reviscose\\s+irculose\\b", "% Revisco Viscose with circulose");
+        r = r.replaceAll("(?i)\\birculose\\b", "circulose");
+        // "RECYCLED P OLYESTER" -> "RECYCLED POLYESTER"
+        r = r.replaceAll("(?i)\\bRECYCLED\\s+P\\s*OLYESTER\\b", "RECYCLED POLYESTER");
+        // Add comma before second percentage in composition
+        r = r.replaceAll("(?i)(circulose)\\s+(\\d+%)", "$1, $2");
+        r = r.replaceAll("(?i)(Viscose)\\s+(\\d+%)", "$1, $2");
+        r = r.replaceAll("(?i)(POLYESTER)\\s+(\\d+%)", "$1, $2");
+        // Deduplicate repeated textile words in composition
+        r = deduplicateTextileWords(r);
+
         return oneLine(r);
+    }
+
+    /**
+     * Deduplicate repeated textile words in a string.
+     * e.g., "80% Revisco Viscose circulose 20% RECYCLED POLYESTER"
+     * Keeps "Revisco Viscose" as separate words (not merged).
+     */
+    private static String deduplicateTextileWords(String text) {
+        if (text == null || text.isBlank()) return text;
+        
+        String[] words = text.split("\\s+");
+        if (words.length <= 1) return text;
+        
+        StringBuilder result = new StringBuilder();
+        java.util.Set<String> recentWords = new java.util.LinkedHashSet<>();
+        int windowSize = 4; // Look back window for deduplication
+        
+        for (String word : words) {
+            String wordLower = word.toLowerCase();
+            
+            // Always keep numbers and percentages
+            if (word.matches(".*\\d+.*")) {
+                if (result.length() > 0) result.append(' ');
+                result.append(word);
+                recentWords.clear(); // Reset window after number
+                continue;
+            }
+            
+            // Check if this word (or similar) was recently seen
+            boolean isDuplicate = false;
+            String toRemove = null;
+            
+            for (String recent : recentWords) {
+                if (recent.equalsIgnoreCase(wordLower)) {
+                    isDuplicate = true;
+                    break;
+                }
+                // Check for partial matches - but NOT for "revisco" vs "viscose" (different words)
+                if (recent.length() >= 6 && wordLower.length() >= 6) {
+                    if (recent.startsWith(wordLower) || wordLower.startsWith(recent)) {
+                        // Skip if they are different root words (revisco vs viscose)
+                        if (!areSameRootWord(recent, wordLower)) {
+                            continue;
+                        }
+                        // Keep the longer one
+                        if (wordLower.length() > recent.length()) {
+                            toRemove = recent;
+                        } else {
+                            isDuplicate = true;
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            if (toRemove != null) {
+                recentWords.remove(toRemove);
+            }
+            
+            if (!isDuplicate) {
+                if (result.length() > 0) result.append(' ');
+                result.append(word);
+                recentWords.add(wordLower);
+                
+                // Maintain window size
+                if (recentWords.size() > windowSize) {
+                    java.util.Iterator<String> it = recentWords.iterator();
+                    it.next();
+                    it.remove();
+                }
+            }
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * Check if two words are the same root (not different words like revisco vs viscose)
+     */
+    private static boolean areSameRootWord(String a, String b) {
+        // revisco and viscose are different words - don't merge
+        if ((a.startsWith("revis") && b.startsWith("visc")) ||
+            (a.startsWith("visc") && b.startsWith("revis"))) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -1582,7 +1933,12 @@ public class TableParser {
         String[] parts = t.split("\\s+");
         int pctIdx = -1;
         for (int i = 0; i < parts.length; i++) {
-            if (TOKEN_HAS_PERCENT.matcher(parts[i]).find()) {
+            String part = parts[i];
+            if (TOKEN_HAS_PERCENT.matcher(part).find()) {
+                // Skip fabric blend ratios like "80/20%" - not composition
+                if (part.matches("\\d+/\\d+%?")) {
+                    continue;
+                }
                 pctIdx = i;
                 break;
             }

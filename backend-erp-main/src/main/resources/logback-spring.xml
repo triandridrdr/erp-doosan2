@@ -101,6 +101,9 @@
 
     <!-- 기본 설정 (프로파일 미지정 시) -->
     <springProfile name="!local &amp; !dev &amp; !prod">
+        <!-- Enable BOM debug logging for TableParser -->
+        <logger name="com.doosan.erp.ocrnew.parser.TableParser" level="DEBUG"/>
+        
         <root level="INFO">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="FILE"/>

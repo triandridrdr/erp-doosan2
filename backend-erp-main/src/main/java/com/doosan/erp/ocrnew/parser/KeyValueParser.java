@@ -133,6 +133,15 @@ public class KeyValueParser {
             break;
         }
 
+        // 3b) Fallback for hOCR: "Date of Order" as clean key, date in value
+        if (out.get("Date (ISO)") == null || out.get("Date (ISO)").isBlank()) {
+            String dateOfOrder = out.get("Date of Order");
+            if (dateOfOrder != null && !dateOfOrder.isBlank()) {
+                String dateIso = normalizeDateToIso(dateOfOrder);
+                putIfAbsentNonBlank(out, "Date (ISO)", dateIso);
+            }
+        }
+
         // 4) Supplier Code row key has code; map to Buyer Code (best-effort)
         for (OcrNewKeyValuePairDto p : pairs) {
             String key = safe(p.getKey());
@@ -148,6 +157,14 @@ public class KeyValueParser {
             break;
         }
 
+        // 4b) Fallback for hOCR: "Supplier Code" as clean key, code in value
+        if (out.get("Buyer Code") == null || out.get("Buyer Code").isBlank()) {
+            String supplierCode = out.get("Supplier Code");
+            if (supplierCode != null && !supplierCode.isBlank()) {
+                putIfAbsentNonBlank(out, "Buyer Code", supplierCode);
+            }
+        }
+
         // 5) Supplier Name + Season row is often merged in key; season value is the pair value
         for (OcrNewKeyValuePairDto p : pairs) {
             String key = safe(p.getKey());
@@ -160,7 +177,56 @@ public class KeyValueParser {
             break;
         }
 
-        // 6) Already canonical keys from parser (keep as-is)
+        // 5b) Fallback for hOCR: "Supplier Name" and "Season" as clean keys
+        if (out.get("Supplier") == null || out.get("Supplier").isBlank()) {
+            String supplierName = out.get("Supplier Name");
+            if (supplierName != null && !supplierName.isBlank()) {
+                putIfAbsentNonBlank(out, "Supplier", supplierName);
+            }
+        }
+        if (out.get("Season") == null || out.get("Season").isBlank()) {
+            // Check for raw key without canonicalization
+            for (OcrNewKeyValuePairDto p : pairs) {
+                String key = safe(p.getKey()).toLowerCase(Locale.ROOT).trim();
+                if (key.equals("season")) {
+                    putIfAbsentNonBlank(out, "Season", normalizeValue(p.getValue()));
+                    break;
+                }
+            }
+        }
+
+        // 6) Fallback for hOCR: "Product Name" and "Product Type" as clean keys
+        if (out.get("Product Name") == null || out.get("Product Name").isBlank()) {
+            for (OcrNewKeyValuePairDto p : pairs) {
+                String key = safe(p.getKey()).toLowerCase(Locale.ROOT).trim();
+                if (key.equals("product name")) {
+                    putIfAbsentNonBlank(out, "Product Name", normalizeValue(p.getValue()));
+                    break;
+                }
+            }
+        }
+        if (out.get("Product Type") == null || out.get("Product Type").isBlank()) {
+            for (OcrNewKeyValuePairDto p : pairs) {
+                String key = safe(p.getKey()).toLowerCase(Locale.ROOT).trim();
+                if (key.equals("product type")) {
+                    putIfAbsentNonBlank(out, "Product Type", normalizeValue(p.getValue()));
+                    break;
+                }
+            }
+        }
+
+        // 7) Fallback for hOCR: "Customs Customer Group" as clean key
+        if (out.get("Customs Customer Group") == null || out.get("Customs Customer Group").isBlank()) {
+            for (OcrNewKeyValuePairDto p : pairs) {
+                String key = safe(p.getKey()).toLowerCase(Locale.ROOT).trim();
+                if (key.equals("customs customer group")) {
+                    putIfAbsentNonBlank(out, "Customs Customer Group", normalizeValue(p.getValue()));
+                    break;
+                }
+            }
+        }
+
+        // 8) Already canonical keys from parser (keep as-is)
         String ccg = out.get("Customs Customer Group");
         if (ccg != null) putIfAbsentNonBlank(out, "Customs Customer Group", normalizeValue(ccg));
         String toc = out.get("Type of Construction");
