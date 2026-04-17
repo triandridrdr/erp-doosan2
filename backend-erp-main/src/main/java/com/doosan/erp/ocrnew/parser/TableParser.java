@@ -321,7 +321,7 @@ public class TableParser {
 
         if (mergedRows.size() <= 1) return List.of();
 
-        // Prefer Composition, Material Supplier from 'Production Units and Processing Capabilities' table where available.
+        // Prefer Type, Composition, Material Supplier from 'Production Units and Processing Capabilities' table where available.
         // Match by Position|Placement|Type (normalized) to preserve row order from Materials and Trims table.
         Map<String, ProdUnitsRow> prodUnitsData = extractBomProductionUnitsData(lines);
         if (!prodUnitsData.isEmpty()) {
@@ -329,14 +329,33 @@ public class TableParser {
                 List<String> row = mergedRows.get(r);
                 if (row == null || row.size() < 6) continue;
                 
+                String rowType = row.get(2) == null ? "" : row.get(2);
+                String keyShort = bomKeyShort(row.get(0), row.get(1));
+                
                 // Match by full key (Position|Placement|NormalizedType)
-                String fullKey = bomKey(row.get(0), row.get(1), row.get(2));
+                String fullKey = bomKey(row.get(0), row.get(1), rowType);
                 ProdUnitsRow prod = prodUnitsData.get(fullKey);
                 
-                // If no exact match, try short key for rows with empty/missing type
-                if (prod == null && (row.get(2) == null || row.get(2).isBlank())) {
-                    String keyShort = bomKeyShort(row.get(0), row.get(1));
-                    // Find first matching entry by short key
+                // Fallback 1: Try partial type match (e.g., "Plain/Cambric" matches "Plain/Cambric/Voile")
+                if (prod == null && !rowType.isBlank()) {
+                    String normalizedRowType = normalizeType(rowType);
+                    for (Map.Entry<String, ProdUnitsRow> e : prodUnitsData.entrySet()) {
+                        if (e.getKey().startsWith(keyShort + "|")) {
+                            String prodNormType = normalizeType(e.getValue().type());
+                            // Check if types are related (one contains the other)
+                            if (prodNormType.startsWith(normalizedRowType) || normalizedRowType.startsWith(prodNormType)) {
+                                prod = e.getValue();
+                                if (BOM_DEBUG) {
+                                    log.debug("[BOM-OVERRIDE] PARTIAL match: rowType='{}' prodType='{}'", rowType, e.getValue().type());
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback 2: If row type is empty, find first matching by short key
+                if (prod == null && rowType.isBlank()) {
                     for (Map.Entry<String, ProdUnitsRow> e : prodUnitsData.entrySet()) {
                         if (e.getKey().startsWith(keyShort + "|")) {
                             prod = e.getValue();
@@ -346,6 +365,17 @@ public class TableParser {
                 }
                 
                 if (prod == null) continue;
+                
+                // Override Type if Production Units has more complete type (e.g., Plain/Cambric/Voile vs Plain/Cambric)
+                if (prod.type() != null && !prod.type().isBlank()) {
+                    String prodType = prod.type();
+                    if (rowType.isBlank() || (prodType.length() > rowType.length() && prodType.toLowerCase().startsWith(rowType.toLowerCase()))) {
+                        row.set(2, prodType);
+                        if (BOM_DEBUG) {
+                            log.debug("[BOM-OVERRIDE] Type: '{}' -> '{}'", rowType, prodType);
+                        }
+                    }
+                }
                 
                 // Override Composition if available and has %
                 if (prod.composition() != null && !prod.composition().isBlank() && TOKEN_HAS_PERCENT.matcher(prod.composition()).find()) {
@@ -358,8 +388,8 @@ public class TableParser {
                 }
                 
                 if (BOM_DEBUG) {
-                    log.debug("[BOM-OVERRIDE] row {} key='{}' -> comp='{}' supplier='{}'", 
-                            r, fullKey, row.get(4), row.get(5));
+                    log.debug("[BOM-OVERRIDE] row {} key='{}' -> type='{}' comp='{}' supplier='{}'", 
+                            r, fullKey, row.get(2), row.get(4), row.get(5));
                 }
             }
         }
@@ -451,7 +481,8 @@ public class TableParser {
         Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
         List<Integer> pages = byPage.keySet().stream().sorted().toList();
 
-        Map<String, ProdUnitsRow> out = new HashMap<>();
+        // First pass: collect all lines in the Production Units section
+        List<String> sectionLines = new ArrayList<>();
         boolean inSection = false;
         for (Integer page : pages) {
             List<OcrNewLine> pageLines = byPage.get(page).stream()
@@ -485,73 +516,212 @@ public class TableParser {
                 if (low.contains("position") && low.contains("placement") && low.contains("composition")) {
                     continue;
                 }
-
-                if (!BOM_ROW_START.matcher(txt).find()) {
-                    continue;
-                }
-
-                BomRowStart rs = parseBomRowStart(txt);
-                String position = rs.position();
-                String placement = rs.placement();
-                String type = rs.type();
                 
-                // Fix: If placement looks like a Type (contains "/" or known type pattern), 
-                // it means Placement column was empty/merged. Shift: placement->type, position->placement
-                if (looksLikeBomType(placement) && !looksLikePlacement(placement)) {
-                    type = placement;
-                    placement = position; // Use Position as Placement (common pattern for Shell rows)
-                    if (BOM_DEBUG) {
-                        log.debug("[BOM-PROD] SHIFT: pos='{}' placement='{}' type='{}'", position, placement, type);
-                    }
-                }
-                
-                // Build full key using Position|Placement|NormalizedType
-                String fullKey = bomKey(position, placement, type);
-
-                // Extract Material Supplier (text before composition %)
-                String materialSupplier = "";
-                Matcher pct = TOKEN_HAS_PERCENT.matcher(txt);
-                if (pct.find()) {
-                    int pctStart = pct.start();
-                    // Find text between type end and % start
-                    int typeEndIdx = txt.toLowerCase().indexOf(type.toLowerCase()) + type.length();
-                    if (typeEndIdx < pctStart) {
-                        String supplierPart = txt.substring(typeEndIdx, pctStart).trim();
-                        // Clean up supplier - remove leading/trailing noise
-                        supplierPart = supplierPart.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
-                        if (!supplierPart.isBlank()) {
-                            materialSupplier = oneLine(supplierPart);
-                        }
-                    }
-                }
-
-                // Extract Composition
-                String comp = "";
-                if (pct.find(0)) {
-                    int pctStart = pct.start();
-                    Matcher w = BOM_WEIGHT_STOP.matcher(txt);
-                    int stop = txt.length();
-                    while (w.find()) {
-                        if (w.start() > pctStart) {
-                            stop = w.start();
-                            break;
-                        }
-                    }
-                    if (stop > pctStart) {
-                        comp = oneLine(txt.substring(pctStart, stop));
-                    }
-                }
-
-                ProdUnitsRow row = new ProdUnitsRow(type, comp, materialSupplier);
-                out.putIfAbsent(fullKey, row); // Keep first occurrence for each key
-                
+                sectionLines.add(txt);
                 if (BOM_DEBUG) {
-                    log.debug("[BOM-PROD] key='{}' type='{}' comp='{}' supplier='{}'", fullKey, type, comp, materialSupplier);
+                    log.debug("[BOM-PROD-COLLECT] line {}: '{}'", sectionLines.size(), txt.length() > 80 ? txt.substring(0, 80) + "..." : txt);
+                }
+            }
+        }
+        
+        if (BOM_DEBUG) {
+            log.debug("[BOM-PROD-COLLECT] total lines collected: {}", sectionLines.size());
+        }
+        
+        // Second pass: group lines by row (each row starts with BOM_ROW_START, continuation lines follow)
+        Map<String, ProdUnitsRow> out = new HashMap<>();
+        StringBuilder currentRowText = null;
+        String currentPosition = null, currentPlacement = null, currentType = null;
+        
+        for (int i = 0; i < sectionLines.size(); i++) {
+            String txt = sectionLines.get(i);
+            boolean isRowStart = BOM_ROW_START.matcher(txt).find();
+            
+            if (BOM_DEBUG) {
+                log.debug("[BOM-PROD-PARSE] line {}: isRowStart={} txt='{}'", i, isRowStart, txt.length() > 60 ? txt.substring(0, 60) + "..." : txt);
+            }
+            
+            if (isRowStart) {
+                // Process previous row if exists
+                if (currentRowText != null && currentType != null) {
+                    if (BOM_DEBUG) {
+                        log.debug("[BOM-PROD-PARSE] processing previous row, fullText length={}", currentRowText.length());
+                    }
+                    processProdUnitsRow(out, currentPosition, currentPlacement, currentType, currentRowText.toString());
+                }
+                
+                // Start new row
+                BomRowStart rs = parseBomRowStart(txt);
+                currentPosition = rs.position();
+                currentPlacement = rs.placement();
+                currentType = rs.type();
+                
+                // Fix: If placement looks like a Type, shift columns
+                if (looksLikeBomType(currentPlacement) && !looksLikePlacement(currentPlacement)) {
+                    currentType = currentPlacement;
+                    currentPlacement = currentPosition;
+                    if (BOM_DEBUG) {
+                        log.debug("[BOM-PROD] SHIFT: pos='{}' placement='{}' type='{}'", currentPosition, currentPlacement, currentType);
+                    }
+                }
+                
+                currentRowText = new StringBuilder(txt);
+            } else if (currentRowText != null) {
+                // Continuation line - append to current row
+                if (BOM_DEBUG) {
+                    log.debug("[BOM-PROD-PARSE] CONTINUATION appending to type='{}': '{}'", currentType, txt.length() > 50 ? txt.substring(0, 50) + "..." : txt);
+                }
+                currentRowText.append(" ").append(txt);
+            }
+        }
+        
+        // Process last row
+        if (currentRowText != null && currentType != null) {
+            processProdUnitsRow(out, currentPosition, currentPlacement, currentType, currentRowText.toString());
+        }
+
+        return out;
+    }
+    
+    private static void processProdUnitsRow(Map<String, ProdUnitsRow> out, String position, String placement, String type, String fullText) {
+        String fullKey = bomKey(position, placement, type);
+        
+        // Find text starting point (after type)
+        int typeEndIdx = fullText.toLowerCase().indexOf(type.toLowerCase()) + type.length();
+        
+        // Extract Material Supplier and Composition from full text (including continuations)
+        String materialSupplier = "";
+        String comp = "";
+        
+        // Find ALL % patterns and collect composition parts
+        // Composition may be split across lines with weight in between
+        // Example: "80% Revisco Viscose with 75.0 g/m2 ... circulose, 20% RECYCLED POLYESTER"
+        Matcher pct = TOKEN_HAS_PERCENT.matcher(fullText);
+        List<int[]> pctPositions = new ArrayList<>();
+        while (pct.find()) {
+            pctPositions.add(new int[]{pct.start(), pct.end()});
+        }
+        
+        if (!pctPositions.isEmpty()) {
+            int firstPctStart = pctPositions.get(0)[0];
+            
+            // Material Supplier: text between type and first %
+            // Also check for company name continuation (e.g., "TRADING CO., LTD." on next line)
+            if (typeEndIdx < firstPctStart) {
+                String supplierPart = fullText.substring(typeEndIdx, firstPctStart).trim();
+                supplierPart = supplierPart.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
+                if (!supplierPart.isBlank()) {
+                    materialSupplier = oneLine(supplierPart);
+                }
+            }
+            
+            // Look for company name continuation after the first % 
+            // Pattern: "TRADING CO., LTD." or "CO.,LTD" appearing before the next % or a known delimiter
+            if (!materialSupplier.isBlank() && pctPositions.size() > 1) {
+                int firstPctEnd = pctPositions.get(0)[1];
+                int secondPctStart = pctPositions.get(1)[0];
+                String betweenPcts = fullText.substring(firstPctEnd, secondPctStart);
+                
+                // Check for company name patterns
+                Pattern companyPattern = Pattern.compile("(?i)(TRADING\\s+CO\\.?,?\\s*LTD\\.?|CO\\.?,?\\s*LTD\\.?|INC\\.?|CORP\\.?|LLC|GMBH)");
+                Matcher cm = companyPattern.matcher(betweenPcts);
+                if (cm.find()) {
+                    // Find the full company name segment - from start of line/word to end of pattern
+                    int compStart = cm.start();
+                    // Look backwards for start of company name (uppercase words)
+                    while (compStart > 0 && (Character.isUpperCase(betweenPcts.charAt(compStart - 1)) || 
+                           Character.isWhitespace(betweenPcts.charAt(compStart - 1)) ||
+                           betweenPcts.charAt(compStart - 1) == '.')) {
+                        compStart--;
+                    }
+                    String companyCont = betweenPcts.substring(compStart, cm.end()).trim();
+                    companyCont = companyCont.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
+                    if (!companyCont.isBlank() && !materialSupplier.toLowerCase().contains(companyCont.toLowerCase())) {
+                        materialSupplier = materialSupplier + " " + companyCont;
+                        materialSupplier = oneLine(materialSupplier);
+                    }
+                }
+            }
+            
+            // Composition: collect ALL % patterns and surrounding context
+            // Strategy: for each %, extract text from % backwards to nearest delimiter and forwards to next delimiter
+            StringBuilder compBuilder = new StringBuilder();
+            for (int i = 0; i < pctPositions.size(); i++) {
+                int pctStart = pctPositions.get(i)[0];
+                int pctEnd = pctPositions.get(i)[1];
+                
+                // Find context: backwards to find the number (e.g., "80" before "%")
+                int contextStart = pctStart;
+                while (contextStart > 0 && (Character.isDigit(fullText.charAt(contextStart - 1)) || fullText.charAt(contextStart - 1) == '.')) {
+                    contextStart--;
+                }
+                // Skip leading whitespace
+                while (contextStart > 0 && Character.isWhitespace(fullText.charAt(contextStart - 1))) {
+                    contextStart--;
+                }
+                
+                // Find context: forwards to next % or end
+                int contextEnd = pctEnd;
+                int nextPctStart = (i + 1 < pctPositions.size()) ? pctPositions.get(i + 1)[0] : fullText.length();
+                
+                // Extend forward to include fibre name but stop at weight pattern or next %
+                Matcher wm = BOM_WEIGHT_STOP.matcher(fullText);
+                int weightStart = fullText.length();
+                while (wm.find()) {
+                    if (wm.start() > pctEnd) {
+                        weightStart = wm.start();
+                        break;
+                    }
+                }
+                
+                // Take text up to weight or next %, whichever is closer but after current pctEnd
+                contextEnd = Math.min(weightStart, nextPctStart);
+                if (contextEnd <= pctEnd) contextEnd = Math.min(weightStart, fullText.length());
+                
+                // Extract composition part
+                if (contextStart >= 0 && contextEnd > contextStart) {
+                    String part = fullText.substring(contextStart, contextEnd).trim();
+                    // Clean up - remove trailing punctuation and numbers
+                    part = part.replaceAll("[\\s,.:]+$", "");
+                    if (!part.isBlank()) {
+                        if (compBuilder.length() > 0) {
+                            // Check if needs comma separator
+                            String existing = compBuilder.toString();
+                            if (!existing.endsWith(",") && !existing.endsWith(", ") && !part.startsWith(",")) {
+                                compBuilder.append(", ");
+                            } else if (existing.endsWith(",")) {
+                                compBuilder.append(" ");
+                            }
+                        }
+                        compBuilder.append(part);
+                    }
+                }
+            }
+            comp = oneLine(compBuilder.toString());
+            
+        } else {
+            // Case 2: No % - supplier is between type and weight
+            Matcher w = BOM_WEIGHT_STOP.matcher(fullText);
+            int stop = fullText.length();
+            if (w.find() && w.start() > typeEndIdx) {
+                stop = w.start();
+            }
+            if (typeEndIdx < stop) {
+                String supplierPart = fullText.substring(typeEndIdx, stop).trim();
+                supplierPart = supplierPart.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
+                supplierPart = supplierPart.replaceAll("\\s+\\d+\\.?\\d*\\s*$", "");
+                if (!supplierPart.isBlank() && !supplierPart.matches("^\\d.*")) {
+                    materialSupplier = oneLine(supplierPart);
                 }
             }
         }
 
-        return out;
+        ProdUnitsRow row = new ProdUnitsRow(type, comp, materialSupplier);
+        out.putIfAbsent(fullKey, row);
+        
+        if (BOM_DEBUG) {
+            log.debug("[BOM-PROD] key='{}' type='{}' comp='{}' supplier='{}'", fullKey, type, comp, materialSupplier);
+        }
     }
 
     private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
@@ -2648,9 +2818,20 @@ public class TableParser {
                 type = "Thread Trim";
                 idx += 2;
             } else {
-                if (type.contains("Plain/Cambric") && parts[idx + 1].contains("/")) {
-                    type = type + " " + parts[idx + 1].trim();
-                    idx += 2;
+                // Handle Plain/Cambric/Voile - OCR may split as "Plain/Cambric" + "Voile" or "Plain/Cambric" + "/Voile"
+                if (type.contains("Plain/Cambric")) {
+                    String next = parts[idx + 1].trim();
+                    // Check if next part is "Voile" or "/Voile" or contains "Voile"
+                    if (next.equalsIgnoreCase("Voile") || next.equalsIgnoreCase("/Voile") || next.toLowerCase().contains("voile")) {
+                        // Join with "/" to form "Plain/Cambric/Voile"
+                        type = type + (next.startsWith("/") ? "" : "/") + next.replaceFirst("^/", "");
+                        idx += 2;
+                    } else if (next.contains("/")) {
+                        type = type + next;
+                        idx += 2;
+                    } else {
+                        idx += 1;
+                    }
                 } else {
                     idx += 1;
                 }
