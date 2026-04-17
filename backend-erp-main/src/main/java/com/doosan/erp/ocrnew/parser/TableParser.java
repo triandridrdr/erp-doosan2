@@ -34,6 +34,8 @@ public class TableParser {
     private static final Pattern BOM_ROW_START = Pattern.compile("^(Trim|Shell|Miscellaneous|Material)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern ONLY_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+$");
     private static final Pattern TOKEN_HAS_PERCENT = Pattern.compile("\\d{1,3}\\s*%");
+    private static final Pattern BOM_PROD_UNITS_START = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\s*Production\\s+Units\\s+and\\s+Processing\\s+Capabilities\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BOM_WEIGHT_STOP = Pattern.compile("\\b\\d+(?:\\.\\d+)?\\s*(g/m2|g/m|g/piece|gram/km)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CONSTRUCTION_HINT = Pattern.compile("\\b\\d{2,}x\\d{2,}\\b|\\b\\d{1,3}\\*\\d{1,3}\\b|\\b\\d{2,}\\/\\d{1,2}\\/\\d{1,2}\\b|\\bx\\d{1,3}\\/\\d{1,2}\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern UNIT_TOKEN = Pattern.compile("^(km|yd|m|g/m|g/m2|gram/km)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ALL_CAPS_SPILLOVER = Pattern.compile("^[A-Z0-9][A-Z0-9\\s|.\\-]{2,}$");
@@ -319,6 +321,49 @@ public class TableParser {
 
         if (mergedRows.size() <= 1) return List.of();
 
+        // Prefer Composition, Material Supplier from 'Production Units and Processing Capabilities' table where available.
+        // Match by Position|Placement|Type (normalized) to preserve row order from Materials and Trims table.
+        Map<String, ProdUnitsRow> prodUnitsData = extractBomProductionUnitsData(lines);
+        if (!prodUnitsData.isEmpty()) {
+            for (int r = 1; r < mergedRows.size(); r++) {
+                List<String> row = mergedRows.get(r);
+                if (row == null || row.size() < 6) continue;
+                
+                // Match by full key (Position|Placement|NormalizedType)
+                String fullKey = bomKey(row.get(0), row.get(1), row.get(2));
+                ProdUnitsRow prod = prodUnitsData.get(fullKey);
+                
+                // If no exact match, try short key for rows with empty/missing type
+                if (prod == null && (row.get(2) == null || row.get(2).isBlank())) {
+                    String keyShort = bomKeyShort(row.get(0), row.get(1));
+                    // Find first matching entry by short key
+                    for (Map.Entry<String, ProdUnitsRow> e : prodUnitsData.entrySet()) {
+                        if (e.getKey().startsWith(keyShort + "|")) {
+                            prod = e.getValue();
+                            break;
+                        }
+                    }
+                }
+                
+                if (prod == null) continue;
+                
+                // Override Composition if available and has %
+                if (prod.composition() != null && !prod.composition().isBlank() && TOKEN_HAS_PERCENT.matcher(prod.composition()).find()) {
+                    row.set(4, normalizeBomComposition(prod.composition()));
+                }
+                
+                // Override Material Supplier if available
+                if (prod.materialSupplier() != null && !prod.materialSupplier().isBlank()) {
+                    row.set(5, prod.materialSupplier());
+                }
+                
+                if (BOM_DEBUG) {
+                    log.debug("[BOM-OVERRIDE] row {} key='{}' -> comp='{}' supplier='{}'", 
+                            r, fullKey, row.get(4), row.get(5));
+                }
+            }
+        }
+
         List<OcrNewTableCellDto> cells = new ArrayList<>();
         for (int r = 0; r < mergedRows.size(); r++) {
             List<String> row = mergedRows.get(r);
@@ -346,6 +391,165 @@ public class TableParser {
                 .cells(cells)
                 .rows(mergedRows)
                 .build());
+
+        return out;
+    }
+
+    private static String bomKey(String position, String placement, String type) {
+        return (oneLine(position) + "|" + oneLine(placement) + "|" + normalizeType(type)).toLowerCase(Locale.ROOT);
+    }
+
+    private static String bomKeyShort(String position, String placement) {
+        return (oneLine(position) + "|" + oneLine(placement)).toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Normalize BOM Type for matching between Materials/Trims and Production Units tables.
+     * Handles common OCR variations like "Thread Trim" vs "Thread", etc.
+     */
+    private static String normalizeType(String type) {
+        if (type == null) return "";
+        String t = type.trim().toLowerCase(Locale.ROOT);
+        // Remove common suffixes/prefixes for matching
+        t = t.replaceAll("\\s+trim$", ""); // "thread trim" -> "thread"
+        t = t.replaceAll("\\s+elastic$", ""); // normalize elastic suffix
+        t = t.replaceAll("[/\\s]+", "/"); // normalize spaces and slashes
+        return t;
+    }
+
+    private record ProdUnitsRow(String type, String composition, String materialSupplier) {}
+
+    /**
+     * Check if a string looks like a typical BOM Placement value.
+     * Placement is usually: Shell, Lining, Main body, Pocket, All
+     */
+    private static boolean looksLikePlacement(String s) {
+        if (s == null || s.isBlank()) return false;
+        String low = s.trim().toLowerCase(Locale.ROOT);
+        return low.equals("shell") || low.equals("lining") || low.equals("pocket") || low.equals("all")
+                || low.contains("main body") || low.equals("mainbody") || low.equals("main");
+    }
+
+    /**
+     * Check if a string looks like a BOM Type value (not a Placement).
+     * Types often contain "/" or are specific material types.
+     */
+    private static boolean looksLikeBomType(String s) {
+        if (s == null || s.isBlank()) return false;
+        String low = s.trim().toLowerCase(Locale.ROOT);
+        // Contains "/" suggests compound types like Plain/Cambric/Voile
+        if (s.contains("/")) return true;
+        // Known type keywords
+        return low.equals("elastic") || low.equals("buckle") || low.equals("thread") || low.equals("tape")
+                || low.contains("plain") || low.contains("cambric") || low.contains("voile")
+                || low.contains("woven") || low.contains("knit") || low.contains("trim");
+    }
+
+    private static Map<String, ProdUnitsRow> extractBomProductionUnitsData(List<OcrNewLine> lines) {
+        if (lines == null || lines.isEmpty()) return Map.of();
+
+        Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
+        List<Integer> pages = byPage.keySet().stream().sorted().toList();
+
+        Map<String, ProdUnitsRow> out = new HashMap<>();
+        boolean inSection = false;
+        for (Integer page : pages) {
+            List<OcrNewLine> pageLines = byPage.get(page).stream()
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingInt(OcrNewLine::getTop))
+                    .toList();
+            for (OcrNewLine l : pageLines) {
+                String txt = oneLine(l.getText());
+                if (txt.isBlank()) continue;
+
+                if (!inSection) {
+                    if (BOM_PROD_UNITS_START.matcher(txt).find()) {
+                        inSection = true;
+                    }
+                    continue;
+                }
+
+                String low = txt.toLowerCase(Locale.ROOT);
+                if (low.contains("yarn source") || (BOM_SECTION_ANY.matcher(txt).find() && !BOM_PROD_UNITS_START.matcher(txt).find())) {
+                    inSection = false;
+                    break;
+                }
+                if (CREATED_LINE.matcher(txt).find()) {
+                    inSection = false;
+                    break;
+                }
+                if (low.contains("page") && txt.contains("/")) {
+                    inSection = false;
+                    break;
+                }
+                if (low.contains("position") && low.contains("placement") && low.contains("composition")) {
+                    continue;
+                }
+
+                if (!BOM_ROW_START.matcher(txt).find()) {
+                    continue;
+                }
+
+                BomRowStart rs = parseBomRowStart(txt);
+                String position = rs.position();
+                String placement = rs.placement();
+                String type = rs.type();
+                
+                // Fix: If placement looks like a Type (contains "/" or known type pattern), 
+                // it means Placement column was empty/merged. Shift: placement->type, position->placement
+                if (looksLikeBomType(placement) && !looksLikePlacement(placement)) {
+                    type = placement;
+                    placement = position; // Use Position as Placement (common pattern for Shell rows)
+                    if (BOM_DEBUG) {
+                        log.debug("[BOM-PROD] SHIFT: pos='{}' placement='{}' type='{}'", position, placement, type);
+                    }
+                }
+                
+                // Build full key using Position|Placement|NormalizedType
+                String fullKey = bomKey(position, placement, type);
+
+                // Extract Material Supplier (text before composition %)
+                String materialSupplier = "";
+                Matcher pct = TOKEN_HAS_PERCENT.matcher(txt);
+                if (pct.find()) {
+                    int pctStart = pct.start();
+                    // Find text between type end and % start
+                    int typeEndIdx = txt.toLowerCase().indexOf(type.toLowerCase()) + type.length();
+                    if (typeEndIdx < pctStart) {
+                        String supplierPart = txt.substring(typeEndIdx, pctStart).trim();
+                        // Clean up supplier - remove leading/trailing noise
+                        supplierPart = supplierPart.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
+                        if (!supplierPart.isBlank()) {
+                            materialSupplier = oneLine(supplierPart);
+                        }
+                    }
+                }
+
+                // Extract Composition
+                String comp = "";
+                if (pct.find(0)) {
+                    int pctStart = pct.start();
+                    Matcher w = BOM_WEIGHT_STOP.matcher(txt);
+                    int stop = txt.length();
+                    while (w.find()) {
+                        if (w.start() > pctStart) {
+                            stop = w.start();
+                            break;
+                        }
+                    }
+                    if (stop > pctStart) {
+                        comp = oneLine(txt.substring(pctStart, stop));
+                    }
+                }
+
+                ProdUnitsRow row = new ProdUnitsRow(type, comp, materialSupplier);
+                out.putIfAbsent(fullKey, row); // Keep first occurrence for each key
+                
+                if (BOM_DEBUG) {
+                    log.debug("[BOM-PROD] key='{}' type='{}' comp='{}' supplier='{}'", fullKey, type, comp, materialSupplier);
+                }
+            }
+        }
 
         return out;
     }
