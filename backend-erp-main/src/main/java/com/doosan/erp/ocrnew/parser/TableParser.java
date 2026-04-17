@@ -13,8 +13,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -36,6 +38,7 @@ public class TableParser {
     private static final Pattern UNIT_TOKEN = Pattern.compile("^(km|yd|m|g/m|g/m2|gram/km)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ALL_CAPS_SPILLOVER = Pattern.compile("^[A-Z0-9][A-Z0-9\\s|.\\-]{2,}$");
     private static final Pattern BOM_HEADER_REQUIRED = Pattern.compile("\\bDescription\\b.*\\bComposition\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BOM_ROW_REJECT = Pattern.compile("^(material\\s+product\\s+type\\b|requirement\\s+for\\b|valid\\s+for\\b|comment:|position\\s+placement\\s+type\\b|pm\\s+textile\\s+label\\b|textile\\s+label\\b)", Pattern.CASE_INSENSITIVE);
     private static final Pattern ID_LIKE_TOKEN = Pattern.compile("^(QW|QWO|TEL|THD|JY)[A-Z0-9\\-()]{2,}$", Pattern.CASE_INSENSITIVE);
     private static final Pattern MIXED_ALNUM_TOKEN = Pattern.compile("^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z0-9\\-()/.]+$");
     private static final Pattern SUPPLIER_STOPWORD = Pattern.compile("^(import|export|ltd|limited|co|company|trading|printing|dyeing|hangzhou|shao?xing|pt|indonesia)$", Pattern.CASE_INSENSITIVE);
@@ -368,6 +371,11 @@ public class TableParser {
             if (txt.isBlank()) continue;
             if (ONLY_PUNCT.matcher(txt).matches()) continue;
 
+            if (BOM_ROW_REJECT.matcher(txt).find()) {
+                if (BOM_DEBUG) log.debug("[BOM-ROW] SKIPPED (reject): {}", txt);
+                continue;
+            }
+
             String txtClean = txt.replace("|", " ").replaceAll("[\\p{Punct}]", " ");
             txtClean = oneLine(txtClean);
 
@@ -503,8 +511,17 @@ public class TableParser {
                     String cont = extractCompositionContinuationTokens(txtCleanKeepPercent);
                     cont = mergeSplitWords(cont);
                     if (!cont.isBlank()) {
-                        cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + " " + cont)));
-                        if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(4));
+                        String curComp = cur.get(4);
+                        String lowCurComp = curComp.toLowerCase(Locale.ROOT);
+                        String lowCont = cont.toLowerCase(Locale.ROOT);
+                        boolean curAlreadyPolyester = lowCurComp.contains("polyester");
+                        boolean contIsPolyesterFragment = lowCont.equals("yester") || lowCont.equals("polyester");
+                        if (!(curAlreadyPolyester && contIsPolyesterFragment)) {
+                            cur.set(4, normalizeBomComposition(oneLine(cur.get(4) + " " + cont)));
+                            if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre): += '{}' -> '{}'", cont, cur.get(4));
+                        } else {
+                            if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(fibre) SKIP dup: cur='{}' cont='{}'", curComp, cont);
+                        }
                     }
                 } else if (cells.description.isBlank() && TOKEN_HAS_PERCENT.matcher(txt).find()) {
                     // Only apply fallback if NO description was extracted from this line.
@@ -558,6 +575,23 @@ public class TableParser {
                         if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX so-pol row#{}: comp='{}'", ri, comp);
                     }
                 }
+            }
+        }
+
+        // Clean-up: Thread rows often have consumption/weight and supplier code text drifting into Description.
+        // The UI expects these descriptions to be empty.
+        for (int ri = 1; ri < rows.size(); ri++) {
+            List<String> r = rows.get(ri);
+            if (r == null || r.size() < 5) continue;
+            String typ = (r.get(2) == null ? "" : r.get(2)).toLowerCase(Locale.ROOT);
+            if (!typ.contains("thread")) continue;
+
+            String desc = r.get(3) == null ? "" : r.get(3);
+            String lowDesc = desc.toLowerCase(Locale.ROOT);
+            boolean hasConsumption = lowDesc.matches(".*\\b(km|gram/km|g/m|g/m2|perunit|g/piece)\\b.*");
+            boolean looksLikeSupplierOrId = lowDesc.matches("^pt\\b.*") || lowDesc.matches(".*\\bthd\\d+\\b.*");
+            if ((hasConsumption || looksLikeSupplierOrId) && !desc.isBlank()) {
+                r.set(3, "");
             }
         }
 
@@ -895,6 +929,18 @@ public class TableParser {
             desc = "";
         }
 
+        // Drop consumption/weight lines that were mistakenly assigned to Description.
+        // Example: '0.56 km 2.1 gram/km PT SAMJINB THD1' should not become a description.
+        if (!desc.isBlank()) {
+            String lowDesc = desc.toLowerCase(Locale.ROOT);
+            boolean startsWithNumber = lowDesc.matches("^\\d.*");
+            boolean hasUnit = lowDesc.matches(".*\\b(km|m|yd|perunit|pcs|piece)\\b.*");
+            boolean hasWeight = lowDesc.matches(".*\\b(g/m2|g/m|g/piece|gram/km|gram/m)\\b.*");
+            if (startsWithNumber && (hasUnit || hasWeight)) {
+                desc = "";
+            }
+        }
+
         if (BOM_DEBUG) {
             log.debug("[BOM] FINAL: pos='{}', typ='{}', desc='{}', comp='{}'", pos, typ, desc, comp);
         }
@@ -910,11 +956,12 @@ public class TableParser {
             return "";
         }
 
-        // Keep truncated fibre tokens so they can be completed by a continuation line.
-        // Example: first line has '100% SO POL' and next line has 'YESTER'.
-        String lowR = r.toLowerCase();
-        if (lowR.matches(".*\\b\\d{1,3}%\\s+so\\s+pol\\b.*")) {
-            return fixKnownBrokenWords(r);
+        // Normalize 'SO POL' polyester rows: the OCR often appends consumption/weight into the same cell.
+        // Example raw: '100% SO POL 0.87 m 15.0 g/m YESTER' -> '100% SO POLYESTER'
+        Matcher soPol = Pattern.compile("\\b(\\d{1,3})%\\s+so\\s+pol\\b", Pattern.CASE_INSENSITIVE).matcher(r);
+        if (soPol.find()) {
+            String pct = soPol.group(1);
+            return oneLine(pct + "% S0 POLYESTER");
         }
 
         String seg = extractCompositionSegments(r);
@@ -988,7 +1035,8 @@ public class TableParser {
 
         // Merge common OCR splits for polyester
         r = r.replaceAll("(?i)\\bpol\\s+yester\\b", "POLYESTER");
-        r = r.replaceAll("(?i)\\bso\\s+polyester\\b", "SO POLYESTER");
+        r = r.replaceAll("(?i)\\bso\\s+polyester\\b", "S0 POLYESTER");
+        r = r.replaceAll("(?i)\\bpolyester\\s+yester\\b", "POLYESTER");
 
         // If we already detected RECYCLED POLYESTER, drop erroneous OCR second-segment noise
         // like '20% Viscose with circulose' which should be '20% RECYCLED POLYESTER'.

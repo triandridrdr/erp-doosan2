@@ -274,10 +274,12 @@ public class OcrNewService {
             }
 
             List<OcrNewLine> allLines = new ArrayList<>();
+            List<OcrNewLine> rawLinesForTables = useHocr ? new ArrayList<>() : allLines;
             for (int i = 0; i < pageImages.size(); i++) {
                 if (useHocr) {
                     // Use hOCR extraction with enhanced fragment merging
                     allLines.addAll(ocrEngine.extractLinesWithHocr(pageImages.get(i), i));
+                    rawLinesForTables.addAll(ocrEngine.extractLinesFromImage(pageImages.get(i), i));
                 } else {
                     // Use standard word-level extraction
                     allLines.addAll(ocrEngine.extractLinesFromImage(pageImages.get(i), i));
@@ -307,7 +309,18 @@ public class OcrNewService {
 
             List<OcrNewKeyValuePairDto> pairs = keyValueParser.parseKeyValuePairs(allLines);
             Map<String, String> formFields = keyValueParser.toFieldMap(pairs);
-            List<OcrNewTableDto> tables = tableParser.parseTables(allLines);
+            List<OcrNewTableDto> tables;
+            if (useHocr) {
+                rawLinesForTables.sort(Comparator
+                        .comparingInt(OcrNewLine::getPage)
+                        .thenComparingInt(OcrNewLine::getTop)
+                        .thenComparingInt(OcrNewLine::getLeft));
+                List<OcrNewTableDto> rawTables = tableParser.parseTables(rawLinesForTables);
+                List<OcrNewTableDto> hocrTables = tableParser.parseTables(allLines);
+                tables = mergeBomTablesPreferHocrLongText(rawTables, hocrTables);
+            } else {
+                tables = tableParser.parseTables(allLines);
+            }
 
             List<Map<String, String>> salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdown(tables);
             if (salesOrderDetailSizeBreakdown.isEmpty()) {
@@ -407,26 +420,100 @@ public class OcrNewService {
         return t.substring(0, Math.max(0, maxLen)) + "...";
     }
 
+    private static String safe(String s) {
+        return s == null ? "" : s;
+    }
+
     private static String oneLine(String s) {
-        if (s == null) return "";
-        return s.replaceAll("\\s+", " ").trim();
+        return safe(s).replaceAll("\\s+", " ").trim();
+    }
+
+    private static float round1(float v) {
+        return Math.round(v * 10f) / 10f;
     }
 
     private static Float round1(Float v) {
         if (v == null) return null;
-        return Math.round(v * 10f) / 10f;
+        return round1(v.floatValue());
     }
 
     private void validateFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            throw new BusinessException(ErrorCode.OCR_FILE_EMPTY);
+            throw new BusinessException(ErrorCode.OCR_INVALID_FILE, "파일이 비어있습니다");
         }
-
         String contentType = file.getContentType();
         if (contentType == null || !SUPPORTED_CONTENT_TYPES.contains(contentType.toLowerCase(Locale.ROOT))) {
             throw new BusinessException(ErrorCode.OCR_INVALID_FILE,
                     "지원하는 파일 형식: PNG, JPG, JPEG, PDF");
         }
+    }
+
+    private static List<OcrNewTableDto> mergeBomTablesPreferHocrLongText(List<OcrNewTableDto> rawTables, List<OcrNewTableDto> hocrTables) {
+        if (hocrTables == null || hocrTables.isEmpty()) return rawTables == null ? List.of() : rawTables;
+
+        OcrNewTableDto rawBom = findBomTable(rawTables);
+        OcrNewTableDto hocrBom = findBomTable(hocrTables);
+        if (rawBom == null || hocrBom == null) return hocrTables;
+
+        List<List<String>> rawRows = rawBom.getRows();
+        List<List<String>> hocrRows = hocrBom.getRows();
+        if (rawRows == null || rawRows.isEmpty()) return hocrTables;
+
+        List<List<String>> mergedRows = new ArrayList<>();
+        for (int i = 0; i < rawRows.size(); i++) {
+            List<String> rr = rawRows.get(i);
+            if (rr == null) continue;
+            List<String> out = new ArrayList<>(rr);
+
+            if (hocrRows != null && i < hocrRows.size()) {
+                List<String> hr = hocrRows.get(i);
+                if (hr != null && hr.size() >= 6 && out.size() >= 6) {
+                    String hDesc = safe(hr.get(3)).trim();
+                    String hComp = safe(hr.get(4)).trim();
+
+                    // Prefer hOCR only when the text is clearly long/multi-line
+                    if (hDesc.length() >= 35) out.set(3, hDesc);
+                    if (hComp.length() >= 35) out.set(4, hComp);
+                }
+            }
+
+            mergedRows.add(out);
+        }
+
+        OcrNewTableDto mergedBom = OcrNewTableDto.builder()
+                .page(hocrBom.getPage())
+                .index(hocrBom.getIndex())
+                .rowCount(mergedRows.size())
+                .columnCount(hocrBom.getColumnCount())
+                .cells(hocrBom.getCells())
+                .rows(mergedRows)
+                .build();
+
+        List<OcrNewTableDto> outTables = new ArrayList<>();
+        for (OcrNewTableDto t : hocrTables) {
+            if (t == null) continue;
+            outTables.add(t == hocrBom ? mergedBom : t);
+        }
+        return outTables;
+    }
+
+    private static OcrNewTableDto findBomTable(List<OcrNewTableDto> tables) {
+        if (tables == null) return null;
+        for (OcrNewTableDto t : tables) {
+            if (t == null) continue;
+            List<List<String>> rows = t.getRows();
+            if (rows == null || rows.isEmpty()) continue;
+            List<String> header = rows.get(0);
+            if (header == null || header.size() < 6) continue;
+
+            String h0 = safe(header.get(0)).trim();
+            String h3 = safe(header.get(3)).trim();
+            String h4 = safe(header.get(4)).trim();
+            if ("Position".equalsIgnoreCase(h0) && "Description".equalsIgnoreCase(h3) && "Composition".equalsIgnoreCase(h4)) {
+                return t;
+            }
+        }
+        return null;
     }
 
     private boolean isPdf(MultipartFile file) {
