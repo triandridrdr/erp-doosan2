@@ -28,6 +28,8 @@ public class KeyValueParser {
     private static final Pattern PRODUCT_NAME_IN_VALUE = Pattern.compile("\\bProduct\\s+Name\\s+(.+)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern PRODUCT_TYPE_IN_VALUE = Pattern.compile("\\bProduct\\s+Type\\s+(.+)$", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern SUPPLIER_VALUE_WITH_CCG = Pattern.compile("^\\s*(.+?)\\s+Customs\\s+Customer\\s+Group\\s*[:：]\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE);
+
     public List<OcrNewKeyValuePairDto> parseKeyValuePairs(List<OcrNewLine> lines) {
         List<OcrNewKeyValuePairDto> out = new ArrayList<>();
         if (lines == null || lines.isEmpty()) return out;
@@ -36,6 +38,22 @@ public class KeyValueParser {
             OcrNewLine line = lines.get(i);
             String text = safe(line.getText());
             if (text.isBlank()) continue;
+
+            // Handle common table-like layouts: key on its own line (no colon), value on next line
+            if (isStandaloneSalesOrderHeaderKey(text)) {
+                String key = normalizeKey(text);
+                if ("Supplier Name".equals(key)) key = "Supplier";
+                String val = normalizeValue(findBelowValue(lines, i, line));
+                if (!key.isBlank() && !val.isBlank()) {
+                    out.add(OcrNewKeyValuePairDto.builder()
+                            .page(line.getPage())
+                            .key(key)
+                            .value(val)
+                            .confidence(line.getConfidence())
+                            .build());
+                    continue;
+                }
+            }
 
             Matcher m = COLON_KV.matcher(text);
             if (m.find()) {
@@ -150,6 +168,11 @@ public class KeyValueParser {
     private static void enrichSalesOrderHeader(Map<String, String> out, List<OcrNewKeyValuePairDto> pairs) {
         if (out == null || pairs == null || pairs.isEmpty()) return;
 
+        // Prefer best candidate for fields that often appear multiple times (pages repeat header)
+        preferBestValue(out, pairs, "Supplier");
+        preferBestValue(out, pairs, "Product Type");
+        preferBestValue(out, pairs, "Customs Customer Group");
+
         // 1) From "Order No" row, derive SO Number and Article/Product No (Product No)
         String orderValue = out.get("Order No");
         if (orderValue != null && !orderValue.isBlank()) {
@@ -243,6 +266,24 @@ public class KeyValueParser {
                 putIfAbsentNonBlank(out, "Supplier", supplierName);
             }
         }
+
+        // 5c) Some pages merge Supplier and CCG into one value; split if needed
+        String supplier = out.get("Supplier");
+        if (supplier != null && !supplier.isBlank()) {
+            Matcher m = SUPPLIER_VALUE_WITH_CCG.matcher(supplier);
+            if (m.find()) {
+                String supplierName = normalizeValue(m.group(1));
+                String ccgVal = normalizeValue(m.group(2));
+                if (supplierName != null && !supplierName.isBlank()) {
+                    out.put("Supplier", supplierName);
+                }
+                if (out.get("Customs Customer Group") == null || out.get("Customs Customer Group").isBlank()) {
+                    if (ccgVal != null && !ccgVal.isBlank()) {
+                        out.put("Customs Customer Group", ccgVal);
+                    }
+                }
+            }
+        }
         if (out.get("Season") == null || out.get("Season").isBlank()) {
             // Check for raw key without canonicalization
             for (OcrNewKeyValuePairDto p : pairs) {
@@ -298,6 +339,102 @@ public class KeyValueParser {
         String v = normalizeValue(value);
         if (v == null || v.isBlank()) return;
         out.put(key, v);
+    }
+
+    private static void preferBestValue(Map<String, String> out, List<OcrNewKeyValuePairDto> pairs, String key) {
+        if (out == null || pairs == null || key == null) return;
+        String current = out.get(key);
+
+        String best = current;
+        for (OcrNewKeyValuePairDto p : pairs) {
+            if (p == null) continue;
+            if (!key.equals(p.getKey())) continue;
+            String cand = normalizeValue(p.getValue());
+            if (cand == null || cand.isBlank()) continue;
+            if (best == null || best.isBlank()) {
+                best = cand;
+                continue;
+            }
+
+            // Prefer values that look more complete:
+            // - longer string
+            // - contains punctuation typical for company names
+            // - contains markers like 'Customs Customer Group:' (we will split later)
+            boolean candBetter = false;
+            if (cand.length() > best.length() + 3) candBetter = true;
+            if (!candBetter && best.length() <= 8 && cand.length() > best.length()) candBetter = true;
+            if (!candBetter && cand.contains("&") && !best.contains("&")) candBetter = true;
+            if (!candBetter && cand.toLowerCase(Locale.ROOT).contains("trading") && !best.toLowerCase(Locale.ROOT).contains("trading")) candBetter = true;
+            if (!candBetter && cand.toLowerCase(Locale.ROOT).contains("customs customer group") && !best.toLowerCase(Locale.ROOT).contains("customs customer group")) candBetter = true;
+
+            if (candBetter) best = cand;
+        }
+
+        if (best != null && !best.isBlank()) {
+            out.put(key, best);
+        }
+    }
+
+    private static boolean isStandaloneSalesOrderHeaderKey(String raw) {
+        String k = safe(raw).replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+        if (k.isBlank()) return false;
+        return k.equals("supplier name") ||
+                k.equals("product type") ||
+                k.equals("customs customer group") ||
+                k.equals("type of construction") ||
+                k.equals("product name") ||
+                k.equals("season") ||
+                k.equals("supplier code") ||
+                k.equals("order no") ||
+                k.equals("date of order") ||
+                k.equals("product no");
+    }
+
+    private static String findBelowValue(List<OcrNewLine> lines, int keyIdx, OcrNewLine keyLine) {
+        if (lines == null || keyLine == null) return "";
+        int page = keyLine.getPage();
+        int keyBottom = keyLine.getBottom();
+        int keyLeft = keyLine.getLeft();
+        int keyTop = keyLine.getTop();
+        int keyRight = keyLine.getRight();
+
+        StringBuilder sb = new StringBuilder();
+        Integer firstLeft = null;
+
+        for (int j = keyIdx + 1; j < lines.size(); j++) {
+            OcrNewLine v = lines.get(j);
+            if (v == null) continue;
+            if (v.getPage() != page) break;
+
+            boolean sameRow = Math.abs(v.getTop() - keyTop) <= 8 || Math.abs(v.getBottom() - keyBottom) <= 8;
+            boolean rightOfKeySameRow = sameRow && v.getLeft() > keyRight + 10;
+            if (!rightOfKeySameRow && v.getTop() <= keyBottom + 2) continue;
+
+            // Stop searching if we've moved too far down
+            if (v.getTop() > keyBottom + 260) break;
+
+            String vt = safe(v.getText()).trim();
+            if (vt.isBlank()) continue;
+            // Stop if we hit another known key label
+            if (isStandaloneSalesOrderHeaderKey(vt)) break;
+            if (COLON_KEY_ONLY.matcher(vt).find()) break;
+            if (vt.length() > 520) continue;
+
+            // Prefer value lines that are aligned to the right (table value column)
+            if (!rightOfKeySameRow && v.getLeft() + 10 < keyLeft) continue;
+
+            if (firstLeft == null) firstLeft = v.getLeft();
+            // If subsequent line is far away horizontally, likely a new column
+            if (sb.length() > 0 && Math.abs(v.getLeft() - firstLeft) > 80) break;
+
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(vt);
+
+            // Keep it bounded; Product Type can be long but not infinite
+            if (sb.length() > 1200) break;
+        }
+
+        return sb.toString().trim();
     }
 
     private static String firstToken(String s) {
