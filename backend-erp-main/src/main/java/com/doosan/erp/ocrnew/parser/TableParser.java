@@ -1600,6 +1600,29 @@ public class TableParser {
         // Composition boundary - 50px before Composition center
         int compositionMinX = centers.xComposition > 0 ? centers.xComposition - 80 : 1200;
         
+        // Detect if this is a fabric row based on accumulated Type or fabric code in Description
+        String currentType = type.toString().toLowerCase();
+        String currentDesc = description.toString();
+        
+        // Fabric code pattern: JY, ZCX, etc followed by digits (no word boundary, bisa langsung)
+        boolean hasFabricCode = currentDesc.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
+        
+        // Fabric type keywords in Type field
+        boolean hasFabricType = currentType.contains("plain") || currentType.contains("cambric") || 
+                                currentType.contains("voile") || currentType.contains("knit") || 
+                                currentType.contains("woven") || currentType.contains("jersey") ||
+                                currentType.contains("fleece") || currentType.contains("rib") ||
+                                currentType.contains("interlock") || currentType.contains("pique");
+        
+        boolean isFabricRow = hasFabricCode || hasFabricType;
+        
+        // For fabric rows, extend Description zone to Material Supplier boundary
+        int descriptionBoundary = isFabricRow ? materialSupplierMaxX : compositionMinX;
+        if (isFabricRow && BOM_DEBUG) {
+            log.debug("[BOM] FABRIC ROW detected (code={}, type='{}', desc='{}'), extending Description zone to materialSupplierMaxX={}", 
+                      hasFabricCode, currentType, currentDesc.length() > 0 ? currentDesc.substring(0, Math.min(50, currentDesc.length())) : "(empty)", materialSupplierMaxX);
+        }
+        
         for (OcrNewWord w : line.getWords()) {
             String t = oneLine(w.getText());
             if (t.isBlank()) continue;
@@ -1608,16 +1631,6 @@ public class TableParser {
             // Skip words that are beyond our tracked columns (Consumption, Weight, Supplier at x > 1600)
             if (cx > materialSupplierMaxX) {
                 if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} SKIPPED (> materialSupplierMaxX={})", t, cx, materialSupplierMaxX);
-                continue;
-            }
-
-            // Percent-bearing tokens (e.g. '100%') are composition by definition.
-            // Some PDFs shift these tokens left so the nearest-column heuristic misclassifies them as Position/Description,
-            // which can incorrectly start a new row and drop composition for the real row.
-            if (TOKEN_HAS_PERCENT.matcher(t).find()) {
-                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} -> composition(%-force)", t, cx);
-                if (composition.length() > 0) composition.append(' ');
-                composition.append(t);
                 continue;
             }
 
@@ -1634,50 +1647,86 @@ public class TableParser {
             // Only use this for words in the composition zone, not for description
             boolean hasPercentSign = TOKEN_HAS_PERCENT.matcher(t).find();
 
-            StringBuilder target;
-            String targetName;
-            if (col == 0) { target = position; targetName = "position"; }
-            else if (col == 1) { target = placement; targetName = "placement"; }
-            else if (col == 2) { target = type; targetName = "type"; }
-            else if (col == 3) {
-                // Description column - verify word is not past the Appearance column boundary
-                if (cx > descriptionMaxX) {
-                    // Word is past Description boundary - skip it (Appearance column)
-                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col=3 SKIPPED (cx > descMaxX={})", t, cx, descriptionMaxX);
-                    continue;
-                }
-                // Stay in description even if it contains fiber words (they're part of fabric code)
-                target = description;
-                targetName = "description";
+            // Assign words to columns based on coordinates
+            // For fabric rows, Description zone extends to Material Supplier boundary
+            
+            if (col == 0) { 
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> position", t, cx, col);
+                if (position.length() > 0) position.append(' ');
+                position.append(t);
             }
-            else if (col == 4) {
-                // Material Appearance column - skip (don't add to any field)
-                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col=4 SKIPPED (Appearance)", t, cx);
-                continue;
+            else if (col == 1) { 
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> placement", t, cx, col);
+                if (placement.length() > 0) placement.append(' ');
+                placement.append(t);
+            }
+            else if (col == 2) {
+                // Type column - ONLY goes to Type field, NEVER to Description
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> type", t, cx, col);
+                if (type.length() > 0) type.append(' ');
+                type.append(t);
+            }
+            else if (col == 3 || col == 4) {
+                // Description/Appearance columns
+                if (cx < compositionMinX) {
+                    // Before composition boundary - goes to Description only
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description", t, cx, col);
+                    if (description.length() > 0) description.append(' ');
+                    description.append(t);
+                } else if (cx < descriptionBoundary) {
+                    // In composition zone but before descriptionBoundary (fabric row extended zone)
+                    // DUAL-ASSIGN: goes to BOTH Description AND Composition
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC DUAL)", t, cx, col);
+                    if (description.length() > 0) description.append(' ');
+                    description.append(t);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                } else {
+                    // Past descriptionBoundary - goes to Composition only
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> composition", t, cx, col);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                }
             }
             else if (col == 5) {
                 // Composition column
-                target = composition;
-                targetName = "composition";
+                if (isFabricRow && cx < descriptionBoundary) {
+                    // For fabric rows, DUAL-ASSIGN composition words
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC col5)", t, cx, col);
+                    if (description.length() > 0) description.append(' ');
+                    description.append(t);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                } else {
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> composition", t, cx, col);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                }
             }
             else if (cx >= centers.xMaterialSupplier) {
-                target = materialSupplier;
-                targetName = "materialSupplier";
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialSupplier", t, cx, col);
+                if (materialSupplier.length() > 0) materialSupplier.append(' ');
+                materialSupplier.append(t);
             }
             else if (cx >= compositionMinX && hasPercentSign) {
                 // Word is past composition boundary AND contains % - likely composition data
-                target = composition;
-                targetName = "composition(fallback)";
+                if (isFabricRow && cx < descriptionBoundary) {
+                    // For fabric rows, DUAL-ASSIGN
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC %fallback)", t, cx, col);
+                    if (description.length() > 0) description.append(' ');
+                    description.append(t);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                } else {
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> composition(fallback)", t, cx, col);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                }
             }
             else {
                 // Fallback - skip unknown
                 if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} SKIPPED (unknown)", t, cx, col);
-                continue;
             }
-
-            if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> {}", t, cx, col, targetName);
-            if (target.length() > 0) target.append(' ');
-            target.append(t);
         }
 
         String pos = oneLine(position.toString());
