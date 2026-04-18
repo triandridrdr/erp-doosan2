@@ -835,7 +835,23 @@ public class TableParser {
                 continue;
             }
 
-            BomLineCells cells = extractBomLineCells(l, centers);
+            // Detect fabric row from accumulated row context + current line text
+            // This allows continuation lines to be correctly classified as fabric row
+            boolean isFabricRowHint = false;
+            if (cur != null && cur.size() >= 4) {
+                String accType = cur.get(2) == null ? "" : cur.get(2).toLowerCase(Locale.ROOT);
+                String accDesc = cur.get(3) == null ? "" : cur.get(3);
+                boolean accHasFabricCode = accDesc.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
+                boolean accHasFabricType = accType.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
+                isFabricRowHint = accHasFabricCode || accHasFabricType;
+            }
+            if (!isFabricRowHint) {
+                // Check current line for fabric indicators (row start)
+                String lowLine = txt.toLowerCase(Locale.ROOT);
+                isFabricRowHint = txt.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*")
+                        || lowLine.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
+            }
+            BomLineCells cells = extractBomLineCells(l, centers, isFabricRowHint);
             String wholeLine = oneLine(l.getText());
             String compFromWhole = "";
             if (TOKEN_HAS_PERCENT.matcher(wholeLine).find()) {
@@ -947,7 +963,10 @@ public class TableParser {
                             compFromLine);
                 }
 
-                if (!consumedAsComposition && !cells.description.isBlank()) {
+                // For fabric rows, always append cells.description (even if line consumed as composition)
+                // Non-fabric rows: only append when not consumed as composition to avoid duplication
+                boolean shouldAppendDesc = !cells.description.isBlank() && (isFabricRowHint || !consumedAsComposition);
+                if (shouldAppendDesc) {
                     // Apply mergeSplitWords to fix broken words when appending description continuation
                     String oldDesc = cur.get(3);
                     String joined = mergeSplitWords(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.description));
@@ -959,7 +978,7 @@ public class TableParser {
                         joined = "hanger loop";
                     }
                     cur.set(3, joined);
-                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(3));
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}' (fabric={})", oldDesc, cells.description, cur.get(3), isFabricRowHint);
                 }
 
                 if (!consumedAsComposition && !cells.composition.isBlank()) {
@@ -1525,6 +1544,10 @@ public class TableParser {
     }
 
     private static BomLineCells extractBomLineCells(OcrNewLine line, BomColumnCenters centers) {
+        return extractBomLineCells(line, centers, false);
+    }
+
+    private static BomLineCells extractBomLineCells(OcrNewLine line, BomColumnCenters centers, boolean isFabricRowHint) {
         if (line == null) {
             return new BomLineCells("", "", "", "", "", "");
         }
@@ -1600,27 +1623,20 @@ public class TableParser {
         // Composition boundary - 50px before Composition center
         int compositionMinX = centers.xComposition > 0 ? centers.xComposition - 80 : 1200;
         
-        // Detect if this is a fabric row based on accumulated Type or fabric code in Description
-        String currentType = type.toString().toLowerCase();
-        String currentDesc = description.toString();
+        // Detect if this is a fabric row - check caller hint first, then line text itself
+        String lowerLineText = lineText.toLowerCase();
+        boolean lineHasFabricCode = lineText.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
+        boolean lineHasFabricType = lowerLineText.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
+        boolean isFabricRow = isFabricRowHint || lineHasFabricCode || lineHasFabricType;
         
-        // Fabric code pattern: JY, ZCX, etc followed by digits (no word boundary, bisa langsung)
-        boolean hasFabricCode = currentDesc.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
-        
-        // Fabric type keywords in Type field
-        boolean hasFabricType = currentType.contains("plain") || currentType.contains("cambric") || 
-                                currentType.contains("voile") || currentType.contains("knit") || 
-                                currentType.contains("woven") || currentType.contains("jersey") ||
-                                currentType.contains("fleece") || currentType.contains("rib") ||
-                                currentType.contains("interlock") || currentType.contains("pique");
-        
-        boolean isFabricRow = hasFabricCode || hasFabricType;
-        
-        // For fabric rows, extend Description zone to Material Supplier boundary
-        int descriptionBoundary = isFabricRow ? materialSupplierMaxX : compositionMinX;
+        // For fabric rows, extend Description zone to just before Material Supplier column
+        // This allows composition/appearance text to flow into Description for the full sentence,
+        // but stops before supplier names to prevent leakage.
+        int fabricMaxX = (centers.xMaterialSupplier > 0) ? (centers.xMaterialSupplier - 50) : materialSupplierMaxX;
+        int descriptionBoundary = isFabricRow ? fabricMaxX : compositionMinX;
         if (isFabricRow && BOM_DEBUG) {
-            log.debug("[BOM] FABRIC ROW detected (code={}, type='{}', desc='{}'), extending Description zone to materialSupplierMaxX={}", 
-                      hasFabricCode, currentType, currentDesc.length() > 0 ? currentDesc.substring(0, Math.min(50, currentDesc.length())) : "(empty)", materialSupplierMaxX);
+            log.debug("[BOM] FABRIC ROW detected (hint={}, lineCode={}, lineType={}), extending Description zone to {}", 
+                      isFabricRowHint, lineHasFabricCode, lineHasFabricType, descriptionBoundary);
         }
         
         for (OcrNewWord w : line.getWords()) {
@@ -1689,8 +1705,12 @@ public class TableParser {
                 }
             }
             else if (col == 5) {
-                // Composition column
-                if (isFabricRow && cx < descriptionBoundary) {
+                // Composition column - but check if word is actually in MaterialSupplier zone
+                if (centers.xMaterialSupplier > 0 && cx >= centers.xMaterialSupplier) {
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialSupplier (from col5 guard)", t, cx, col);
+                    if (materialSupplier.length() > 0) materialSupplier.append(' ');
+                    materialSupplier.append(t);
+                } else if (isFabricRow && cx < descriptionBoundary) {
                     // For fabric rows, DUAL-ASSIGN composition words
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC col5)", t, cx, col);
                     if (description.length() > 0) description.append(' ');
@@ -1703,7 +1723,7 @@ public class TableParser {
                     composition.append(t);
                 }
             }
-            else if (cx >= centers.xMaterialSupplier) {
+            else if (centers.xMaterialSupplier > 0 && cx >= centers.xMaterialSupplier) {
                 if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialSupplier", t, cx, col);
                 if (materialSupplier.length() > 0) materialSupplier.append(' ');
                 materialSupplier.append(t);
