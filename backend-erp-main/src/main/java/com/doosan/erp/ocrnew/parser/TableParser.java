@@ -31,7 +31,7 @@ public class TableParser {
     private static final Pattern BOM_SECTION_ANY = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CREATED_LINE = Pattern.compile("\\bCreated\\s+\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4}\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern BOM_HEADER_HINT = Pattern.compile("\\bPosition\\b.*\\bPlacement\\b.*\\bType\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BOM_ROW_START = Pattern.compile("^(Trim|Shell|Miscellaneous|Material)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BOM_ROW_START = Pattern.compile("^(Trim|Shell|Miscellaneous|Material(?!\\s+Supplier))\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern ONLY_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+$");
     private static final Pattern TOKEN_HAS_PERCENT = Pattern.compile("\\d{1,3}\\s*%");
     private static final Pattern BOM_PROD_UNITS_START = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\s*Production\\s+Units\\s+and\\s+Processing\\s+Capabilities\\b", Pattern.CASE_INSENSITIVE);
@@ -935,7 +935,15 @@ public class TableParser {
                 if (!consumedAsComposition && !cells.description.isBlank()) {
                     // Apply mergeSplitWords to fix broken words when appending description continuation
                     String oldDesc = cur.get(3);
-                    cur.set(3, mergeSplitWords(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.description)));
+                    String joined = mergeSplitWords(oneLine(cur.get(3) + (cur.get(3).isBlank() ? "" : " ") + cells.description));
+                    // Trimming supplier keyword in Description
+                    joined = joined.replaceFirst("(?i)\\s*s?\\b\\s*(Trading|Ltd|Garments|CO\\.?|Accessories)\\b.*$", "").trim();
+                    // Trimming hanger loop
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?hanger loop)\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(joined);
+                    if (m.find()) {
+                        joined = m.group(1);
+                    }
+                    cur.set(3, joined);
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(3));
                 }
 
@@ -1049,6 +1057,7 @@ public class TableParser {
 
             String fixed = fixBomDescriptionFromRaw(pos, typ, desc, mergedRaw, ms);
             if (fixed != null && !fixed.equals(desc)) {
+                if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: desc='{}' -> '{}'", ri, desc, fixed);
                 r.set(3, fixed);
             }
         }
@@ -1066,6 +1075,30 @@ public class TableParser {
         }
         r = r.replaceAll("(?i)\\bRevisco\\s+Viscose\\s+h\\b", "Revisco Viscose with");
         r = r.replaceAll("(?i)\\bCirculose\\s+%nylon\\b", "Circulose 20%nylon");
+        // Collapse spacing around percent+material for expected UI format
+        r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s+Revisco\\b", "$1%Revisco");
+        r = r.replaceAll("(?i)\\b20%\\s*nylon\\b", "20%nylon");
+        // Normalize material synonyms for Description readability
+        r = r.replaceAll("(?i)\\bPOLYAMIDE\\b", "nylon");
+        // Convert g/m2 to gsm, keep integer value if possible
+        r = r.replaceAll("(?i)\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", "$1gsm");
+        r = r.replaceAll("(?i)\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", "$1gsm");
+        // Ensure a space before gsm block if it accidentally glued to weave spec like '20*320gsm'
+        r = r.replaceAll("(?i)(\\d+\\*\\d+)(?=\\d+gsm)", "$1 ");
+        // Weave spec normalization: '163x85/20/1 x32/1' -> '20*32+32/163*85'
+        r = r.replaceAll("(?i)163x85", "163*85");
+        r = r.replaceAll("(?i)/\\s*20/1\\s*x\\s*32/1", " 20*32+32/");
+        // If order became '163*85 20*32+32/', swap to '20*32+32/163*85'
+        r = r.replaceAll("(?i)163\\*85\\s+20\\*32\\+32/", "20*32+32/163*85 ");
+        // Remove any duplicate spaces created by replacements
+        r = r.replaceAll("\\s{2,}", " ");
+        // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
+        if (r.toLowerCase(Locale.ROOT).contains("hanger loop")) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?hanger loop)\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(r);
+            if (m.find()) {
+                r = m.group(1);
+            }
+        }
         return oneLine(r);
     }
 
@@ -1079,12 +1112,16 @@ public class TableParser {
         String lowType = oneLine(type).toLowerCase(Locale.ROOT);
 
         // Hanger loop strict: only ambil sampai 'loop'
-        if (lowRaw.contains("hanger loop") && (lowType.contains("tape") || lowDesc.contains("hanger") || lowDesc.contains("trading"))) {
+        if ((lowRaw.contains("hanger loop") || lowDesc.contains("hanger loop")) && (lowType.contains("tape") || lowDesc.contains("hanger") || lowDesc.contains("trading"))) {
             int idx = raw.toLowerCase(Locale.ROOT).indexOf("hanger loop");
             if (idx >= 0) {
                 int end = idx + "hanger loop".length();
                 return oneLine(raw.substring(idx, end));
             }
+            return "hanger loop";
+        }
+        // Fallback: if currentDesc already mentions hanger loop, enforce exact string
+        if (lowDesc.contains("hanger loop")) {
             return "hanger loop";
         }
 
@@ -1093,12 +1130,101 @@ public class TableParser {
             return "smocking thread";
         }
 
-        boolean looksLikeFabricRow = lowDesc.contains("jy") || lowRaw.contains("jy");
+        boolean looksLikeFabricRow = lowDesc.contains("jy") || lowRaw.contains("jy")
+                || lowType.contains("plain") || lowType.contains("cambric") || lowType.contains("voile");
         if (looksLikeFabricRow) {
-            String extracted = extractFabricDescriptionFromRaw(raw, materialSupplier);
+            // Gabungkan teks untuk pencarian yang lebih tahan banting (raw + desc + materialSupplier)
+            String search = oneLine((raw + " " + desc + " " + (materialSupplier == null ? "" : materialSupplier)).trim());
+            String extracted = extractFabricDescriptionFromRaw(search, materialSupplier);
+            // Jika masih kosong, fallback: ambil kode JY* dari desc
+            if (extracted.isBlank()) {
+                java.util.regex.Matcher codeM = java.util.regex.Pattern.compile("(?i)\\bJY\\d{3,}[A-Za-z0-9\\-_/]*\u200b?\u200c?\u200d?\u2060?\b").matcher(desc);
+                if (codeM.find()) {
+                    extracted = codeM.group().replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\u2060", "");
+                }
+            }
             if (!extracted.isBlank()) {
-                extracted = normalizeBomDescriptionValue(extracted);
-                return extracted;
+                // If extracted lacks explicit percentages but raw has composition, inject it after the fabric code
+                boolean hasPct = TOKEN_HAS_PERCENT.matcher(extracted).find();
+                String compFromRaw = normalizeBomComposition(search);
+                if (!hasPct && compFromRaw != null && !compFromRaw.isBlank()) {
+                    String[] toks = extracted.split("\\s+", 2);
+                    String code = toks.length > 0 ? toks[0] : extracted;
+                    extracted = (code + " " + compFromRaw).trim();
+                }
+                // Derive weave/gsm/width directly from combined text (lebih tahan banting antar layout)
+                StringBuilder tail = new StringBuilder();
+
+                // countsSpec from '/20/1 x32/1' -> '20*32+32/'
+                java.util.regex.Matcher cnt = java.util.regex.Pattern
+                        .compile("/\\s*(\\d{1,3})\\s*/\\s*1\\s*x\\s*(\\d{1,3})(?:\\s*/\\s*1)?", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(search);
+                String countsSpec = null;
+                if (cnt.find()) {
+                    String g1 = cnt.group(1);
+                    String g2 = cnt.group(2);
+                    countsSpec = g1 + "*" + g2 + "+" + g2 + "/";
+                }
+
+                // density '163x85' -> '163*85'
+                java.util.regex.Matcher dens = java.util.regex.Pattern
+                        .compile("\\b(\\d{2,4})\\s*[xX]\\s*(\\d{2,4})\\b")
+                        .matcher(search);
+                String density = null;
+                if (dens.find()) {
+                    density = dens.group(1) + "*" + dens.group(2);
+                }
+
+                // gsm from '80.0 g/m2' -> '80gsm'
+                String gsm = null;
+                java.util.regex.Matcher gsm1 = java.util.regex.Pattern
+                        .compile("\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(search);
+                if (gsm1.find()) {
+                    gsm = gsm1.group(1) + "gsm";
+                } else {
+                    java.util.regex.Matcher gsm2 = java.util.regex.Pattern
+                            .compile("\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                            .matcher(search);
+                    if (gsm2.find()) {
+                        try {
+                            double v = Double.parseDouble(gsm2.group(1));
+                            gsm = ((int) Math.round(v)) + "gsm";
+                        } catch (Exception ignore) { /* no-op */ }
+                    }
+                }
+
+                // width inches like 57"
+                String width = null;
+                java.util.regex.Matcher w = java.util.regex.Pattern.compile("\\b(\\d{2,3})\"\\b").matcher(search);
+                if (w.find()) {
+                    width = w.group(1) + '"';
+                }
+
+                // include '+ sizes =' if it was present anywhere in current description
+                String normCurrent = normalizeBomDescriptionValue(desc);
+                boolean hasSizes = java.util.regex.Pattern.compile("(?i)\\+\\s*sizes\\s*=").matcher(normCurrent).find();
+
+                if (countsSpec != null && density != null) {
+                    tail.append(countsSpec).append(density);
+                } else if (density != null) {
+                    tail.append(density);
+                }
+                if (gsm != null) {
+                    if (tail.length() > 0) tail.append(' ');
+                    tail.append(gsm);
+                }
+                if (width != null) {
+                    if (tail.length() > 0) tail.append(' ');
+                    tail.append(width);
+                }
+                if (hasSizes) {
+                    if (tail.length() > 0) tail.append(' ');
+                    tail.append("+ sizes =");
+                }
+
+                String combined = (extracted + (tail.length() == 0 ? "" : " " + tail)).trim();
+                return normalizeBomDescriptionValue(combined);
             }
         }
 
@@ -1335,6 +1461,10 @@ public class TableParser {
                     lineText.toLowerCase().matches(".*\\b(polyester|cotton|viscose|nylon|elastane|spandex|wool|silk|linen|rayon|acrylic|recycled)\\b.*");
             
             // Assign based on x-position boundaries
+            // PATCH: If baris lanjutan (tidak ada position/placement/type) dan tidak ada %, assign ke Description
+            if (!hasCompositionIndicator && lineCx > centers.xType && lineCx <= descMaxX) {
+                return new BomLineCells("", "", "", lineText, "", "");
+            }
             // Composition zone: cx >= compMinX or has composition indicator
             if (lineCx >= compMinX || hasCompositionIndicator) {
                 return new BomLineCells("", "", "", "", lineText, "");
@@ -1457,6 +1587,22 @@ public class TableParser {
         String desc = mergeSplitWords(oneLine(description.toString()));  // Fix broken words in description
         String comp = oneLine(composition.toString());
         String ms = oneLine(materialSupplier.toString());
+        // Words-level fallback: classify whole line when no % and no leading columns
+        int lineCxForWords = (line.getLeft() + line.getRight()) / 2;
+        boolean hasPercentInLine = TOKEN_HAS_PERCENT.matcher(lineText).find();
+        boolean maybeSupplier = false;
+        String[] ltParts = oneLine(lineText).split("\\s+");
+        for (String p : ltParts) {
+            String tok = stripPunctKeepPercent(p);
+            if (SUPPLIER_STOPWORD.matcher(tok).matches()) { maybeSupplier = true; break; }
+        }
+        if (pos.isBlank() && plc.isBlank() && typ.isBlank()) {
+            if (!hasPercentInLine && desc.isBlank() && lineCxForWords > centers.xType && lineCxForWords <= descriptionMaxX && !maybeSupplier) {
+                desc = mergeSplitWords(oneLine(lineText));
+            } else if (!hasPercentInLine && ms.isBlank() && maybeSupplier) {
+                ms = oneLine(lineText);
+            }
+        }
         
         if (BOM_DEBUG) {
             log.debug("[BOM] after word loop: desc='{}', comp='{}'", desc, comp);

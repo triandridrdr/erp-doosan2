@@ -585,6 +585,7 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -649,6 +650,17 @@ export function OcrNewPage() {
                             setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
                           }}
                         />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setBomDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
