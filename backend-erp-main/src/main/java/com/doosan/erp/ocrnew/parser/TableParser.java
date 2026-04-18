@@ -1134,6 +1134,8 @@ public class TableParser {
         r = r.replaceAll("(?i)\\b80%\\s*Revisco\\s+Viscose\\s+with\\s+circulose\\b", "circulose 80/20%Revisco Viscose with circulose");
         // Normalize material synonyms for Description readability
         r = r.replaceAll("(?i)\\bPOLYAMIDE\\b", "nylon");
+        // Remove invisible zero-width characters that may break regex boundaries
+        r = r.replaceAll("[\u200B\u200C\u200D\u2060]", "");
         // Convert g/m2 to gsm, keep integer value if possible
         r = r.replaceAll("(?i)\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", "$1g/sm");
         r = r.replaceAll("(?i)\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", "$1g/sm");
@@ -1141,19 +1143,35 @@ public class TableParser {
         r = r.replaceAll("(?i)(\\d+\\*\\d+)(?=\\d+g/sm)", "$1 ");
         // Keep density as '150x94' style; still normalize split count specs if present
         r = r.replaceAll("(?i)/\\s*20/1\\s*x\\s*32/1", " 20*32+32/");
+        // Expand fabric code suffix '-ci' or '-cir' to '-circulose' early so dedup rules can match
+        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,})-(?:ci|cir)\\b", "$1-circulose");
         // Deduplicate repeated keywords introduced by raw+desc concatenation
-        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,}-circulose)\\b\\s+\\bcirculose\\b", "$1");
+        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,}-circulose)\\b[\\s\\p{Punct}]+circulose\\b", "$1");
+        // Also catch the duplication if it occurs right at the start of the string
+        r = r.replaceAll("(?i)^(?:\\s*)([A-Z]{1,4}\\d{3,}-circulose)[\\s\\p{Punct}]+circulose\\b", "$1");
+        // Collapse any immediate duplicate 'circulose' tokens like 'circulose circulose' allowing punctuation
+        r = r.replaceAll("(?i)\\b(circulose)\\b(?:[\\s,;]+\\1\\b)+", "$1");
         r = r.replaceAll("(?i)\\b(circulose)\\b(?:\\s*,\\s*20%)?\\s+\\1(?:\\s*,\\s*20%)?", "$1");
         r = r.replaceAll("(?i)\\b(Reviscose)\\b\\s+\\b\\1\\b", "$1");
         r = r.replaceAll("(?i)\\b(Viscose)\\b\\s+\\b\\1\\b", "$1");
+        // Fix pattern '... viscose circulose viscose with ...' -> '... viscose with circulose ...'
+        r = r.replaceAll("(?i)\\bviscose\\b\\s+\\bcirculose\\b\\s+\\bviscose\\b\\s+with", "viscose with circulose");
+        // If duplication occurs as 'with circulose circulose / recycled polyester', collapse it
+        r = r.replaceAll("(?i)with\\s+circulose[\\s,;]+circulose\\b(?=\\s*/\\s*recycled\\s+polyester)", "with circulose");
+        // Also collapse 'with circulose circulose' even if tail isn't matched (defensive)
+        r = r.replaceAll("(?i)\\bwith\\s+circulose\\b[\\s,;]+\\bcirculose\\b", "with circulose");
+        // If duplicated 'circulose' occurs right before recycled tail, collapse it
+        r = r.replaceAll("(?i)\\bcirculose\\b\\s+\\bcirculose\\b(?=\\s*/\\s*recycled\\s+polyester)", "circulose");
+        // Force a space after percent value in fraction-style percentages like '80/20%Reviscose' -> '80/20% Reviscose'
+        r = r.replaceAll("(?i)(\\d{1,3}/\\d{1,3})%\\s*(?=[A-Za-z])", "$1% ");
+        // Normalize 'Revisco' variants and ensure spacing
+        r = r.replaceAll("(?i)\\bRevisco(se)?\\b", "Reviscose");
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
         if (java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(r).find()) {
             r = "hanger loop";
         }
-        // Expand fabric code suffix '-ci' or '-cir' to '-circulose'
-        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,})-(?:ci|cir)\\b", "$1-circulose");
         return oneLine(r);
     }
 
