@@ -1036,7 +1036,129 @@ public class TableParser {
             }
         }
 
+        for (int ri = 1; ri < rows.size() && ri < rawRowText.size(); ri++) {
+            List<String> r = rows.get(ri);
+            if (r == null || r.size() < 6) continue;
+            String mergedRaw = oneLine(rawRowText.get(ri).toString());
+            if (mergedRaw.isBlank()) continue;
+
+            String pos = r.get(0) == null ? "" : r.get(0);
+            String typ = r.get(2) == null ? "" : r.get(2);
+            String desc = r.get(3) == null ? "" : r.get(3);
+            String ms = r.get(5) == null ? "" : r.get(5);
+
+            String fixed = fixBomDescriptionFromRaw(pos, typ, desc, mergedRaw, ms);
+            if (fixed != null && !fixed.equals(desc)) {
+                r.set(3, fixed);
+            }
+        }
+
         return rows;
+    }
+
+    private static String normalizeBomDescriptionValue(String raw) {
+        String r = oneLine(raw);
+        if (r.isBlank()) return "";
+        r = mergeSplitWords(r);
+        r = r.replaceAll("(?i)\\+\\s+zes\\s*=", "+ sizes =");
+        if (r.toUpperCase(Locale.ROOT).contains("JY") && r.toLowerCase(Locale.ROOT).contains("circul")) {
+            r = r.replaceAll("(?i)\\bcircul\\b", "circulose");
+        }
+        r = r.replaceAll("(?i)\\bRevisco\\s+Viscose\\s+h\\b", "Revisco Viscose with");
+        r = r.replaceAll("(?i)\\bCirculose\\s+%nylon\\b", "Circulose 20%nylon");
+        return oneLine(r);
+    }
+
+    private static String fixBomDescriptionFromRaw(String position, String type, String currentDesc, String mergedRaw, String materialSupplier) {
+        String desc = oneLine(currentDesc);
+        String raw = oneLine(mergedRaw);
+        if (raw.isBlank()) return desc;
+
+        String lowRaw = raw.toLowerCase(Locale.ROOT);
+        String lowDesc = desc.toLowerCase(Locale.ROOT);
+        String lowType = oneLine(type).toLowerCase(Locale.ROOT);
+
+        // Hanger loop strict: only ambil sampai 'loop'
+        if (lowRaw.contains("hanger loop") && (lowType.contains("tape") || lowDesc.contains("hanger") || lowDesc.contains("trading"))) {
+            int idx = raw.toLowerCase(Locale.ROOT).indexOf("hanger loop");
+            if (idx >= 0) {
+                int end = idx + "hanger loop".length();
+                return oneLine(raw.substring(idx, end));
+            }
+            return "hanger loop";
+        }
+
+        if ((lowDesc.contains("smocking") && (lowDesc.contains(" ead") || lowDesc.endsWith("ead") || lowDesc.endsWith("thr") || lowDesc.contains("smocking ead")))
+                || (lowRaw.contains("smocking") && (lowRaw.contains("smocking thr") || lowRaw.contains("smocking thread")))) {
+            return "smocking thread";
+        }
+
+        boolean looksLikeFabricRow = lowDesc.contains("jy") || lowRaw.contains("jy");
+        if (looksLikeFabricRow) {
+            String extracted = extractFabricDescriptionFromRaw(raw, materialSupplier);
+            if (!extracted.isBlank()) {
+                extracted = normalizeBomDescriptionValue(extracted);
+                return extracted;
+            }
+        }
+
+        return normalizeBomDescriptionValue(desc);
+    }
+
+    private static String extractFabricDescriptionFromRaw(String mergedRaw, String materialSupplier) {
+        String raw = oneLine(mergedRaw);
+        if (raw.isBlank()) return "";
+        String[] parts = raw.split("\\s+");
+        int start = -1;
+        Pattern code = Pattern.compile("(?i)^[A-Z]{1,4}\\d{3,}[-_A-Za-z0-9]*.*$");
+        for (int i = 0; i < parts.length; i++) {
+            String tok = stripPunctKeepPercent(parts[i]);
+            if (tok.isBlank()) continue;
+            if (tok.toUpperCase(Locale.ROOT).startsWith("JY") && tok.matches("(?i)^JY\\d{3,}.*")) {
+                start = i;
+                break;
+            }
+            if (tok.matches("(?i)^JY\\d{3,}.*")) {
+                start = i;
+                break;
+            }
+            if (tok.length() >= 6 && code.matcher(tok).matches() && tok.matches("(?i).*[A-Z].*")) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) return "";
+
+        String supplierFirst = "";
+        if (materialSupplier != null && !materialSupplier.isBlank()) {
+            supplierFirst = stripPunctKeepPercent(materialSupplier.split("\\s+")[0]).toUpperCase(Locale.ROOT);
+        }
+
+        int end = parts.length;
+        for (int i = start; i < parts.length; i++) {
+            String tok = stripPunctKeepPercent(parts[i]);
+            if (tok.isBlank()) continue;
+            if (!supplierFirst.isBlank() && tok.toUpperCase(Locale.ROOT).equals(supplierFirst)) {
+                end = i;
+                break;
+            }
+            if (ID_LIKE_TOKEN.matcher(tok).matches()) {
+                end = i;
+                break;
+            }
+            // Stop at supplier-like or known suffixes
+            if (tok.matches("(?i)TRADING|CO\\.?|LTD\\.?|LTD|GARMENTS|ACCESSORIES")) {
+                end = i;
+                break;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(parts[i]);
+        }
+        String extracted = sb.toString();
+        return mergeSplitWords(oneLine(extracted));
     }
 
     private static List<List<String>> normalizeBomRowsFallback(List<OcrNewLine> sectionLines) {
