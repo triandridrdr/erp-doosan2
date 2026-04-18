@@ -630,6 +630,13 @@ public class TableParser {
                 Pattern companyPattern = Pattern.compile("(?i)(TRADING\\s+CO\\.?,?\\s*LTD\\.?|CO\\.?,?\\s*LTD\\.?|INC\\.?|CORP\\.?|LLC|GMBH)");
                 Matcher cm = companyPattern.matcher(betweenPcts);
                 if (cm.find()) {
+                    // Special-case: IMPORT & EXPORT supplier often has noise between '&' and 'EXPORT'.
+                    // Avoid capturing that noise here; we'll normalize later.
+                    if (materialSupplier.toUpperCase(Locale.ROOT).contains("IMPORT") &&
+                        materialSupplier.contains("&") &&
+                        betweenPcts.toUpperCase(Locale.ROOT).contains("EXPORT")) {
+                        // no-op
+                    } else {
                     // Find the full company name segment - from start of line/word to end of pattern
                     int compStart = cm.start();
                     // Look backwards for start of company name (uppercase words)
@@ -643,6 +650,7 @@ public class TableParser {
                     if (!companyCont.isBlank() && !materialSupplier.toLowerCase().contains(companyCont.toLowerCase())) {
                         materialSupplier = materialSupplier + " " + companyCont;
                         materialSupplier = oneLine(materialSupplier);
+                    }
                     }
                 }
             }
@@ -758,7 +766,29 @@ public class TableParser {
             }
         }
 
+        // 3) IMPORT & EXPORT continuation (needed for: "HANGZHOU JIAYI IMPORT &" -> "... IMPORT & EXPORT CO., LTD.")
+        result = normalizeImportExportSupplier(result, searchText);
+
         return result;
+    }
+
+    private static String normalizeImportExportSupplier(String supplier, String searchText) {
+        if (supplier == null || supplier.isBlank()) return supplier;
+        if (searchText == null || searchText.isBlank()) return supplier;
+
+        String supUpper = supplier.toUpperCase(Locale.ROOT);
+        if (!supUpper.contains("IMPORT") || !supplier.contains("&")) return supplier;
+
+        Pattern export = Pattern.compile("(?i)\\bEXPORT\\s+CO\\.?,?\\s*LTD\\.?\\b");
+        Matcher em = export.matcher(searchText);
+        if (!em.find()) return supplier;
+
+        // Keep everything up to '&' and append standardized suffix.
+        int amp = supplier.indexOf('&');
+        if (amp < 0) return supplier;
+        String prefix = supplier.substring(0, amp + 1).trim();
+        String normalized = oneLine(prefix + " EXPORT CO., LTD.");
+        return normalized;
     }
 
     private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
