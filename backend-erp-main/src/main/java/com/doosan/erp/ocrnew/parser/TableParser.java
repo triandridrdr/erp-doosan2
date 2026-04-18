@@ -897,7 +897,15 @@ public class TableParser {
                 cur.add(1, plc);
                 rows.add(cur);
                 curRaw = new StringBuilder();
-                curRaw.append(wholeLine);
+                // Seed raw accumulator strictly from Description and Composition columns
+                StringBuilder seed = new StringBuilder();
+                if (!cells.description.isBlank()) seed.append(cells.description);
+                String compSeed = cells.composition.isBlank() ? compFromWhole : cells.composition;
+                if (compSeed != null && !compSeed.isBlank()) {
+                    if (seed.length() > 0) seed.append(' ');
+                    seed.append(compSeed);
+                }
+                curRaw.append(oneLine(seed.toString().trim()));
                 rawRowText.add(curRaw);
                 if (BOM_DEBUG) log.debug("[BOM-ROW] NEW ROW #{}: desc='{}' comp='{}'", rows.size()-1, cur.get(3), cur.get(4));
             } else {
@@ -906,7 +914,14 @@ public class TableParser {
                     continue;
                 }
                 if (curRaw != null) {
-                    curRaw.append(' ').append(wholeLine);
+                    StringBuilder add = new StringBuilder();
+                    if (!cells.description.isBlank()) add.append(cells.description);
+                    if (!cells.composition.isBlank()) {
+                        if (add.length() > 0) add.append(' ');
+                        add.append(cells.composition);
+                    }
+                    String addStr = oneLine(add.toString().trim());
+                    if (!addStr.isBlank()) curRaw.append(' ').append(addStr);
                 }
                 // If this continuation line contains percent-bearing composition, treat it as composition
                 // even if column assignment put it under Description due to slight x-shifts.
@@ -982,6 +997,11 @@ public class TableParser {
                     // last resort: if this line has % but didn't map into composition column, use whole-line extraction
                     cur.set(4, compFromWhole);
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT comp(whole): -> '{}'", cur.get(4));
+                }
+
+                // Also append percent-bearing composition to raw accumulator if not already captured
+                if (curRaw != null && !compFromLine.isBlank()) {
+                    curRaw.append(' ').append(oneLine(compFromLine));
                 }
 
                 if (!cells.materialSupplier.isBlank()) {
@@ -1103,26 +1123,29 @@ public class TableParser {
         r = r.replaceAll("(?i)\\bRevisco\\s+Viscose\\s+h\\b", "Revisco Viscose with");
         r = r.replaceAll("(?i)\\bCirculose\\s+%nylon\\b", "Circulose 20%nylon");
         // Collapse spacing around percent+material for expected UI format
-        r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s+Revisco\\b", "$1%Revisco");
+        r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s+Revisco\\b", "$1%Reviscose");
+        r = r.replaceAll("(?i)\\bRevisco\\b", "Reviscose");
         r = r.replaceAll("(?i)\\b20%\\s*nylon\\b", "20%nylon");
+        // Fabric phrasing normalization: move 'circulose' to front and format recycled tail
+        r = r.replaceAll("(?i),\\s*20%\\s*RECYCLED\\s+POLYESTER", " / recycled polyester");
+        r = r.replaceAll("(?i)\\b80%\\s*Revisco\\s+Viscose\\s+with\\s+circulose\\b", "circulose 80/20%Revisco Viscose with circulose");
         // Normalize material synonyms for Description readability
         r = r.replaceAll("(?i)\\bPOLYAMIDE\\b", "nylon");
         // Convert g/m2 to gsm, keep integer value if possible
-        r = r.replaceAll("(?i)\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", "$1gsm");
-        r = r.replaceAll("(?i)\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", "$1gsm");
+        r = r.replaceAll("(?i)\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", "$1g/sm");
+        r = r.replaceAll("(?i)\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", "$1g/sm");
         // Ensure a space before gsm block if it accidentally glued to weave spec like '20*320gsm'
-        r = r.replaceAll("(?i)(\\d+\\*\\d+)(?=\\d+gsm)", "$1 ");
-        // Weave spec normalization: '163x85/20/1 x32/1' -> '20*32+32/163*85'
-        r = r.replaceAll("(?i)163x85", "163*85");
+        r = r.replaceAll("(?i)(\\d+\\*\\d+)(?=\\d+g/sm)", "$1 ");
+        // Keep density as '150x94' style; still normalize split count specs if present
         r = r.replaceAll("(?i)/\\s*20/1\\s*x\\s*32/1", " 20*32+32/");
-        // If order became '163*85 20*32+32/', swap to '20*32+32/163*85'
-        r = r.replaceAll("(?i)163\\*85\\s+20\\*32\\+32/", "20*32+32/163*85 ");
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
         if (java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(r).find()) {
             r = "hanger loop";
         }
+        // Expand fabric code suffix '-ci' or '-cir' to '-circulose'
+        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,})-(?:ci|cir)\\b", "$1-circulose");
         return oneLine(r);
     }
 
@@ -1193,16 +1216,16 @@ public class TableParser {
                         .matcher(search);
                 String density = null;
                 if (dens.find()) {
-                    density = dens.group(1) + "*" + dens.group(2);
+                    density = dens.group(1) + "x" + dens.group(2);
                 }
 
-                // gsm from '80.0 g/m2' -> '80gsm'
+                // gsm from '80.0 g/m2' -> '80g/sm' (match user's expected unit spelling)
                 String gsm = null;
                 java.util.regex.Matcher gsm1 = java.util.regex.Pattern
                         .compile("\\b(\\d{1,3})(?:\\.0+)?\\s*g/m2\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
                         .matcher(search);
                 if (gsm1.find()) {
-                    gsm = gsm1.group(1) + "gsm";
+                    gsm = gsm1.group(1) + "g/sm";
                 } else {
                     java.util.regex.Matcher gsm2 = java.util.regex.Pattern
                             .compile("\\b(\\d{1,3}\\.\\d+)\\s*g/m2\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
@@ -1210,22 +1233,38 @@ public class TableParser {
                     if (gsm2.find()) {
                         try {
                             double v = Double.parseDouble(gsm2.group(1));
-                            gsm = ((int) Math.round(v)) + "gsm";
+                            gsm = ((int) Math.round(v)) + "g/sm";
                         } catch (Exception ignore) { /* no-op */ }
                     }
                 }
 
-                // width inches like 57"
+                // Optional yarn spec like '20dx45s'
+                String yarnSpec = null;
+                java.util.regex.Matcher yarn = java.util.regex.Pattern
+                        .compile("(?i)\\b(\\d{1,3})\\s*d\\s*x\\s*(\\d{1,3})s\\b")
+                        .matcher(search);
+                if (yarn.find()) {
+                    yarnSpec = yarn.group(1) + "dx" + yarn.group(2) + "s";
+                }
+
+                // width inches like 57" or 55"CW
                 String width = null;
-                java.util.regex.Matcher w = java.util.regex.Pattern.compile("\\b(\\d{2,3})\"\\b").matcher(search);
+                java.util.regex.Matcher w = java.util.regex.Pattern
+                        .compile("\\b(\\d{2,3})\"(?:\\s*CW)?\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(search);
                 if (w.find()) {
-                    width = w.group(1) + '"';
+                    // Preserve optional CW suffix if present in the matched span
+                    String span = w.group(0);
+                    width = span.contains("CW") || span.contains("cw") ? (w.group(1) + "\"CW") : (w.group(1) + '"');
                 }
 
                 // include '+ sizes =' if it was present anywhere in current description
                 String normCurrent = normalizeBomDescriptionValue(desc);
                 boolean hasSizes = java.util.regex.Pattern.compile("(?i)\\+\\s*sizes\\s*=").matcher(normCurrent).find();
 
+                if (yarnSpec != null) {
+                    tail.append(yarnSpec);
+                }
                 if (countsSpec != null && density != null) {
                     tail.append(countsSpec).append(density);
                 } else if (density != null) {
@@ -1282,9 +1321,20 @@ public class TableParser {
         }
 
         int end = parts.length;
+        // Normalize code token to a core (strip '-ci'/'-cir'/'-circulose' suffixes) for repetition detection
+        String firstTok = stripPunctKeepPercent(parts[start]);
+        String codeCore = firstTok
+                .replaceAll("(?i)-(?:ci|cir|circulose)$", "")
+                .toUpperCase(Locale.ROOT);
         for (int i = start; i < parts.length; i++) {
             String tok = stripPunctKeepPercent(parts[i]);
             if (tok.isBlank()) continue;
+            // If we encounter the same code token again (common when 'raw + desc' concatenated), stop before the repeat
+            String tokCore = tok.replaceAll("(?i)-(?:ci|cir|circulose)$", "").toUpperCase(Locale.ROOT);
+            if (i > start && !codeCore.isBlank() && tokCore.equals(codeCore)) {
+                end = i;
+                break;
+            }
             if (!supplierFirst.isBlank() && tok.toUpperCase(Locale.ROOT).equals(supplierFirst)) {
                 end = i;
                 break;
