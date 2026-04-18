@@ -838,18 +838,22 @@ public class TableParser {
             // Detect fabric row from accumulated row context + current line text
             // This allows continuation lines to be correctly classified as fabric row
             boolean isFabricRowHint = false;
-            if (cur != null && cur.size() >= 4) {
+            if (cur != null && cur.size() >= 5) {
                 String accType = cur.get(2) == null ? "" : cur.get(2).toLowerCase(Locale.ROOT);
                 String accDesc = cur.get(3) == null ? "" : cur.get(3);
+                String accComp = cur.get(4) == null ? "" : cur.get(4).toLowerCase(Locale.ROOT);
                 boolean accHasFabricCode = accDesc.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
                 boolean accHasFabricType = accType.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
-                isFabricRowHint = accHasFabricCode || accHasFabricType;
+                // Fabric-specific fibre keywords found in Composition (Revisco/Reviscose/circulose are fabric-brand terms)
+                boolean accHasFabricFibre = accComp.matches(".*\\b(revisco|reviscose|circulose)\\b.*");
+                isFabricRowHint = accHasFabricCode || accHasFabricType || accHasFabricFibre;
             }
             if (!isFabricRowHint) {
-                // Check current line for fabric indicators (row start)
+                // Check current line for fabric indicators (row start or continuation with fabric-specific text)
                 String lowLine = txt.toLowerCase(Locale.ROOT);
                 isFabricRowHint = txt.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*")
-                        || lowLine.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
+                        || lowLine.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*")
+                        || lowLine.matches(".*\\b(revisco|reviscose|circulose)\\b.*");
             }
             BomLineCells cells = extractBomLineCells(l, centers, isFabricRowHint);
             String wholeLine = oneLine(l.getText());
@@ -938,6 +942,28 @@ public class TableParser {
                     }
                     String addStr = oneLine(add.toString().trim());
                     if (!addStr.isBlank()) curRaw.append(' ').append(addStr);
+                    // For fabric rows, also capture words that may have been skipped due to cx > materialSupplierMaxX
+                    // This ensures rawRowText has full material for downstream fabric description synthesis.
+                    if (isFabricRowHint) {
+                        // Append tokens from txtClean that aren't already in addStr, filtering obvious supplier/id tokens
+                        String filtered = txtCleanKeepPercent
+                                .replaceAll("(?i)\\bQW[O0]\\d{3,}[^\\s]*", " ")   // booking ids like QWO01001541
+                                .replaceAll("(?i)\\bHANGZHOU\\b.*?(?=\\s|$)", " ")
+                                .replaceAll("(?i)\\bSHAOXING\\b.*?(?=\\s|$)", " ")
+                                .replaceAll("(?i)\\bIAYI\\b", " ")
+                                .replaceAll("(?i)\\bIMPORT\\b", " ")
+                                .replaceAll("(?i)\\bEXPORT\\b", " ")
+                                .replaceAll("(?i)\\bDACHANGXIANG\\b", " ")
+                                .replaceAll("(?i)\\bTRADING\\b", " ")
+                                .replaceAll("(?i)\\bLTD\\b\\.?", " ")
+                                .replaceAll("(?i)\\bCO\\b\\.?,?", " ")
+                                .replaceAll("\\s{2,}", " ")
+                                .trim();
+                        if (!filtered.isBlank()) {
+                            curRaw.append(' ').append(filtered);
+                            if (BOM_DEBUG) log.debug("[BOM-ROW] CONT raw(fabric-full): += '{}'", filtered);
+                        }
+                    }
                 }
                 // If this continuation line contains percent-bearing composition, treat it as composition
                 // even if column assignment put it under Description due to slight x-shifts.
@@ -1627,7 +1653,8 @@ public class TableParser {
         String lowerLineText = lineText.toLowerCase();
         boolean lineHasFabricCode = lineText.matches(".*(JY|ZCX|ZX|JX|YJ)\\d+.*");
         boolean lineHasFabricType = lowerLineText.matches(".*\\b(plain|cambric|voile|knit|woven|jersey|fleece|rib|interlock|pique)\\b.*");
-        boolean isFabricRow = isFabricRowHint || lineHasFabricCode || lineHasFabricType;
+        boolean lineHasFabricFibre = lowerLineText.matches(".*\\b(revisco|reviscose|circulose)\\b.*");
+        boolean isFabricRow = isFabricRowHint || lineHasFabricCode || lineHasFabricType || lineHasFabricFibre;
         
         // For fabric rows, extend Description zone to just before Material Supplier column
         // This allows composition/appearance text to flow into Description for the full sentence,
