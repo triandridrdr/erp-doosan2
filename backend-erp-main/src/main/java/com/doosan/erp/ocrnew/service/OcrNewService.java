@@ -69,6 +69,43 @@ public class OcrNewService {
         this.debugLogging = debugLogging;
     }
 
+    private static List<OcrNewTableDto> sanitizeBomDescriptions(List<OcrNewTableDto> tables) {
+        if (tables == null || tables.isEmpty()) return tables;
+        Pattern hangerPat = Pattern.compile("(?i)hanger\\s*loop");
+        Pattern supplierTail = Pattern.compile("(?i)\\b(?:s\\s+)?(?:Trading|CO\\.?|Ltd\\.?|Garments|Accessories)\\b.*$");
+        for (OcrNewTableDto t : tables) {
+            if (t == null) continue;
+            List<List<String>> rows = t.getRows();
+            if (rows == null || rows.size() < 2) continue;
+            List<String> header = rows.get(0);
+            if (header == null || header.size() < 6) continue;
+            String h0 = safe(header.get(0)).trim();
+            String h2 = safe(header.get(2)).trim();
+            String h3 = safe(header.get(3)).trim();
+            String h4 = safe(header.get(4)).trim();
+            boolean looksBom = "Position".equalsIgnoreCase(h0) && "Description".equalsIgnoreCase(h3) && "Composition".equalsIgnoreCase(h4);
+            if (!looksBom) continue;
+
+            for (int r = 1; r < rows.size(); r++) {
+                List<String> row = rows.get(r);
+                if (row == null || row.size() < 6) continue;
+                String type = safe(row.get(2));
+                String desc = safe(row.get(3));
+                // Strip supplier tail noise if it bled into Description
+                if (!desc.isBlank()) {
+                    desc = supplierTail.matcher(desc).replaceFirst("").trim();
+                }
+                if (hangerPat.matcher(desc).find() || type.toLowerCase(Locale.ROOT).contains("tape")) {
+                    if (hangerPat.matcher(desc).find()) {
+                        desc = "hanger loop";
+                    }
+                }
+                row.set(3, oneLine(desc));
+            }
+        }
+        return tables;
+    }
+
     private static List<Map<String, String>> extractSalesOrderDetailSizeBreakdownFromLines(
             List<OcrNewLine> lines,
             Map<String, String> formFields
@@ -321,6 +358,9 @@ public class OcrNewService {
             } else {
                 tables = tableParser.parseTables(allLines);
             }
+
+            // Final hard guard: sanitize hanger loop Description and strip supplier noise before returning
+            tables = sanitizeBomDescriptions(tables);
 
             List<Map<String, String>> salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdown(tables);
             if (salesOrderDetailSizeBreakdown.isEmpty()) {

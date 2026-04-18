@@ -939,9 +939,9 @@ public class TableParser {
                     // Trimming supplier keyword in Description
                     joined = joined.replaceFirst("(?i)\\s*s?\\b\\s*(Trading|Ltd|Garments|CO\\.?|Accessories)\\b.*$", "").trim();
                     // Trimming hanger loop
-                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?hanger loop)\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(joined);
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?i)hanger\\s+loop").matcher(joined);
                     if (m.find()) {
-                        joined = m.group(1);
+                        joined = "hanger loop";
                     }
                     cur.set(3, joined);
                     if (BOM_DEBUG) log.debug("[BOM-ROW] CONT desc: '{}' += '{}' -> '{}'", oldDesc, cells.description, cur.get(3));
@@ -1060,6 +1060,33 @@ public class TableParser {
                 if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: desc='{}' -> '{}'", ri, desc, fixed);
                 r.set(3, fixed);
             }
+
+            // Hard trim for hanger loop rows in case raw-based fix didn't trigger due to missing rawRowText
+            String curDesc = r.get(3) == null ? "" : r.get(3);
+            String lowCur = curDesc.toLowerCase(Locale.ROOT);
+            if (!curDesc.isBlank() && java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(curDesc).find()) {
+                String trimmed = "hanger loop";
+                if (!trimmed.equals(curDesc)) {
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: desc='{}' -> '{}' (hanger-trim)", ri, curDesc, trimmed);
+                    r.set(3, trimmed);
+                }
+            }
+        }
+
+        // Second independent pass: enforce hanger-loop trimming even if rawRowText was empty (so above loop was skipped)
+        for (int ri = 1; ri < rows.size(); ri++) {
+            List<String> r = rows.get(ri);
+            if (r == null || r.size() < 6) continue;
+            String curDesc = r.get(3) == null ? "" : r.get(3);
+            if (curDesc.isBlank()) continue;
+            String lowCur = curDesc.toLowerCase(Locale.ROOT);
+            if (java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(curDesc).find()) {
+                String trimmed = "hanger loop";
+                if (!trimmed.equals(curDesc)) {
+                    if (BOM_DEBUG) log.debug("[BOM-ROW] POST-FIX row#{}: desc='{}' -> '{}' (hanger-trim-pass2)", ri, curDesc, trimmed);
+                    r.set(3, trimmed);
+                }
+            }
         }
 
         return rows;
@@ -1093,11 +1120,8 @@ public class TableParser {
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
-        if (r.toLowerCase(Locale.ROOT).contains("hanger loop")) {
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?hanger loop)\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(r);
-            if (m.find()) {
-                r = m.group(1);
-            }
+        if (java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(r).find()) {
+            r = "hanger loop";
         }
         return oneLine(r);
     }
@@ -1111,17 +1135,14 @@ public class TableParser {
         String lowDesc = desc.toLowerCase(Locale.ROOT);
         String lowType = oneLine(type).toLowerCase(Locale.ROOT);
 
-        // Hanger loop strict: only ambil sampai 'loop'
-        if ((lowRaw.contains("hanger loop") || lowDesc.contains("hanger loop")) && (lowType.contains("tape") || lowDesc.contains("hanger") || lowDesc.contains("trading"))) {
-            int idx = raw.toLowerCase(Locale.ROOT).indexOf("hanger loop");
-            if (idx >= 0) {
-                int end = idx + "hanger loop".length();
-                return oneLine(raw.substring(idx, end));
-            }
+        // Hanger loop strict: tolerate whitespace variants and force exact string
+        boolean rawHasHanger = java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(raw).find();
+        boolean descHasHanger = java.util.regex.Pattern.compile("(?i)hanger\\s*loop").matcher(desc).find();
+        if ((rawHasHanger || descHasHanger) && (lowType.contains("tape") || lowDesc.contains("hanger") || lowDesc.contains("trading"))) {
             return "hanger loop";
         }
         // Fallback: if currentDesc already mentions hanger loop, enforce exact string
-        if (lowDesc.contains("hanger loop")) {
+        if (descHasHanger) {
             return "hanger loop";
         }
 
