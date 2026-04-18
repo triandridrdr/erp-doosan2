@@ -614,6 +614,10 @@ public class TableParser {
                     materialSupplier = oneLine(supplierPart);
                 }
             }
+
+            if (!materialSupplier.isBlank()) {
+                materialSupplier = appendProdUnitsSupplierContinuation(materialSupplier, fullText.substring(firstPctStart));
+            }
             
             // Look for company name continuation after the first % 
             // Pattern: "TRADING CO., LTD." or "CO.,LTD" appearing before the next % or a known delimiter
@@ -714,6 +718,10 @@ public class TableParser {
                     materialSupplier = oneLine(supplierPart);
                 }
             }
+
+            if (!materialSupplier.isBlank() && stop < fullText.length()) {
+                materialSupplier = appendProdUnitsSupplierContinuation(materialSupplier, fullText.substring(stop));
+            }
         }
 
         ProdUnitsRow row = new ProdUnitsRow(type, comp, materialSupplier);
@@ -722,6 +730,35 @@ public class TableParser {
         if (BOM_DEBUG) {
             log.debug("[BOM-PROD] key='{}' type='{}' comp='{}' supplier='{}'", fullKey, type, comp, materialSupplier);
         }
+    }
+
+    private static String appendProdUnitsSupplierContinuation(String supplier, String searchText) {
+        if (supplier == null || supplier.isBlank()) return supplier;
+        if (searchText == null || searchText.isBlank()) return supplier;
+
+        String result = supplier;
+        String upper = result.toUpperCase(Locale.ROOT);
+
+        // 1) Country continuation (needed for: "PT SAMJIN BROTHREAD" -> "... INDONESIA")
+        Pattern country = Pattern.compile("(?i)\\bINDONESIA\\b");
+        Matcher mCountry = country.matcher(searchText);
+        if (mCountry.find() && !upper.contains("INDONESIA")) {
+            result = oneLine(result + " INDONESIA");
+            upper = result.toUpperCase(Locale.ROOT);
+        }
+
+        // 2) Trading suffix continuation (needed for: "Hangzhou Jueya Garments" -> "... Trading CO.,Ltd")
+        Pattern trading = Pattern.compile("(?i)\\bTRADING\\s+CO\\.?,?\\s*LTD\\.?\\b");
+        Matcher mTrading = trading.matcher(searchText);
+        if (mTrading.find() && !upper.contains("TRADING")) {
+            String seg = searchText.substring(mTrading.start(), mTrading.end()).trim();
+            seg = seg.replaceAll("^[\\s,.:]+", "").replaceAll("[\\s,.:]+$", "");
+            if (!seg.isBlank()) {
+                result = oneLine(result + " " + seg);
+            }
+        }
+
+        return result;
     }
 
     private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
