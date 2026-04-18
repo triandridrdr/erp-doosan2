@@ -1124,7 +1124,10 @@ public class TableParser {
         r = r.replaceAll("(?i)\\bCirculose\\s+%nylon\\b", "Circulose 20%nylon");
         // Collapse spacing around percent+material for expected UI format
         r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s+Revisco\\b", "$1%Reviscose");
+        r = r.replaceAll("(?i)\\b(\\d{1,3}/\\d{1,3})%\\s*Revisco\\b", "$1% Reviscose");
         r = r.replaceAll("(?i)\\bRevisco\\b", "Reviscose");
+        // Prefer 'Reviscose viscose' casing as per expected output
+        r = r.replaceAll("(?i)Reviscose\\s+Viscose\\b", "Reviscose viscose");
         r = r.replaceAll("(?i)\\b20%\\s*nylon\\b", "20%nylon");
         // Fabric phrasing normalization: move 'circulose' to front and format recycled tail
         r = r.replaceAll("(?i),\\s*20%\\s*RECYCLED\\s+POLYESTER", " / recycled polyester");
@@ -1138,6 +1141,11 @@ public class TableParser {
         r = r.replaceAll("(?i)(\\d+\\*\\d+)(?=\\d+g/sm)", "$1 ");
         // Keep density as '150x94' style; still normalize split count specs if present
         r = r.replaceAll("(?i)/\\s*20/1\\s*x\\s*32/1", " 20*32+32/");
+        // Deduplicate repeated keywords introduced by raw+desc concatenation
+        r = r.replaceAll("(?i)\\b([A-Z]{1,4}\\d{3,}-circulose)\\b\\s+\\bcirculose\\b", "$1");
+        r = r.replaceAll("(?i)\\b(circulose)\\b(?:\\s*,\\s*20%)?\\s+\\1(?:\\s*,\\s*20%)?", "$1");
+        r = r.replaceAll("(?i)\\b(Reviscose)\\b\\s+\\b\\1\\b", "$1");
+        r = r.replaceAll("(?i)\\b(Viscose)\\b\\s+\\b\\1\\b", "$1");
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
@@ -1177,8 +1185,10 @@ public class TableParser {
         boolean looksLikeFabricRow = lowDesc.contains("jy") || lowRaw.contains("jy")
                 || lowType.contains("plain") || lowType.contains("cambric") || lowType.contains("voile");
         if (looksLikeFabricRow) {
-            // Gabungkan teks untuk pencarian yang lebih tahan banting (raw + desc + materialSupplier)
-            String search = oneLine((raw + " " + desc + " " + (materialSupplier == null ? "" : materialSupplier)).trim());
+            // Gunakan RAW sebagai sumber utama untuk menghindari duplikasi dari penggabungan raw + desc
+            // Jika raw kosong (kasus tepi), barulah fallback ke desc
+            String base = raw.isBlank() ? desc : raw;
+            String search = oneLine((base + " " + (materialSupplier == null ? "" : materialSupplier)).trim());
             String extracted = extractFabricDescriptionFromRaw(search, materialSupplier);
             // Jika masih kosong, fallback: ambil kode JY* dari desc
             if (extracted.isBlank()) {
