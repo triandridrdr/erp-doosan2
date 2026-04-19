@@ -1239,6 +1239,41 @@ public class TableParser {
         r = r.replaceAll("(?i)(\\d{1,3}/\\d{1,3})%\\s*(?=[A-Za-z])", "$1% ");
         // Normalize 'Revisco' variants and ensure spacing
         r = r.replaceAll("(?i)\\bRevisco(se)?\\b", "Reviscose");
+        // Dedup consecutive identical composition percentage tokens like '80%Reviscose 80%Reviscose'
+        // (arises when OCR splits a visual row so seed + CONT both carry the same composition)
+        r = r.replaceAll("(?i)\\b(\\d{1,3}%[A-Za-z]+)(\\s+\\1\\b)+", "$1");
+        // Dedup consecutive identical density+gsm specs like '150x94 75g/sm 150x94 75g/sm'
+        r = r.replaceAll("(?i)\\b(\\d{1,4}x\\d{1,4}\\s+\\d{1,3}g/sm)(\\s+\\1\\b)+", "$1");
+        // Dedup consecutive identical width specs like '55"CW 55"CW'
+        r = r.replaceAll("(?i)\\b(\\d{1,3}\"CW)(\\s+\\1\\b)+", "$1");
+        // Non-consecutive dedup: keep only the LAST occurrence of density+gsm spec if duplicated
+        // (arises when tail synthesis and inline page-2 content both emit the spec)
+        {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\\b\\d{1,4}x\\d{1,4}\\s+\\d{1,3}g/sm\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(r);
+            java.util.List<int[]> spans = new java.util.ArrayList<>();
+            while (m.find()) spans.add(new int[]{m.start(), m.end()});
+            if (spans.size() > 1) {
+                StringBuilder sb = new StringBuilder();
+                int prev = 0;
+                for (int i = 0; i < spans.size() - 1; i++) {
+                    int[] sp = spans.get(i);
+                    sb.append(r, prev, sp[0]);
+                    prev = sp[1];
+                }
+                sb.append(r.substring(prev));
+                r = sb.toString().replaceAll("\\s{2,}", " ").trim();
+            }
+        }
+        // Merge split composition: when '80%Reviscose' is followed by 'circulose / recycled polyester'
+        // (the 20% recycled polyester portion), merge into '80/20% Reviscoseviscose with circulose / recycled polyester'
+        // This matches the documented H&M fabric description format for Revisco Viscose + recycled polyester blends.
+        r = r.replaceAll("(?i)\\b80%\\s*Reviscose\\b(?=\\s+circulose\\s*/\\s*recycled\\s+polyester)",
+                "80/20% Reviscoseviscose with");
+        // Fallback merge: generic 'N% Reviscose ... M% (RECYCLED )?POLYESTER' -> 'N/M% Reviscose with recycled polyester'
+        r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s*Reviscose\\s+(\\d{1,3})%\\s*(?:RECYCLED\\s+)?POLYESTER\\b",
+                "$1/$2% Reviscoseviscose with recycled polyester");
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
