@@ -917,13 +917,25 @@ public class TableParser {
                 cur.add(1, plc);
                 rows.add(cur);
                 curRaw = new StringBuilder();
-                // Seed raw accumulator strictly from Description and Composition columns
+                // Seed raw accumulator from Description and Composition columns
+                // For fabric rows, dual-assign can make cells.desc == cells.comp; dedupe by taking only the longer
                 StringBuilder seed = new StringBuilder();
-                if (!cells.description.isBlank()) seed.append(cells.description);
-                String compSeed = cells.composition.isBlank() ? compFromWhole : cells.composition;
-                if (compSeed != null && !compSeed.isBlank()) {
-                    if (seed.length() > 0) seed.append(' ');
-                    seed.append(compSeed);
+                String seedDesc = cells.description == null ? "" : cells.description.trim();
+                String seedComp = cells.composition.isBlank() ? compFromWhole : cells.composition;
+                if (seedComp == null) seedComp = "";
+                seedComp = seedComp.trim();
+                boolean descEqualsComp = !seedDesc.isBlank() && seedDesc.equalsIgnoreCase(seedComp);
+                boolean descIsSubstrOfComp = !seedDesc.isBlank() && !seedComp.isBlank()
+                        && seedComp.toLowerCase(Locale.ROOT).contains(seedDesc.toLowerCase(Locale.ROOT));
+                if (descEqualsComp || descIsSubstrOfComp) {
+                    // Only append composition (it includes or equals description)
+                    if (!seedComp.isBlank()) seed.append(seedComp);
+                } else {
+                    if (!seedDesc.isBlank()) seed.append(seedDesc);
+                    if (!seedComp.isBlank()) {
+                        if (seed.length() > 0) seed.append(' ');
+                        seed.append(seedComp);
+                    }
                 }
                 curRaw.append(oneLine(seed.toString().trim()));
                 rawRowText.add(curRaw);
@@ -934,35 +946,45 @@ public class TableParser {
                     continue;
                 }
                 if (curRaw != null) {
-                    StringBuilder add = new StringBuilder();
-                    if (!cells.description.isBlank()) add.append(cells.description);
-                    if (!cells.composition.isBlank()) {
-                        if (add.length() > 0) add.append(' ');
-                        add.append(cells.composition);
-                    }
-                    String addStr = oneLine(add.toString().trim());
-                    if (!addStr.isBlank()) curRaw.append(' ').append(addStr);
-                    // For fabric rows, also capture words that may have been skipped due to cx > materialSupplierMaxX
-                    // This ensures rawRowText has full material for downstream fabric description synthesis.
                     if (isFabricRowHint) {
-                        // Append tokens from txtClean that aren't already in addStr, filtering obvious supplier/id tokens
-                        String filtered = txtCleanKeepPercent
+                        // FABRIC ROW: Use ORIGINAL line text (preserving hyphens, periods, slashes, %)
+                        // and SKIP addStr/compFromLine appends below. This avoids 2-4x duplication from dual-assign.
+                        // The original text keeps essential punctuation like:
+                        //   ZCX56027-circulose, 2.439 yd, 75.0 g/m2, 150x94/20/1, 80%
+                        String rawFabric = txt
                                 .replaceAll("(?i)\\bQW[O0]\\d{3,}[^\\s]*", " ")   // booking ids like QWO01001541
-                                .replaceAll("(?i)\\bHANGZHOU\\b.*?(?=\\s|$)", " ")
-                                .replaceAll("(?i)\\bSHAOXING\\b.*?(?=\\s|$)", " ")
+                                .replaceAll("(?i)\\bHANGZHOU\\b[^\\s]*", " ")
+                                .replaceAll("(?i)\\bSHAOXING\\b[^\\s]*", " ")
+                                .replaceAll("(?i)\\bSUZHOU\\b[^\\s]*", " ")
                                 .replaceAll("(?i)\\bIAYI\\b", " ")
+                                .replaceAll("(?i)\\bZHANCHENG\\b", " ")
+                                .replaceAll("(?i)\\bMEISHIDA\\b", " ")
+                                .replaceAll("(?i)\\bDYEING\\b", " ")
+                                .replaceAll("(?i)\\bPRINTING\\b", " ")
                                 .replaceAll("(?i)\\bIMPORT\\b", " ")
                                 .replaceAll("(?i)\\bEXPORT\\b", " ")
                                 .replaceAll("(?i)\\bDACHANGXIANG\\b", " ")
+                                .replaceAll("(?i)\\bANCHENG\\b", " ")
                                 .replaceAll("(?i)\\bTRADING\\b", " ")
-                                .replaceAll("(?i)\\bLTD\\b\\.?", " ")
-                                .replaceAll("(?i)\\bCO\\b\\.?,?", " ")
+                                .replaceAll("(?i)\\bLTD\\.?", " ")
+                                .replaceAll("(?i)\\bLIMITED\\b", " ")
+                                .replaceAll("(?i)\\bCO\\.?,?", " ")
                                 .replaceAll("\\s{2,}", " ")
                                 .trim();
-                        if (!filtered.isBlank()) {
-                            curRaw.append(' ').append(filtered);
-                            if (BOM_DEBUG) log.debug("[BOM-ROW] CONT raw(fabric-full): += '{}'", filtered);
+                        if (!rawFabric.isBlank()) {
+                            curRaw.append(' ').append(rawFabric);
+                            if (BOM_DEBUG) log.debug("[BOM-ROW] CONT raw(fabric): += '{}'", rawFabric);
                         }
+                    } else {
+                        // NON-FABRIC ROW: use column-based extraction (cells.desc + cells.comp)
+                        StringBuilder add = new StringBuilder();
+                        if (!cells.description.isBlank()) add.append(cells.description);
+                        if (!cells.composition.isBlank()) {
+                            if (add.length() > 0) add.append(' ');
+                            add.append(cells.composition);
+                        }
+                        String addStr = oneLine(add.toString().trim());
+                        if (!addStr.isBlank()) curRaw.append(' ').append(addStr);
                     }
                 }
                 // If this continuation line contains percent-bearing composition, treat it as composition
