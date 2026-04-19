@@ -927,10 +927,16 @@ public class TableParser {
                 boolean descEqualsComp = !seedDesc.isBlank() && seedDesc.equalsIgnoreCase(seedComp);
                 boolean descIsSubstrOfComp = !seedDesc.isBlank() && !seedComp.isBlank()
                         && seedComp.toLowerCase(Locale.ROOT).contains(seedDesc.toLowerCase(Locale.ROOT));
-                if (descEqualsComp || descIsSubstrOfComp) {
-                    // Only append composition (it includes or equals description)
+                boolean compIsSubstrOfDesc = !seedDesc.isBlank() && !seedComp.isBlank()
+                        && seedDesc.toLowerCase(Locale.ROOT).contains(seedComp.toLowerCase(Locale.ROOT));
+                if (descEqualsComp || compIsSubstrOfDesc) {
+                    // Desc already includes comp (dual-assign case); use only desc to avoid duplication
+                    if (!seedDesc.isBlank()) seed.append(seedDesc);
+                } else if (descIsSubstrOfComp) {
+                    // Comp already includes desc; use only comp
                     if (!seedComp.isBlank()) seed.append(seedComp);
                 } else {
+                    // No overlap: append both (non-fabric or partial-overlap case)
                     if (!seedDesc.isBlank()) seed.append(seedDesc);
                     if (!seedComp.isBlank()) {
                         if (seed.length() > 0) seed.append(' ');
@@ -1283,6 +1289,24 @@ public class TableParser {
                 }
             }
             if (!extracted.isBlank()) {
+                // Strip appearance words and measurement noise from extracted.
+                // These are re-synthesized cleanly by the tail (yarnSpec, density, gsm, width).
+                // Keeps code + composition text; removes Solid/Stripe patterns and raw yd/gsm/density.
+                extracted = extracted
+                        .replaceAll("(?i)\\b(Solid|Stripe|Check|Print|Melange|Heather|Yarn[- ]Dyed|Piece[- ]Dyed|Pattern)\\b", " ")
+                        .replaceAll("(?i)\\b\\d{1,4}(?:\\.\\d{1,3})?\\s*yd\\b", " ")
+                        .replaceAll("(?i)\\b\\d{1,3}(?:\\.\\d+)?\\s*g/m2\\b", " ")
+                        .replaceAll("\\b\\d{1,4}\\s*[xX]\\s*\\d{1,4}(?:\\s*/\\s*\\d{1,3}){1,2}\\b", " ")
+                        .replaceAll("\\b\\d{1,4}\\s*[xX]\\s*\\d{1,4}\\b", " ")
+                        .replaceAll("\\s+,", ",")
+                        .replaceAll("\\s{2,}", " ")
+                        .trim();
+                if (extracted.isBlank()) {
+                    // Safety: if stripping emptied everything, revert to minimal code-only
+                    java.util.regex.Matcher codeOnly = java.util.regex.Pattern
+                            .compile("(?i)\\b[A-Z]{1,4}\\d{3,}[-_A-Za-z0-9]*").matcher(search);
+                    if (codeOnly.find()) extracted = codeOnly.group();
+                }
                 // If extracted lacks explicit percentages but raw has composition, inject it after the fabric code
                 boolean hasPct = TOKEN_HAS_PERCENT.matcher(extracted).find();
                 String compFromRaw = normalizeBomComposition(search);
