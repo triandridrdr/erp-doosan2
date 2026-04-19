@@ -91,9 +91,24 @@ public class OcrNewService {
                 if (row == null || row.size() < 6) continue;
                 String type = safe(row.get(2));
                 String desc = safe(row.get(3));
+                String before = desc;
                 // Strip supplier tail noise if it bled into Description
                 if (!desc.isBlank()) {
                     desc = supplierTail.matcher(desc).replaceFirst("").trim();
+                }
+                // Always normalize/dedup BOM Description before returning to frontend.
+                // This fixes fabric rows where OCR/hOCR accumulation causes repetitions.
+                if (!desc.isBlank()) {
+                    desc = TableParser.normalizeBomDescriptionValue(desc);
+                }
+                {
+                    String low = desc.toLowerCase(Locale.ROOT);
+                    if (low.contains("zcx") && low.contains("circulose")) {
+                        String b = before == null ? "" : before;
+                        if (!oneLine(b).equals(oneLine(desc))) {
+                            log.info("[BOM-SANITIZE] row#{} desc: '{}' -> '{}'", r, truncate(oneLine(b), 220), truncate(oneLine(desc), 220));
+                        }
+                    }
                 }
                 if (hangerPat.matcher(desc).find() || type.toLowerCase(Locale.ROOT).contains("tape")) {
                     if (hangerPat.matcher(desc).find()) {
@@ -510,10 +525,23 @@ public class OcrNewService {
                 if (hr != null && hr.size() >= 6 && out.size() >= 6) {
                     String hDesc = safe(hr.get(3)).trim();
                     String hComp = safe(hr.get(4)).trim();
+                    String rDesc = safe(out.get(3)).trim();
+                    String rComp = safe(out.get(4)).trim();
 
-                    // Prefer hOCR only when the text is clearly long/multi-line
-                    if (hDesc.length() >= 35) out.set(3, hDesc);
-                    if (hComp.length() >= 35) out.set(4, hComp);
+                    // Prefer the LONGER text between raw and hOCR for Description/Composition.
+                    // hOCR can lose page-break continuation content (e.g., fabric row page-2 overflow),
+                    // while raw OCR preserves line-level joined content. When both meet the minimum
+                    // length, pick the longer one to retain more information.
+                    if (hDesc.length() >= 35 && hDesc.length() >= rDesc.length()) {
+                        out.set(3, hDesc);
+                    } else if (rDesc.length() < 35 && hDesc.length() >= 35) {
+                        out.set(3, hDesc);
+                    }
+                    if (hComp.length() >= 35 && hComp.length() >= rComp.length()) {
+                        out.set(4, hComp);
+                    } else if (rComp.length() < 35 && hComp.length() >= 35) {
+                        out.set(4, hComp);
+                    }
                 }
             }
 

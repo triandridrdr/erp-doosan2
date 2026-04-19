@@ -230,6 +230,14 @@ public class TableParser {
                     if (continuationPage && !sawPositionKeyword && !sawDescriptionKeyword) {
                         continue;
                     }
+
+                    // Continuation pages: some PDFs place continuation content immediately after the header
+                    // but before the next row start (Trim/Shell...). Preserve these lines so the cross-page
+                    // continuation logic can merge them into the previous row.
+                    if (continuationPage && (sawPositionKeyword || sawDescriptionKeyword) && !BOM_ROW_START.matcher(txt).find()) {
+                        section.add(l);
+                        continue;
+                    }
                     
                     // Start body when we see a row start pattern after header keywords
                     if (sawPositionKeyword && sawDescriptionKeyword && BOM_ROW_START.matcher(txt).find()) {
@@ -1185,11 +1193,13 @@ public class TableParser {
         return rows;
     }
 
-    private static String normalizeBomDescriptionValue(String raw) {
+    public static String normalizeBomDescriptionValue(String raw) {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
         r = mergeSplitWords(r);
         r = r.replaceAll("(?i)\\+\\s+zes\\s*=", "+ sizes =");
+        r = r.replaceAll("(?i)\\brecy\\s*cled\\b", "recycled");
+        r = r.replaceAll("(?i)\\bpoly\\s*ester\\b", "polyester");
         if (r.toUpperCase(Locale.ROOT).contains("JY") && r.toLowerCase(Locale.ROOT).contains("circul")) {
             r = r.replaceAll("(?i)\\bcircul\\b", "circulose");
         }
@@ -1274,6 +1284,56 @@ public class TableParser {
         // Fallback merge: generic 'N% Reviscose ... M% (RECYCLED )?POLYESTER' -> 'N/M% Reviscose with recycled polyester'
         r = r.replaceAll("(?i)\\b(\\d{1,3})%\\s*Reviscose\\s+(\\d{1,3})%\\s*(?:RECYCLED\\s+)?POLYESTER\\b",
                 "$1/$2% Reviscoseviscose with recycled polyester");
+
+        {
+            String low = r.toLowerCase(Locale.ROOT);
+            java.util.regex.Matcher codeM = java.util.regex.Pattern
+                    .compile("\\b([A-Z]{1,4}\\d{3,}-circulose)\\b")
+                    .matcher(r);
+            boolean looksLikeTargetFabric = codeM.find()
+                    && low.contains("recycled")
+                    && low.contains("polyester")
+                    && low.contains("revisc")
+                    && low.contains("circulose")
+                    && (low.contains("80%") || low.contains("80/20"));
+            if (looksLikeTargetFabric) {
+                String code = codeM.group(1);
+
+                String yarnSpec = null;
+                java.util.regex.Matcher yarn = java.util.regex.Pattern
+                        .compile("(?i)\\b\\d{1,3}dx\\d{1,3}s\\b")
+                        .matcher(r);
+                if (yarn.find()) yarnSpec = yarn.group(0);
+
+                String density = null;
+                java.util.regex.Matcher dens = java.util.regex.Pattern
+                        .compile("\\b\\d{2,4}x\\d{2,4}\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(r);
+                while (dens.find()) density = dens.group(0);
+
+                String gsm = null;
+                java.util.regex.Matcher gsmM = java.util.regex.Pattern
+                        .compile("\\b\\d{1,3}g/sm\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(r);
+                while (gsmM.find()) gsm = gsmM.group(0);
+
+                String width = null;
+                java.util.regex.Matcher w = java.util.regex.Pattern
+                        .compile("\\b\\d{2,3}\"CW\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(r);
+                while (w.find()) width = w.group(0);
+
+                StringBuilder out = new StringBuilder();
+                out.append(code)
+                        .append(" 80/20% Reviscoseviscose with circulose / recycled polyester");
+                if (yarnSpec != null) out.append(' ').append(yarnSpec);
+                if (density != null) out.append(' ').append(density);
+                if (gsm != null) out.append(' ').append(gsm);
+                if (width != null) out.append(' ').append(width);
+                r = out.toString();
+            }
+        }
+
         // Remove any duplicate spaces created by replacements
         r = r.replaceAll("\\s{2,}", " ");
         // Trimming hanger loop: ambil hanya sampai 'loop' jika ada
@@ -1391,6 +1451,14 @@ public class TableParser {
                         } catch (Exception ignore) { /* no-op */ }
                     }
                 }
+                if (gsm == null) {
+                    java.util.regex.Matcher gsm3 = java.util.regex.Pattern
+                            .compile("\\b(\\d{1,3})(?:\\.0+)?\\s*g/sm\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                            .matcher(search);
+                    if (gsm3.find()) {
+                        gsm = gsm3.group(1) + "g/sm";
+                    }
+                }
 
                 // Optional yarn spec like '20dx45s'
                 String yarnSpec = null;
@@ -1409,7 +1477,15 @@ public class TableParser {
                 if (w.find()) {
                     // Preserve optional CW suffix if present in the matched span
                     String span = w.group(0);
-                    width = span.contains("CW") || span.contains("cw") ? (w.group(1) + "\"CW") : (w.group(1) + '"');
+                    width = span.contains("CW") || span.contains("cw") ? (w.group(1) + "\"CW") : (w.group(1) + '\"');
+                }
+                if (width == null) {
+                    java.util.regex.Matcher w2 = java.util.regex.Pattern
+                            .compile("\\b(\\d)\\s*(\\d)\"\\s*(?:CW)?\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                            .matcher(search);
+                    if (w2.find()) {
+                        width = (w2.group(1) + w2.group(2)) + "\"CW";
+                    }
                 }
 
                 // include '+ sizes =' if it was present anywhere in current description
@@ -1494,11 +1570,6 @@ public class TableParser {
                 break;
             }
             if (ID_LIKE_TOKEN.matcher(tok).matches()) {
-                end = i;
-                break;
-            }
-            // Stop at supplier-like or known suffixes
-            if (tok.matches("(?i)TRADING|CO\\.?|LTD\\.?|LTD|GARMENTS|ACCESSORIES")) {
                 end = i;
                 break;
             }
