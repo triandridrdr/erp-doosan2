@@ -234,7 +234,9 @@ public class TableParser {
                     // Continuation pages: some PDFs place continuation content immediately after the header
                     // but before the next row start (Trim/Shell...). Preserve these lines so the cross-page
                     // continuation logic can merge them into the previous row.
-                    if (continuationPage && (sawPositionKeyword || sawDescriptionKeyword) && !BOM_ROW_START.matcher(txt).find()) {
+                    // IMPORTANT: require BOTH position/placement and description keywords.
+                    // Sections like 'Labels' may contain the word 'Description' but are not BOM tables.
+                    if (continuationPage && (sawPositionKeyword && sawDescriptionKeyword) && !BOM_ROW_START.matcher(txt).find()) {
                         section.add(l);
                         continue;
                     }
@@ -254,6 +256,17 @@ public class TableParser {
                     }
                     
                     continue;
+                }
+
+                // Hard stop: after BOM table body starts, do not swallow subsequent non-BOM sections
+                // such as the Labels table (it contains the word 'Description' and gets appended into
+                // the previous BOM row otherwise).
+                if (lowerTxt.equals("labels")
+                        || lowerTxt.startsWith("labels ")
+                        || lowerTxt.contains("h&m label code")
+                        || (lowerTxt.contains("label type") && lowerTxt.contains("label group"))
+                        || (lowerTxt.contains("information") && lowerTxt.contains("comments") && lowerTxt.contains("labels"))) {
+                    break;
                 }
 
                 section.add(l);
@@ -282,6 +295,19 @@ public class TableParser {
                     }
 
                     String contText = oneLine(cont.toString());
+                    String contLow = contText.toLowerCase(Locale.ROOT);
+                    if (contLow.startsWith("labels")
+                            || contLow.contains("h&m label code")
+                            || contLow.contains("label type")
+                            || contLow.contains("label group")
+                            || contLow.contains("information comments")
+                            || contLow.contains("valid for")
+                            || contLow.contains("care label")
+                            || contLow.contains("hangtag")
+                            || contLow.matches(".*\\bhminc\\d{4,}\\b.*")
+                            || contLow.contains("comment:")) {
+                        continue;
+                    }
                     if (!contText.isBlank()) {
                         List<String> last = mergedRows.get(mergedRows.size() - 1);
                         if (last != null && last.size() >= 2) {
@@ -298,12 +324,10 @@ public class TableParser {
                                 if (lastHasComp && looksLikeCompositionContinuation(contText)) {
                                     String compTokens = extractCompositionContinuationTokens(contText);
                                     // Also check for RECYCLED POLYESTER fragments
-                                    String contLow = contText.toLowerCase();
                                     if ((contLow.contains("recycled") || contLow.contains("recy")) && 
-                                        (contLow.contains("polyester") || contLow.contains("olyester") || contLow.contains("polyeste"))) {
-                                        if (!compTokens.toLowerCase().contains("polyester")) {
-                                            compTokens = oneLine(compTokens + " RECYCLED POLYESTER");
-                                        }
+                                            !compTokens.toLowerCase().contains("recycled")) {
+                                        if (!compTokens.isBlank()) compTokens += ", ";
+                                        compTokens += "recycled polyester";
                                     }
                                     if (!compTokens.isBlank()) {
                                         String newComp = oneLine(lastComp + (lastComp.endsWith("%") ? " " : ", ") + compTokens);
@@ -876,6 +900,19 @@ public class TableParser {
             boolean lineStartsRow = BOM_ROW_START.matcher(txt).find();
             boolean isRowStart = lineStartsRow || (!cells.position.isBlank() && BOM_ROW_START.matcher(cells.position).find());
             boolean isContinuation = !isRowStart && cur != null;
+
+            if (isContinuation) {
+                String lowTxt = txt.toLowerCase(Locale.ROOT);
+                if (lowTxt.startsWith("labels")
+                        || lowTxt.contains("h&m label code")
+                        || lowTxt.contains("valid for")
+                        || lowTxt.contains("care label")
+                        || lowTxt.contains("hangtag")
+                        || lowTxt.matches(".*\\bhminc\\d{4,}\\b.*")
+                        || lowTxt.startsWith("comment:")) {
+                    break;
+                }
+            }
             
             if (BOM_DEBUG) {
                 log.debug("[BOM-ROW] page={} isRowStart={} isCont={} pos='{}' desc='{}' comp='{}'",
@@ -1197,6 +1234,27 @@ public class TableParser {
         String r = oneLine(raw);
         if (r.isBlank()) return "";
         r = mergeSplitWords(r);
+
+        {
+            String low = r.toLowerCase(Locale.ROOT);
+            int cut = -1;
+            int i;
+            i = low.indexOf("comment:");
+            if (i >= 0) cut = cut < 0 ? i : Math.min(cut, i);
+            i = low.indexOf("valid for");
+            if (i >= 0) cut = cut < 0 ? i : Math.min(cut, i);
+            i = low.indexOf("h&m label code");
+            if (i >= 0) cut = cut < 0 ? i : Math.min(cut, i);
+            i = low.indexOf("information comments");
+            if (i >= 0) cut = cut < 0 ? i : Math.min(cut, i);
+            i = low.indexOf("labels");
+            if (i >= 0 && i <= 5) cut = cut < 0 ? i : Math.min(cut, i);
+            java.util.regex.Matcher hm = java.util.regex.Pattern.compile("(?i)\\bhminc\\d{4,}\\b").matcher(r);
+            if (hm.find()) cut = cut < 0 ? hm.start() : Math.min(cut, hm.start());
+            if (cut > 0) {
+                r = oneLine(r.substring(0, cut));
+            }
+        }
         r = r.replaceAll("(?i)\\+\\s+zes\\s*=", "+ sizes =");
         r = r.replaceAll("(?i)\\brecy\\s*cled\\b", "recycled");
         r = r.replaceAll("(?i)\\bpoly\\s*ester\\b", "polyester");
