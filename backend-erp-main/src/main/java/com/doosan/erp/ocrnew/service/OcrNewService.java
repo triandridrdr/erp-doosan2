@@ -182,6 +182,7 @@ public class OcrNewService {
                         lower.equals("solid") || lower.startsWith("solid ") ||
                         lower.equals("total") || lower.startsWith("total ")) {
                     if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
+                        ensureSizeDefaults(currentRow[0]);
                         out.add(currentRow[0]);
                     }
                     String type = lower.startsWith("assortment") ? "Assortment" : (lower.startsWith("solid") ? "Solid" : "Total");
@@ -202,6 +203,7 @@ public class OcrNewService {
                 if (qm.matches()) {
                     String q = normalizeNumber(qm.group(1));
                     if (q != null && !q.isBlank()) currentRow[0].put("total", q);
+                    ensureSizeDefaults(currentRow[0]);
                     out.add(currentRow[0]);
                     currentRow[0] = null;
                     sawAnySize[0] = false;
@@ -210,6 +212,7 @@ public class OcrNewService {
 
                 // Fallback: bare "Quantity:" without a parseable number — still emit the row
                 if (lower.startsWith("quantity") || lower.startsWith("qty")) {
+                    ensureSizeDefaults(currentRow[0]);
                     out.add(currentRow[0]);
                     currentRow[0] = null;
                     sawAnySize[0] = false;
@@ -230,6 +233,7 @@ public class OcrNewService {
             }
 
             if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
+                ensureSizeDefaults(currentRow[0]);
                 out.add(currentRow[0]);
             }
 
@@ -268,11 +272,16 @@ public class OcrNewService {
 
         if (assortment == null || solid == null || total == null) return;
 
-        // Skip if Assortment already has size values
+        // Skip only if Assortment already has any positive (>0) size value
         List<String> sizes = List.of("XS", "S", "M", "L", "XL");
         for (String sz : sizes) {
             String v = assortment.get(sz);
-            if (v != null && !v.isBlank()) return;
+            if (v != null && !v.isBlank()) {
+                try {
+                    int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
+                    if (iv > 0) return; // already meaningful, do not override
+                } catch (NumberFormatException ignored) { return; }
+            }
         }
 
         // Build diffs and compute GCD across positive diffs
@@ -291,12 +300,23 @@ public class OcrNewService {
 
         if (gcd <= 0) return;
 
-        // If a 'Quantity' was parsed and divides diffs evenly, prefer it as the divisor
+        // Prefer using GCD; only switch to 'Quantity' if it divides diffs AND
+        // the resulting per-pack sizes sum equals the Quantity value.
         int divisor = gcd;
+        int sumIfGcd = 0;
+        for (int d : diffs) sumIfGcd += (gcd > 0 ? d / gcd : 0);
         if (qtyAssort != null && qtyAssort > 0) {
             boolean allDivisible = true;
             for (int d : diffs) { if (d % qtyAssort != 0) { allDivisible = false; break; } }
-            if (allDivisible) divisor = qtyAssort;
+            if (allDivisible) {
+                int sumIfQty = 0;
+                for (int d : diffs) sumIfQty += d / qtyAssort;
+                if (sumIfQty == qtyAssort) {
+                    divisor = qtyAssort;
+                } else {
+                    divisor = gcd; // keep gcd when more plausible
+                }
+            }
         }
 
         int sum = 0;
@@ -326,6 +346,34 @@ public class OcrNewService {
             if (t.contains(n)) return i;
         }
         return -1;
+    }
+
+    private static void ensureSizeDefaults(Map<String, String> row) {
+        if (row == null) return;
+        String type = row.get("type");
+        if (type == null) return;
+        if (!("Assortment".equals(type) || "Solid".equals(type) || "Total".equals(type))) return;
+
+        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+        int sum = 0;
+        boolean anyNumeric = false;
+        for (String sz : sizes) {
+            String v = row.get(sz);
+            if (v == null || v.isBlank()) {
+                row.put(sz, "0");
+                v = "0";
+            }
+            try {
+                int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
+                sum += iv;
+                anyNumeric = true;
+            } catch (NumberFormatException ignored) {}
+        }
+        // If total missing or blank: set computed sum if we had any numeric values; otherwise default to 0
+        String tot = row.get("total");
+        if (tot == null || tot.isBlank()) {
+            row.put("total", String.valueOf(anyNumeric ? sum : 0));
+        }
     }
 
     private static boolean looksLikeDestinationCountryLine(String t) {
@@ -745,7 +793,11 @@ public class OcrNewService {
                 putIfNonBlank(m, "XL", cell(row, iXL));
                 putIfNonBlank(m, "total", cell(row, iTotal));
 
-                if (!m.isEmpty()) out.add(m);
+                // Try to infer row type from previous non-empty or keep as generic; still ensure size defaults
+                if (!m.isEmpty()) {
+                    ensureSizeDefaults(m);
+                    out.add(m);
+                }
             }
         }
 
