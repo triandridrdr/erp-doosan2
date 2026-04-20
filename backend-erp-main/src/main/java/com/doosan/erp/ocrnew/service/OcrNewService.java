@@ -49,6 +49,11 @@ public class OcrNewService {
 
     private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
+    // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
+    // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
+    // Safely excludes size patterns like "(XS)", "(M)", "(EP)" (too short / fails the trailing +).
+    private static final Pattern DEST_COUNTRY_PAT =
+            Pattern.compile("\\([A-Z]{2}[A-Z0-9\\-]+\\)?");
 
     private final PdfToImageRenderer pdfToImageRenderer = new PdfToImageRenderer();
     private final KeyValueParser keyValueParser = new KeyValueParser();
@@ -152,15 +157,47 @@ public class OcrNewService {
 
             int pageOutStart = out.size();
 
-            String destinationCountry = "";
-            // Typically the country line comes shortly after header
-            for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 8); i++) {
+            // Collect candidate lines that might contain the country (header itself +
+            // up to 10 subsequent lines, stopping at "Article No:" / "H&M Colour" markers).
+            List<String> countryCandidates = new ArrayList<>();
+            {
+                String hdr = oneLine(texts.get(idxHeader));
+                int bdIdx = hdr.toLowerCase(Locale.ROOT).indexOf("breakdown");
+                if (bdIdx >= 0) {
+                    String afterBd = hdr.substring(bdIdx + "breakdown".length()).trim();
+                    if (!afterBd.isBlank()) countryCandidates.add(afterBd);
+                }
+            }
+            for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 10); i++) {
                 String t = oneLine(texts.get(i));
                 if (t.isBlank()) continue;
-                if (t.toLowerCase(Locale.ROOT).startsWith("article no")) break;
-                if (looksLikeDestinationCountryLine(t)) {
-                    destinationCountry = t;
-                    break;
+                String lower = t.toLowerCase(Locale.ROOT);
+                if (lower.startsWith("h&m colour") || lower.startsWith("colour name")) break;
+                countryCandidates.add(t);
+                if (lower.startsWith("article no")) break;
+            }
+
+            String destinationCountry = "";
+            // Pass 1: try each candidate individually
+            for (String cand : countryCandidates) {
+                String c = extractDestinationCountryFromText(cand);
+                if (c != null) { destinationCountry = c; break; }
+            }
+            // Pass 2: try concatenating consecutive pairs to stitch lines that OCR
+            // split across visual rows (e.g. "Germany/Türkiye TR" + "(PM-TR)").
+            if (destinationCountry.isBlank()) {
+                for (int i = 0; i < countryCandidates.size() - 1; i++) {
+                    String combined = countryCandidates.get(i) + " " + countryCandidates.get(i + 1);
+                    String c = extractDestinationCountryFromText(combined);
+                    if (c != null) { destinationCountry = c; break; }
+                }
+            }
+
+            if (log.isDebugEnabled()) {
+                if (destinationCountry.isBlank()) {
+                    log.debug("[DEST-COUNTRY] page={} EMPTY, candidates={}", e.getKey(), countryCandidates);
+                } else {
+                    log.debug("[DEST-COUNTRY] page={} detected='{}'", e.getKey(), destinationCountry);
                 }
             }
 
@@ -410,16 +447,27 @@ public class OcrNewService {
         }
     }
 
-    private static boolean looksLikeDestinationCountryLine(String t) {
-        if (t == null) return false;
-        String s = oneLine(t);
-        if (s.isBlank()) return false;
+    /**
+     * Try to extract a destination-country string from a (possibly merged) OCR line.
+     * Returns the country portion, e.g. "Sweden SE (PMSCA)", or null if not found.
+     * Works even when extra text is appended (e.g. "Sweden SE (PMSCA) Article No: 001")
+     * or when OCR mangled the 2-letter country code outside the parens.
+     */
+    private static String extractDestinationCountryFromText(String t) {
+        if (t == null) return null;
+        String s = oneLine(t).trim();
+        if (s.isBlank() || !s.contains("(")) return null;
         String lower = s.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("article no")) return false;
-        if (lower.startsWith("h&m colour")) return false;
-        if (lower.startsWith("colour name")) return false;
-        // Typical pattern: "USA (Online H&M) OU (OLNAM)" or "Great Britan (Online) OG (OL-UK)"
-        return s.contains("(") && s.contains(")") && s.matches(".*\\b[A-Z]{2}\\b\\s*\\(.+\\)\\s*$");
+        if (lower.startsWith("h&m colour") || lower.startsWith("colour name")) return null;
+        Matcher m = DEST_COUNTRY_PAT.matcher(s);
+        if (m.find()) {
+            // Require a non-empty alphabetic prefix before the paren — so a bare "(PM-TR)"
+            // line isn't treated as a complete country; caller should combine with previous line.
+            String prefix = s.substring(0, m.start()).trim();
+            if (prefix.isEmpty() || !prefix.matches(".*[A-Za-z].*")) return null;
+            return s.substring(0, m.end()).trim();
+        }
+        return null;
     }
 
     private static String normalizeSizeKey(String raw) {
