@@ -49,11 +49,6 @@ public class OcrNewService {
 
     private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
-    // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
-    // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
-    // Safely excludes size patterns like "(XS)", "(M)", "(EP)" (too short / fails the trailing +).
-    private static final Pattern DEST_COUNTRY_PAT =
-            Pattern.compile("\\([A-Z]{2}[A-Z0-9\\-]+\\)?");
 
     private final PdfToImageRenderer pdfToImageRenderer = new PdfToImageRenderer();
     private final KeyValueParser keyValueParser = new KeyValueParser();
@@ -157,48 +152,28 @@ public class OcrNewService {
 
             int pageOutStart = out.size();
 
-            // Collect candidate lines that might contain the country (header itself +
-            // up to 10 subsequent lines, stopping at "Article No:" / "H&M Colour" markers).
-            List<String> countryCandidates = new ArrayList<>();
-            {
-                String hdr = oneLine(texts.get(idxHeader));
-                int bdIdx = hdr.toLowerCase(Locale.ROOT).indexOf("breakdown");
-                if (bdIdx >= 0) {
-                    String afterBd = hdr.substring(bdIdx + "breakdown".length()).trim();
-                    if (!afterBd.isBlank()) countryCandidates.add(afterBd);
-                }
-            }
-            for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 10); i++) {
+            String destinationCountry = "";
+            // Ambil baris pertama non-blank setelah header sebagai Country of Destination,
+            // kecuali baris metadata yang jelas. Jika baris berikutnya mengandung kode pasar
+            // seperti (PM-XX), gabungkan keduanya.
+            for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 12); i++) {
                 String t = oneLine(texts.get(i));
                 if (t.isBlank()) continue;
                 String lower = t.toLowerCase(Locale.ROOT);
-                if (lower.startsWith("h&m colour") || lower.startsWith("colour name")) break;
-                countryCandidates.add(t);
-                if (lower.startsWith("article no")) break;
-            }
-
-            String destinationCountry = "";
-            // Pass 1: try each candidate individually
-            for (String cand : countryCandidates) {
-                String c = extractDestinationCountryFromText(cand);
-                if (c != null) { destinationCountry = c; break; }
-            }
-            // Pass 2: try concatenating consecutive pairs to stitch lines that OCR
-            // split across visual rows (e.g. "Germany/Türkiye TR" + "(PM-TR)").
-            if (destinationCountry.isBlank()) {
-                for (int i = 0; i < countryCandidates.size() - 1; i++) {
-                    String combined = countryCandidates.get(i) + " " + countryCandidates.get(i + 1);
-                    String c = extractDestinationCountryFromText(combined);
-                    if (c != null) { destinationCountry = c; break; }
+                if (lower.startsWith("article no") || lower.startsWith("h&m colour") || lower.startsWith("colour name")) {
+                    // lewati metadata awal artikel/warna
+                    continue;
                 }
-            }
-
-            if (log.isDebugEnabled()) {
-                if (destinationCountry.isBlank()) {
-                    log.debug("[DEST-COUNTRY] page={} EMPTY, candidates={}", e.getKey(), countryCandidates);
-                } else {
-                    log.debug("[DEST-COUNTRY] page={} detected='{}'", e.getKey(), destinationCountry);
+                destinationCountry = t;
+                // Cek 1 baris berikutnya untuk kode pasar agar tidak terpisah oleh OCR
+                if (i + 1 < texts.size()) {
+                    String t2 = oneLine(texts.get(i + 1));
+                    String up2 = t2.toUpperCase(Locale.ROOT);
+                    if (!t2.isBlank() && (up2.contains("(PM") || up2.matches(".*\\bPM[- ]?[A-Z]{2,}.*"))) {
+                        destinationCountry = destinationCountry + " " + t2;
+                    }
                 }
+                break;
             }
 
             String color = globalColor;
@@ -214,6 +189,19 @@ public class OcrNewService {
 
                 String lower = t.toLowerCase(Locale.ROOT);
                 if (lower.startsWith("bill of material")) break;
+
+                // Some pages contain multiple destination country sections; detect mid-page switches
+                if (looksLikeDestinationCountryLine(t)) {
+                    // If there is an active row, flush it before switching context
+                    if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
+                        ensureSizeDefaults(currentRow[0]);
+                        out.add(currentRow[0]);
+                    }
+                    currentRow[0] = null;
+                    sawAnySize[0] = false;
+                    destinationCountry = t;
+                    continue;
+                }
 
                 if (lower.equals("assortment") || lower.startsWith("assortment ") ||
                         lower.equals("solid") || lower.startsWith("solid ") ||
@@ -234,8 +222,20 @@ public class OcrNewService {
                     continue;
                 }
 
-                // Capture 'No of Asst:' value — must run even when currentRow is null
-                // so that the backfill path can attach it to the last emitted Assortment row.
+                if (currentRow[0] == null) continue;
+
+                Matcher qm = QUANTITY_LINE.matcher(t);
+                if (qm.matches()) {
+                    String q = normalizeNumber(qm.group(1));
+                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
+                    ensureSizeDefaults(currentRow[0]);
+                    out.add(currentRow[0]);
+                    currentRow[0] = null;
+                    sawAnySize[0] = false;
+                    continue;
+                }
+
+                // Capture 'No of Asst:' value and attach to current Assortment row
                 if (lower.startsWith("no of asst")) {
                     String n = parseInlineOrNextNumber(t, texts, i + 1);
                     if (n != null && !n.isBlank()) {
@@ -253,19 +253,6 @@ public class OcrNewService {
                             }
                         }
                     }
-                    continue;
-                }
-
-                if (currentRow[0] == null) continue;
-
-                Matcher qm = QUANTITY_LINE.matcher(t);
-                if (qm.matches()) {
-                    String q = normalizeNumber(qm.group(1));
-                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
-                    ensureSizeDefaults(currentRow[0]);
-                    out.add(currentRow[0]);
-                    currentRow[0] = null;
-                    sawAnySize[0] = false;
                     continue;
                 }
 
@@ -306,84 +293,110 @@ public class OcrNewService {
             List<Map<String, String>> rows, int startIdx, List<String> texts) {
         if (rows == null || startIdx >= rows.size()) return;
 
-        // Try to read 'Quantity:' (Assortment) or 'No of Asst:' if present, but we won't depend on it.
-        Integer qtyAssort = null;
+        // Page-level hints (used only when they fit logically within a segment)
+        Integer qtyAssortPage = null;
+        String noOfAsstFoundPage = null;
         for (String t : texts) {
             String lower = t.toLowerCase(Locale.ROOT).trim();
             if (lower.startsWith("quantity")) {
                 Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(t);
                 if (m.find()) {
-                    try { qtyAssort = Integer.parseInt(m.group(1).replaceAll("\\s+", "")); }
+                    try { qtyAssortPage = Integer.parseInt(m.group(1).replaceAll("\\s+", "")); }
                     catch (NumberFormatException ignored) {}
                 }
-                // don't break; later lines may relate to other sections
-            }
-        }
-
-        // Find Assortment, Solid, Total rows added for this page
-        Map<String, String> assortment = null, solid = null, total = null;
-        for (int i = startIdx; i < rows.size(); i++) {
-            String type = rows.get(i).getOrDefault("type", "");
-            if ("Assortment".equals(type) && assortment == null) assortment = rows.get(i);
-            else if ("Solid".equals(type) && solid == null) solid = rows.get(i);
-            else if ("Total".equals(type) && total == null) total = rows.get(i);
-        }
-
-        if (assortment == null || solid == null || total == null) return;
-
-        // Skip only if Assortment already has any positive (>0) size value
-        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
-        for (String sz : sizes) {
-            String v = assortment.get(sz);
-            if (v != null && !v.isBlank()) {
-                try {
-                    int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
-                    if (iv > 0) return; // already meaningful, do not override
-                } catch (NumberFormatException ignored) { return; }
-            }
-        }
-
-        // Build diffs and compute GCD across positive diffs
-        int gcd = 0;
-        int[] diffs = new int[sizes.size()];
-        for (int i = 0; i < sizes.size(); i++) {
-            String sz = sizes.get(i);
-            try {
-                int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                int diff = Math.max(0, tVal - sVal);
-                diffs[i] = diff;
-                if (diff > 0) gcd = (gcd == 0) ? diff : gcd(gcd, diff);
-            } catch (NumberFormatException ignored) {}
-        }
-
-        if (gcd <= 0) return;
-
-        // Prefer using GCD; only switch to 'Quantity' if it divides diffs AND
-        // the resulting per-pack sizes sum equals the Quantity value.
-        int divisor = gcd;
-        if (qtyAssort != null && qtyAssort > 0) {
-            boolean allDivisible = true;
-            for (int d : diffs) { if (d % qtyAssort != 0) { allDivisible = false; break; } }
-            if (allDivisible) {
-                int sumIfQty = 0;
-                for (int d : diffs) sumIfQty += d / qtyAssort;
-                if (sumIfQty == qtyAssort) {
-                    divisor = qtyAssort;
-                } else {
-                    divisor = gcd; // keep gcd when more plausible
+            } else if (lower.startsWith("no of asst")) {
+                Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(t);
+                if (m.find()) {
+                    noOfAsstFoundPage = normalizeNumber(m.group(1));
                 }
             }
         }
 
-        int sum = 0;
-        for (int i = 0; i < sizes.size(); i++) {
-            int val = (divisor > 0) ? (diffs[i] / divisor) : 0;
-            if (val < 0) val = 0;
-            if (val > 0) sum += val;
-            assortment.put(sizes.get(i), String.valueOf(val));
+        // Process per destinationCountry segment within this page
+        int i = startIdx;
+        while (i < rows.size()) {
+            // Determine segment key (destinationCountry)
+            String segCountry = firstNonBlank(
+                    rows.get(i).get("destinationCountry"),
+                    rows.get(i).get("countryOfDestination"));
+
+            int segStart = i;
+            int segEnd = i;
+            for (int j = i; j < rows.size(); j++) {
+                String c = firstNonBlank(rows.get(j).get("destinationCountry"), rows.get(j).get("countryOfDestination"));
+                if (!Objects.equals(c, segCountry)) { break; }
+                segEnd = j;
+            }
+
+            // Within the segment, try to backfill the first Assortment that has no meaningful sizes
+            Map<String, String> assortment = null, solid = null, total = null;
+            for (int j = segStart; j <= segEnd; j++) {
+                Map<String, String> r = rows.get(j);
+                String type = r.getOrDefault("type", "");
+                if ("Assortment".equals(type) && assortment == null) assortment = r;
+                else if ("Solid".equals(type)) solid = r; // keep last Solid in the segment
+                else if ("Total".equals(type)) total = r; // keep last Total in the segment
+            }
+
+            if (assortment != null && solid != null && total != null) {
+                // Backfill No of Asst if missing
+                if (!assortment.containsKey("noOfAsst") && noOfAsstFoundPage != null && !noOfAsstFoundPage.isBlank()) {
+                    assortment.put("noOfAsst", noOfAsstFoundPage);
+                }
+
+                List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+                boolean hasPositive = false;
+                for (String sz : sizes) {
+                    String v = assortment.get(sz);
+                    if (v != null && !v.isBlank()) {
+                        try {
+                            if (Integer.parseInt(v.replaceAll("\\s+", "")) > 0) { hasPositive = true; break; }
+                        } catch (NumberFormatException ignored) { hasPositive = true; break; }
+                    }
+                }
+
+                if (!hasPositive) {
+                    int gcd = 0;
+                    int[] diffs = new int[sizes.size()];
+                    for (int k = 0; k < sizes.size(); k++) {
+                        String sz = sizes.get(k);
+                        try {
+                            int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                            int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                            int diff = Math.max(0, tVal - sVal);
+                            diffs[k] = diff;
+                            if (diff > 0) gcd = (gcd == 0) ? diff : gcd(gcd, diff);
+                        } catch (NumberFormatException ignored) {}
+                    }
+
+                    if (gcd > 0) {
+                        int divisor = gcd;
+                        if (qtyAssortPage != null && qtyAssortPage > 0) {
+                            boolean allDivisible = true;
+                            for (int d : diffs) { if (d % qtyAssortPage != 0) { allDivisible = false; break; } }
+                            if (allDivisible) {
+                                int sumIfQty = 0;
+                                for (int d : diffs) sumIfQty += d / qtyAssortPage;
+                                if (sumIfQty == qtyAssortPage) {
+                                    divisor = qtyAssortPage;
+                                }
+                            }
+                        }
+
+                        int sum = 0;
+                        for (int k = 0; k < sizes.size(); k++) {
+                            int val = (divisor > 0) ? (diffs[k] / divisor) : 0;
+                            if (val < 0) val = 0;
+                            if (val > 0) sum += val;
+                            assortment.put(sizes.get(k), String.valueOf(val));
+                        }
+                        assortment.put("total", String.valueOf(sum));
+                    }
+                }
+            }
+
+            i = segEnd + 1;
         }
-        assortment.put("total", String.valueOf(sum));
     }
 
     private static int gcd(int a, int b) {
@@ -447,27 +460,22 @@ public class OcrNewService {
         }
     }
 
-    /**
-     * Try to extract a destination-country string from a (possibly merged) OCR line.
-     * Returns the country portion, e.g. "Sweden SE (PMSCA)", or null if not found.
-     * Works even when extra text is appended (e.g. "Sweden SE (PMSCA) Article No: 001")
-     * or when OCR mangled the 2-letter country code outside the parens.
-     */
-    private static String extractDestinationCountryFromText(String t) {
-        if (t == null) return null;
-        String s = oneLine(t).trim();
-        if (s.isBlank() || !s.contains("(")) return null;
+    private static boolean looksLikeDestinationCountryLine(String t) {
+        if (t == null) return false;
+        String s = oneLine(t);
+        if (s.isBlank()) return false;
         String lower = s.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("h&m colour") || lower.startsWith("colour name")) return null;
-        Matcher m = DEST_COUNTRY_PAT.matcher(s);
-        if (m.find()) {
-            // Require a non-empty alphabetic prefix before the paren — so a bare "(PM-TR)"
-            // line isn't treated as a complete country; caller should combine with previous line.
-            String prefix = s.substring(0, m.start()).trim();
-            if (prefix.isEmpty() || !prefix.matches(".*[A-Za-z].*")) return null;
-            return s.substring(0, m.end()).trim();
-        }
-        return null;
+        if (lower.startsWith("article no")) return false;
+        if (lower.startsWith("h&m colour")) return false;
+        if (lower.startsWith("colour name")) return false;
+        // Exclude obvious size or section lines
+        String upper = s.toUpperCase(Locale.ROOT);
+        if (upper.matches("^(XS|S|M|L|XL)\\s*\\(.*")) return false;
+        if (upper.startsWith("ASSORTMENT") || upper.startsWith("SOLID") || upper.startsWith("TOTAL")) return false;
+
+        // Safer heuristic: country lines in these H&M docs always include a market code with 'PM'
+        // e.g., "Canada CA (PM-CA)", "Colombia (Stores H&M) CO (PM-CO)", "Germany (Central Eur Market) DE (PMCEU)"
+        return s.contains("(") && s.contains(")") && upper.contains("(PM");
     }
 
     private static String normalizeSizeKey(String raw) {
