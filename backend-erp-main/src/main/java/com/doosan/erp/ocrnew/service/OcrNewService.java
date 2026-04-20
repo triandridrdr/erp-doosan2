@@ -210,6 +210,27 @@ public class OcrNewService {
                     continue;
                 }
 
+                // Capture 'No of Asst:' value and attach to current Assortment row
+                if (lower.startsWith("no of asst")) {
+                    String n = parseInlineOrNextNumber(t, texts, i + 1);
+                    if (n != null && !n.isBlank()) {
+                        if (currentRow[0] != null) {
+                            currentRow[0].put("noOfAsst", n);
+                        } else {
+                            // If the Assortment row was already emitted (e.g., upon 'Quantity:'),
+                            // backfill into the last Assortment row for this page.
+                            for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                Map<String, String> r = out.get(ri);
+                                if ("Assortment".equals(r.getOrDefault("type", ""))) {
+                                    r.put("noOfAsst", n);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Fallback: bare "Quantity:" without a parseable number — still emit the row
                 if (lower.startsWith("quantity") || lower.startsWith("qty")) {
                     ensureSizeDefaults(currentRow[0]);
@@ -303,8 +324,6 @@ public class OcrNewService {
         // Prefer using GCD; only switch to 'Quantity' if it divides diffs AND
         // the resulting per-pack sizes sum equals the Quantity value.
         int divisor = gcd;
-        int sumIfGcd = 0;
-        for (int d : diffs) sumIfGcd += (gcd > 0 ? d / gcd : 0);
         if (qtyAssort != null && qtyAssort > 0) {
             boolean allDivisible = true;
             for (int d : diffs) { if (d % qtyAssort != 0) { allDivisible = false; break; } }
@@ -346,6 +365,20 @@ public class OcrNewService {
             if (t.contains(n)) return i;
         }
         return -1;
+    }
+
+    private static String parseInlineOrNextNumber(String current, List<String> texts, int nextIdx) {
+        if (current != null) {
+            Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(current);
+            if (m.find()) return normalizeNumber(m.group(1));
+        }
+        if (texts != null && nextIdx >= 0 && nextIdx < texts.size()) {
+            String nxt = oneLine(texts.get(nextIdx));
+            if (nxt != null && nxt.matches("\\s*\\d[\\d\\s]*\\s*")) {
+                return normalizeNumber(nxt);
+            }
+        }
+        return null;
     }
 
     private static void ensureSizeDefaults(Map<String, String> row) {
@@ -550,10 +583,11 @@ public class OcrNewService {
             // Final hard guard: sanitize hanger loop Description and strip supplier noise before returning
             tables = sanitizeBomDescriptions(tables);
 
-            List<Map<String, String>> salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdown(tables);
-            if (salesOrderDetailSizeBreakdown.isEmpty()) {
-                salesOrderDetailSizeBreakdown = extractSalesOrderDetailSizeBreakdownFromLines(allLines, formFields);
-            }
+            // Extract using both methods; prefer line-based when available because it carries
+            // richer context (destinationCountry, type, noOfAsst). Fallback to table-based otherwise.
+            List<Map<String, String>> tableDetail = extractSalesOrderDetailSizeBreakdown(tables);
+            List<Map<String, String>> lineDetail = extractSalesOrderDetailSizeBreakdownFromLines(allLines, formFields);
+            List<Map<String, String>> salesOrderDetailSizeBreakdown = !lineDetail.isEmpty() ? lineDetail : tableDetail;
 
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)

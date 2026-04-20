@@ -38,6 +38,7 @@ type DetailDraftRow = {
   L: string;
   XL: string;
   total: string;
+  noOfAsst?: string;
   editable: boolean;
 };
 
@@ -109,6 +110,7 @@ export function SalesOrderPrototypeEditPage() {
           L: (m?.L ?? m?.l ?? '').toString(),
           XL: (m?.XL ?? m?.xl ?? '').toString(),
           total: (m?.total ?? m?.Total ?? '').toString(),
+          noOfAsst: (m?.noOfAsst ?? '').toString(),
           editable: true,
         })),
       );
@@ -233,7 +235,7 @@ export function SalesOrderPrototypeEditPage() {
             onClick={() => {
               setSalesOrderDetailDraftRows((prev) => [
                 ...prev,
-                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true },
+                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', noOfAsst: '', editable: true },
               ]);
             }}
           >
@@ -257,6 +259,7 @@ export function SalesOrderPrototypeEditPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>L</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XL</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
@@ -344,6 +347,19 @@ export function SalesOrderPrototypeEditPage() {
                             setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
                           }}
                         />
+                      </td>
+                      <td className='px-3 py-2 align-top whitespace-nowrap'>
+                        {row.type?.toLowerCase() === 'assortment' ? (
+                          <Input
+                            value={row.noOfAsst ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
+                            }}
+                          />
+                        ) : (
+                          <span className='text-sm text-gray-500'>-</span>
+                        )}
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>

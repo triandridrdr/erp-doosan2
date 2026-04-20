@@ -51,6 +51,7 @@ export function OcrNewPage() {
       L: string;
       XL: string;
       total: string;
+      noOfAsst?: string;
       editable: boolean;
     }>
   >([]);
@@ -97,6 +98,7 @@ export function OcrNewPage() {
             L: (m?.L ?? m?.l ?? '').toString(),
             XL: (m?.XL ?? m?.xl ?? '').toString(),
             total: (m?.total ?? m?.Total ?? '').toString(),
+            noOfAsst: (m?.noOfAsst ?? '').toString(),
             editable: true,
           }))
           .filter((r) => [r.countryOfDestination, r.type, r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
@@ -155,6 +157,7 @@ export function OcrNewPage() {
       L: string;
       XL: string;
       total: string;
+      noOfAsst?: string;
       editable: boolean;
     }> = [];
     for (const r of out) {
@@ -171,6 +174,7 @@ export function OcrNewPage() {
             L: (m?.L ?? m?.l ?? '').toString(),
             XL: (m?.XL ?? m?.xl ?? '').toString(),
             total: (m?.total ?? m?.Total ?? '').toString(),
+            noOfAsst: (m?.noOfAsst ?? '').toString(),
             editable: true,
           }))
           .filter((row) =>
@@ -415,7 +419,7 @@ export function OcrNewPage() {
             onClick={() => {
               setSalesOrderDetailDraftRows((prev) => [
                 ...prev,
-                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', editable: true },
+                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', noOfAsst: '', editable: true },
               ]);
             }}
           >
@@ -441,6 +445,7 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>L</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XL</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
@@ -530,6 +535,19 @@ export function OcrNewPage() {
                             setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
                           }}
                         />
+                      </td>
+                      <td className='px-3 py-2 align-top whitespace-nowrap'>
+                        {row.type?.toLowerCase() === 'assortment' ? (
+                          <Input
+                            value={row.noOfAsst ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
+                            }}
+                          />
+                        ) : (
+                          <span className='text-sm text-gray-500'>-</span>
+                        )}
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
