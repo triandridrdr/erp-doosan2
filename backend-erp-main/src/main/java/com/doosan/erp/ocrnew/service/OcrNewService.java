@@ -243,17 +243,17 @@ public class OcrNewService {
             List<Map<String, String>> rows, int startIdx, List<String> texts) {
         if (rows == null || startIdx >= rows.size()) return;
 
-        // Extract "No of Asst" from merged text lines
-        int noOfAsst = 0;
+        // Try to read 'Quantity:' (Assortment) or 'No of Asst:' if present, but we won't depend on it.
+        Integer qtyAssort = null;
         for (String t : texts) {
             String lower = t.toLowerCase(Locale.ROOT).trim();
-            if (lower.startsWith("no of asst")) {
+            if (lower.startsWith("quantity")) {
                 Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(t);
                 if (m.find()) {
-                    try { noOfAsst = Integer.parseInt(m.group(1).replaceAll("\\s+", "")); }
+                    try { qtyAssort = Integer.parseInt(m.group(1).replaceAll("\\s+", "")); }
                     catch (NumberFormatException ignored) {}
                 }
-                break;
+                // don't break; later lines may relate to other sections
             }
         }
 
@@ -275,33 +275,47 @@ public class OcrNewService {
             if (v != null && !v.isBlank()) return;
         }
 
-        if (noOfAsst <= 0) return;
-
-        // Compute Assortment[size] = (Total[size] - Solid[size]) / noOfAsst
-        for (String sz : sizes) {
+        // Build diffs and compute GCD across positive diffs
+        int gcd = 0;
+        int[] diffs = new int[sizes.size()];
+        for (int i = 0; i < sizes.size(); i++) {
+            String sz = sizes.get(i);
             try {
                 int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
                 int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                int diff = tVal - sVal;
-                if (diff >= 0) {
-                    assortment.put(sz, String.valueOf(diff / noOfAsst));
-                }
+                int diff = Math.max(0, tVal - sVal);
+                diffs[i] = diff;
+                if (diff > 0) gcd = (gcd == 0) ? diff : gcd(gcd, diff);
             } catch (NumberFormatException ignored) {}
         }
 
-        // Compute total for Assortment (sum of per-size values)
-        if (!assortment.containsKey("total") || assortment.get("total") == null
-                || assortment.get("total").isBlank()) {
-            int sum = 0;
-            for (String sz : sizes) {
-                String v = assortment.get(sz);
-                if (v != null && !v.isBlank()) {
-                    try { sum += Integer.parseInt(v.trim()); }
-                    catch (NumberFormatException ignored) {}
-                }
-            }
-            assortment.put("total", String.valueOf(sum));
+        if (gcd <= 0) return;
+
+        // If a 'Quantity' was parsed and divides diffs evenly, prefer it as the divisor
+        int divisor = gcd;
+        if (qtyAssort != null && qtyAssort > 0) {
+            boolean allDivisible = true;
+            for (int d : diffs) { if (d % qtyAssort != 0) { allDivisible = false; break; } }
+            if (allDivisible) divisor = qtyAssort;
         }
+
+        int sum = 0;
+        for (int i = 0; i < sizes.size(); i++) {
+            int val = (divisor > 0) ? (diffs[i] / divisor) : 0;
+            if (val < 0) val = 0;
+            if (val > 0) sum += val;
+            assortment.put(sizes.get(i), String.valueOf(val));
+        }
+        assortment.put("total", String.valueOf(sum));
+    }
+
+    private static int gcd(int a, int b) {
+        while (b != 0) {
+            int t = a % b;
+            a = b;
+            b = t;
+        }
+        return Math.abs(a);
     }
 
     private static int indexOfLineContaining(List<String> texts, String needle) {
