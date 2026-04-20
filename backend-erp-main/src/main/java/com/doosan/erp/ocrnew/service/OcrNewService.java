@@ -197,20 +197,8 @@ public class OcrNewService {
                     continue;
                 }
 
-                if (currentRow[0] == null) continue;
-
-                Matcher qm = QUANTITY_LINE.matcher(t);
-                if (qm.matches()) {
-                    String q = normalizeNumber(qm.group(1));
-                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
-                    ensureSizeDefaults(currentRow[0]);
-                    out.add(currentRow[0]);
-                    currentRow[0] = null;
-                    sawAnySize[0] = false;
-                    continue;
-                }
-
-                // Capture 'No of Asst:' value and attach to current Assortment row
+                // Capture 'No of Asst:' value — must run even when currentRow is null
+                // so that the backfill path can attach it to the last emitted Assortment row.
                 if (lower.startsWith("no of asst")) {
                     String n = parseInlineOrNextNumber(t, texts, i + 1);
                     if (n != null && !n.isBlank()) {
@@ -228,6 +216,19 @@ public class OcrNewService {
                             }
                         }
                     }
+                    continue;
+                }
+
+                if (currentRow[0] == null) continue;
+
+                Matcher qm = QUANTITY_LINE.matcher(t);
+                if (qm.matches()) {
+                    String q = normalizeNumber(qm.group(1));
+                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
+                    ensureSizeDefaults(currentRow[0]);
+                    out.add(currentRow[0]);
+                    currentRow[0] = null;
+                    sawAnySize[0] = false;
                     continue;
                 }
 
