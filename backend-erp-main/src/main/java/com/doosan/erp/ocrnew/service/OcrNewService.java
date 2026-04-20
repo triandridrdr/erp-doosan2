@@ -150,6 +150,8 @@ public class OcrNewService {
             int idxHeader = indexOfLineContaining(texts, "size / colour breakdown");
             if (idxHeader < 0) continue;
 
+            int pageOutStart = out.size();
+
             String destinationCountry = "";
             // Typically the country line comes shortly after header
             for (int i = idxHeader + 1; i < Math.min(texts.size(), idxHeader + 8); i++) {
@@ -179,7 +181,7 @@ public class OcrNewService {
                 if (lower.equals("assortment") || lower.startsWith("assortment ") ||
                         lower.equals("solid") || lower.startsWith("solid ") ||
                         lower.equals("total") || lower.startsWith("total ")) {
-                    if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total"))) {
+                    if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
                         out.add(currentRow[0]);
                     }
                     String type = lower.startsWith("assortment") ? "Assortment" : (lower.startsWith("solid") ? "Solid" : "Total");
@@ -206,6 +208,14 @@ public class OcrNewService {
                     continue;
                 }
 
+                // Fallback: bare "Quantity:" without a parseable number — still emit the row
+                if (lower.startsWith("quantity") || lower.startsWith("qty")) {
+                    out.add(currentRow[0]);
+                    currentRow[0] = null;
+                    sawAnySize[0] = false;
+                    continue;
+                }
+
                 // Lines like: "XS (XS)* 236", "L(L)y* 622"
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
@@ -219,12 +229,79 @@ public class OcrNewService {
                 }
             }
 
-            if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total"))) {
+            if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
                 out.add(currentRow[0]);
             }
+
+            fillMissingAssortmentValues(out, pageOutStart, texts);
         }
 
         return out;
+    }
+
+    private static void fillMissingAssortmentValues(
+            List<Map<String, String>> rows, int startIdx, List<String> texts) {
+        if (rows == null || startIdx >= rows.size()) return;
+
+        // Extract "No of Asst" from merged text lines
+        int noOfAsst = 0;
+        for (String t : texts) {
+            String lower = t.toLowerCase(Locale.ROOT).trim();
+            if (lower.startsWith("no of asst")) {
+                Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(t);
+                if (m.find()) {
+                    try { noOfAsst = Integer.parseInt(m.group(1).replaceAll("\\s+", "")); }
+                    catch (NumberFormatException ignored) {}
+                }
+                break;
+            }
+        }
+
+        // Find Assortment, Solid, Total rows added for this page
+        Map<String, String> assortment = null, solid = null, total = null;
+        for (int i = startIdx; i < rows.size(); i++) {
+            String type = rows.get(i).getOrDefault("type", "");
+            if ("Assortment".equals(type) && assortment == null) assortment = rows.get(i);
+            else if ("Solid".equals(type) && solid == null) solid = rows.get(i);
+            else if ("Total".equals(type) && total == null) total = rows.get(i);
+        }
+
+        if (assortment == null || solid == null || total == null) return;
+
+        // Skip if Assortment already has size values
+        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+        for (String sz : sizes) {
+            String v = assortment.get(sz);
+            if (v != null && !v.isBlank()) return;
+        }
+
+        if (noOfAsst <= 0) return;
+
+        // Compute Assortment[size] = (Total[size] - Solid[size]) / noOfAsst
+        for (String sz : sizes) {
+            try {
+                int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                int diff = tVal - sVal;
+                if (diff >= 0) {
+                    assortment.put(sz, String.valueOf(diff / noOfAsst));
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // Compute total for Assortment (sum of per-size values)
+        if (!assortment.containsKey("total") || assortment.get("total") == null
+                || assortment.get("total").isBlank()) {
+            int sum = 0;
+            for (String sz : sizes) {
+                String v = assortment.get(sz);
+                if (v != null && !v.isBlank()) {
+                    try { sum += Integer.parseInt(v.trim()); }
+                    catch (NumberFormatException ignored) {}
+                }
+            }
+            assortment.put("total", String.valueOf(sum));
+        }
     }
 
     private static int indexOfLineContaining(List<String> texts, String needle) {
