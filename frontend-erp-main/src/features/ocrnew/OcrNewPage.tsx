@@ -45,11 +45,8 @@ export function OcrNewPage() {
       countryOfDestination: string;
       type: string;
       color: string;
-      XS: string;
-      S: string;
-      M: string;
-      L: string;
-      XL: string;
+      size: string;
+      qty: string;
       total: string;
       noOfAsst?: string;
       editable: boolean;
@@ -86,23 +83,7 @@ export function OcrNewPage() {
 
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
     if (backendDetail.length > 0) {
-      setSalesOrderDetailDraftRows(
-        backendDetail
-          .map((m) => ({
-            countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
-            type: (m?.type ?? '').toString(),
-            color: (m?.color ?? m?.colour ?? '').toString(),
-            XS: (m?.XS ?? m?.xs ?? '').toString(),
-            S: (m?.S ?? m?.s ?? '').toString(),
-            M: (m?.M ?? m?.m ?? '').toString(),
-            L: (m?.L ?? m?.l ?? '').toString(),
-            XL: (m?.XL ?? m?.xl ?? '').toString(),
-            total: (m?.total ?? m?.Total ?? '').toString(),
-            noOfAsst: (m?.noOfAsst ?? '').toString(),
-            editable: true,
-          }))
-          .filter((r) => [r.countryOfDestination, r.type, r.color, r.XS, r.S, r.M, r.L, r.XL, r.total].some((v) => v.trim().length > 0)),
-      );
+      setSalesOrderDetailDraftRows(pivotDetailRows(backendDetail));
     } else {
       setSalesOrderDetailDraftRows([]);
     }
@@ -151,11 +132,8 @@ export function OcrNewPage() {
       countryOfDestination: string;
       type: string;
       color: string;
-      XS: string;
-      S: string;
-      M: string;
-      L: string;
-      XL: string;
+      size: string;
+      qty: string;
       total: string;
       noOfAsst?: string;
       editable: boolean;
@@ -163,23 +141,7 @@ export function OcrNewPage() {
     for (const r of out) {
       const backendDetail = r?.data?.salesOrderDetailSizeBreakdown ?? [];
       if (backendDetail.length > 0) {
-        detailRows = backendDetail
-          .map((m) => ({
-            countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
-            type: (m?.type ?? '').toString(),
-            color: (m?.color ?? m?.colour ?? '').toString(),
-            XS: (m?.XS ?? m?.xs ?? '').toString(),
-            S: (m?.S ?? m?.s ?? '').toString(),
-            M: (m?.M ?? m?.m ?? '').toString(),
-            L: (m?.L ?? m?.l ?? '').toString(),
-            XL: (m?.XL ?? m?.xl ?? '').toString(),
-            total: (m?.total ?? m?.Total ?? '').toString(),
-            noOfAsst: (m?.noOfAsst ?? '').toString(),
-            editable: true,
-          }))
-          .filter((row) =>
-            [row.countryOfDestination, row.type, row.color, row.XS, row.S, row.M, row.L, row.XL, row.total].some((v) => v.trim().length > 0),
-          );
+        detailRows = pivotDetailRows(backendDetail);
         if (detailRows.length > 0) break;
       }
     }
@@ -419,7 +381,7 @@ export function OcrNewPage() {
             onClick={() => {
               setSalesOrderDetailDraftRows((prev) => [
                 ...prev,
-                { countryOfDestination: '', type: '', color: '', XS: '', S: '', M: '', L: '', XL: '', total: '', noOfAsst: '', editable: true },
+                { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
               ]);
             }}
           >
@@ -433,17 +395,14 @@ export function OcrNewPage() {
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1550px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XS</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>S</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>M</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>L</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>XL</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
@@ -484,46 +443,19 @@ export function OcrNewPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.XS}
+                          value={row.size}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, XS: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
                           }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.S}
+                          value={row.qty}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, S: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.M}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, M: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.L}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, L: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.XL}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, XL: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
                           }}
                         />
                       </td>
@@ -537,17 +469,13 @@ export function OcrNewPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top whitespace-nowrap'>
-                        {row.type?.toLowerCase() === 'assortment' ? (
-                          <Input
-                            value={row.noOfAsst ?? ''}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
-                            }}
-                          />
-                        ) : (
-                          <span className='text-sm text-gray-500'>-</span>
-                        )}
+                        <Input
+                          value={row.noOfAsst ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
+                          }}
+                        />
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
@@ -690,6 +618,59 @@ export function OcrNewPage() {
       </div>
     </div>
   );
+}
+
+const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
+
+function pivotDetailRows(
+  backendRows: Array<Record<string, any>>,
+): Array<{
+  countryOfDestination: string;
+  type: string;
+  color: string;
+  size: string;
+  qty: string;
+  total: string;
+  noOfAsst: string;
+  editable: boolean;
+}> {
+  return backendRows
+    .flatMap((m) => {
+      // Already pivoted (has 'size' field and no separate size columns)
+      if (m?.size !== undefined && m?.XS === undefined && m?.xs === undefined) {
+        return [
+          {
+            countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
+            type: (m?.type ?? '').toString(),
+            color: (m?.color ?? m?.colour ?? '').toString(),
+            size: (m?.size ?? '').toString(),
+            qty: (m?.qty ?? '').toString(),
+            total: (m?.total ?? m?.Total ?? '').toString(),
+            noOfAsst: (m?.noOfAsst ?? '').toString(),
+            editable: true,
+          },
+        ];
+      }
+      // Pivot: one backend row with XS/S/M/L/XL -> 5 rows (one per size)
+      const country = (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString();
+      const type = (m?.type ?? '').toString();
+      const color = (m?.color ?? m?.colour ?? '').toString();
+      const total = (m?.total ?? m?.Total ?? '').toString();
+      const noOfAsst = (m?.noOfAsst ?? '').toString();
+      return DETAIL_SIZES.map((sz) => ({
+        countryOfDestination: country,
+        type,
+        color,
+        size: sz,
+        qty: (m?.[sz] ?? m?.[sz.toLowerCase()] ?? '').toString(),
+        total,
+        noOfAsst,
+        editable: true,
+      }));
+    })
+    .filter((r) =>
+      [r.countryOfDestination, r.type, r.color, r.size, r.qty, r.total].some((v) => v.trim().length > 0),
+    );
 }
 
 function isBomDraftTable(rows: Array<Array<string>> | undefined): boolean {
