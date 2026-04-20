@@ -145,7 +145,7 @@ public class OcrNewService {
             if (pageLines == null || pageLines.isEmpty()) continue;
             pageLines.sort(Comparator.comparingInt(OcrNewLine::getTop).thenComparingInt(OcrNewLine::getLeft));
 
-            List<String> texts = pageLines.stream().map(OcrNewLine::getText).filter(Objects::nonNull).toList();
+            List<String> texts = mergeLinesByVisualRow(pageLines, 25);
 
             int idxHeader = indexOfLineContaining(texts, "size / colour breakdown");
             if (idxHeader < 0) continue;
@@ -263,6 +263,40 @@ public class OcrNewService {
     private static String normalizeNumber(String raw) {
         if (raw == null) return "";
         return raw.replaceAll("\\s+", "").trim();
+    }
+
+    private static List<String> mergeLinesByVisualRow(List<OcrNewLine> sortedLines, int yTolerance) {
+        List<String> result = new ArrayList<>();
+        if (sortedLines == null || sortedLines.isEmpty()) return result;
+        int idx = 0;
+        while (idx < sortedLines.size()) {
+            OcrNewLine base = sortedLines.get(idx);
+            int baseTop = base.getTop();
+            List<OcrNewLine> rowGroup = new ArrayList<>();
+            rowGroup.add(base);
+            idx++;
+            while (idx < sortedLines.size()) {
+                OcrNewLine next = sortedLines.get(idx);
+                if (Math.abs(next.getTop() - baseTop) <= yTolerance) {
+                    rowGroup.add(next);
+                    idx++;
+                } else {
+                    break;
+                }
+            }
+            rowGroup.sort(Comparator.comparingInt(OcrNewLine::getLeft));
+            StringBuilder merged = new StringBuilder();
+            for (OcrNewLine l : rowGroup) {
+                String t = l.getText();
+                if (t != null && !t.isBlank()) {
+                    if (merged.length() > 0) merged.append(' ');
+                    merged.append(t.trim());
+                }
+            }
+            String m = merged.toString().trim();
+            if (!m.isEmpty()) result.add(m);
+        }
+        return result;
     }
 
     private static String firstNonBlank(String... xs) {
