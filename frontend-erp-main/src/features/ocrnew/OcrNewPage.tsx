@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, Loader2, Upload } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -39,6 +39,16 @@ export function OcrNewPage() {
       description: string;
       composition: string;
       materialSupplier: string;
+    }>
+  >([]);
+
+  // Draft rows for SECTION 2B – TOTAL COUNTRY BREAKDOWN (editable like Section 2)
+  const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<
+    Array<{
+      country: string;
+      pmCode: string;
+      total: string;
+      editable: boolean;
     }>
   >([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
@@ -229,6 +239,38 @@ export function OcrNewPage() {
   const hasHeaderDraft = useMemo(() => {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
+
+  // Pick backend-provided Total Country Breakdown from any uploaded file
+  const backendCountryBreakdown = useMemo(() => {
+    const cur = data?.totalCountryBreakdown;
+    if (cur && cur.length > 0) return { fileName: results[activeFileIndex]?.fileName ?? '', rows: cur };
+    for (const r of results) {
+      const rows = r?.data?.totalCountryBreakdown ?? [];
+      if (rows.length > 0) return { fileName: r.fileName, rows };
+    }
+    return null;
+  }, [data, results, activeFileIndex]);
+
+  // Hydrate SECTION 2B draft when backendCountryBreakdown changes
+  useEffect(() => {
+    if (!backendCountryBreakdown) {
+      setCountryBreakdownDraftRows([]);
+      return;
+    }
+    const keys = Object.keys(backendCountryBreakdown.rows[0] ?? {});
+    const toVal = (m: Record<string, any>, k: string) => (m?.[k] ?? '').toString();
+    const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
+    const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
+    const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
+    const kTotal = findKey(['total', 'tot']) ?? 'total';
+    const rows = backendCountryBreakdown.rows.map((m) => ({
+      country: toVal(m, kCountry),
+      pmCode: toVal(m, kPm),
+      total: toVal(m, kTotal),
+      editable: true,
+    }));
+    setCountryBreakdownDraftRows(rows);
+  }, [backendCountryBreakdown]);
 
   return (
     <div className='space-y-6'>
@@ -485,6 +527,96 @@ export function OcrNewPage() {
                           variant='danger'
                           onClick={() => {
                             setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* SECTION 2B – TOTAL COUNTRY BREAKDOWN (from backend) */}
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div>
+            <div className='text-xs font-semibold text-gray-500'>SECTION 2B – TOTAL COUNTRY BREAKDOWN</div>
+            {backendCountryBreakdown && (
+              <div className='text-xs text-gray-400 mt-0.5'>Source: {backendCountryBreakdown.fileName}</div>
+            )}
+          </div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!backendCountryBreakdown}
+            onClick={() => {
+              setCountryBreakdownDraftRows((prev) => [
+                ...prev,
+                { country: '', pmCode: '', total: '', editable: true },
+              ]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {!backendCountryBreakdown ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : countryBreakdownDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No country breakdown detected.</div>
+          ) : (
+            <div className='w-full max-h-[50vh] overflow-auto'>
+              <table className='min-w-[800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
+                    <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {countryBreakdownDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.country}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, country: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.pmCode}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, pmCode: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.total}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                          }}
+                          style={{ textAlign: 'right' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setCountryBreakdownDraftRows((prev) => prev.filter((_, i) => i !== idx));
                           }}
                         >
                           Delete

@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -75,6 +76,119 @@ public class OcrNewService {
         this.renderDpi = renderDpi;
         this.ocrEngine = new TesseractOcrEngine(tessDataPath, language);
         this.debugLogging = debugLogging;
+    }
+
+    /**
+     * Fallback extractor parsing raw OCR lines if table detection fails.
+     * Heuristics:
+     * - Locate a line containing 'Colour / Country Breakdown' OR a header line containing both 'Country' and 'Total'.
+     * - Collect subsequent lines that contain a PM code (PM-XX / PMXX) and at least one number; use the last number as total.
+     * - Country code is taken as the first two-letter uppercase token or first token before PM code.
+     */
+    private static List<Map<String, String>> extractTotalCountryBreakdownFromLines(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        // Build flattened, normalized text list
+        List<String> normLines = new ArrayList<>(allLines.size());
+        for (OcrNewLine l : allLines) normLines.add(oneLine(l.getText()));
+
+        int startIdx = -1;
+        for (int i = 0; i < normLines.size(); i++) {
+            String s = normLines.get(i).toLowerCase(Locale.ROOT);
+            if (s.contains("colour / country breakdown") || (s.contains("country") && s.contains("total"))) {
+                startIdx = i;
+                break;
+            }
+        }
+
+        if (startIdx < 0) {
+            // No obvious header; still try scanning entire doc for PM lines with totals
+            startIdx = 0;
+        }
+
+        Pattern pmPat = Pattern.compile("\\bPM[- ]?[A-Z0-9]{2,}\\b", Pattern.CASE_INSENSITIVE);
+        Pattern numPat = Pattern.compile("(?<![A-Za-z])\\d[\\d\\s.,]*");
+        Pattern country2Pat = Pattern.compile("^([A-Z]{2})\\b");
+
+        for (int i = startIdx; i < normLines.size(); i++) {
+            String line = normLines.get(i);
+            String low = line.toLowerCase(Locale.ROOT);
+            // Stop on unrelated big sections
+            if (low.startsWith("bill of material") || low.startsWith("labels") || low.startsWith("production units")) {
+                break;
+            }
+
+            Matcher pmM = pmPat.matcher(line);
+            if (!pmM.find()) continue;
+            String pmCode = pmM.group().toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+
+            // Extract all numeric tokens; use last as total
+            List<String> nums = new ArrayList<>();
+            Matcher numM = numPat.matcher(line);
+            while (numM.find()) {
+                String v = numM.group().trim();
+                if (!v.isBlank()) nums.add(v);
+            }
+            if (nums.isEmpty()) continue;
+            // If last two numeric tokens are equal (ignoring group separators), keep one to avoid '1234 1234'
+            String last = nums.get(nums.size() - 1);
+            String penult = nums.size() >= 2 ? nums.get(nums.size() - 2) : null;
+            String lastN = normalizeNumberToken(last);
+            String penN = penult != null ? normalizeNumberToken(penult) : null;
+            String chosen = (penN != null && penN.equals(lastN)) ? penult : last;
+            String total = normalizeNumberToken(chosen);
+
+            // Country: prefer leading 2-letter token; else use token immediately before PM code if present
+            String country = "";
+            Matcher c2 = country2Pat.matcher(line);
+            if (c2.find()) {
+                country = c2.group(1);
+            } else {
+                int pmIdx = line.indexOf(pmCode);
+                if (pmIdx > 0) {
+                    String before = line.substring(0, pmIdx).trim();
+                    // Take last token before pm
+                    String[] toks = before.split("\\s+");
+                    if (toks.length > 0) {
+                        String cand = toks[toks.length - 1].replaceAll("[^A-Za-z]", "");
+                        if (cand.length() >= 2 && cand.length() <= 3) country = cand.toUpperCase(Locale.ROOT);
+                    }
+                }
+            }
+
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("country", country);
+            m.put("pmCode", pmCode);
+            m.put("total", total);
+
+            out.add(m);
+
+            if (log.isDebugEnabled() && out.size() <= 3) {
+                log.debug("[TCB-LINES][ROW{}] {}", out.size() - 1, m);
+            }
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[TCB-LINES][SUMMARY] rowsParsed={}", out.size());
+        }
+        return out;
+    }
+
+    private static String normalizeNumberToken(String s) {
+        if (s == null) return "";
+        // Remove spaces, commas, and dots used as thousand separators
+        String digits = s.replaceAll("[\\s,.]", "");
+        // Keep only digits
+        digits = digits.replaceAll("[^0-9]", "");
+        // If the token is actually a doubled value like '18571857', collapse to one half
+        if (digits.length() >= 2 && (digits.length() % 2 == 0)) {
+            int half = digits.length() / 2;
+            String a = digits.substring(0, half);
+            String b = digits.substring(half);
+            if (a.equals(b)) return a;
+        }
+        return digits;
     }
 
     private static List<OcrNewTableDto> sanitizeBomDescriptions(List<OcrNewTableDto> tables) {
@@ -752,6 +866,13 @@ public class OcrNewService {
             List<Map<String, String>> lineDetail = extractSalesOrderDetailSizeBreakdownFromLines(rawLinesForDetail, formFields);
             List<Map<String, String>> salesOrderDetailSizeBreakdown = !lineDetail.isEmpty() ? lineDetail : tableDetail;
 
+            // Extract Total Country Breakdown from tables (Country/PM/size cols/Total)
+            List<Map<String, String>> totalCountryBreakdown = extractTotalCountryBreakdownFromTables(tables);
+            if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) {
+                // Fallback: try line-based extraction around 'Colour / Country Breakdown' section
+                totalCountryBreakdown = extractTotalCountryBreakdownFromLines(allLines);
+            }
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -801,6 +922,22 @@ public class OcrNewService {
                 if (tables.size() > 20) {
                     log.info("[OCR-NEW][DEBUG] tables: {} more not logged", tables.size() - 20);
                 }
+
+                // ── Total Country Breakdown debug ───────────────────────────
+                if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) {
+                    log.info("[OCR-NEW][TCB] No Total Country Breakdown detected in tables (count={})", tables.size());
+                } else {
+                    log.info("[OCR-NEW][TCB] Parsed Total Country Breakdown: rows={}", totalCountryBreakdown.size());
+                    Map<String, String> first = totalCountryBreakdown.get(0);
+                    if (first != null) {
+                        log.info("[OCR-NEW][TCB] Columns: {}", first.keySet());
+                        log.info("[OCR-NEW][TCB] First row: {}", first);
+                    }
+                    if (totalCountryBreakdown.size() > 1) {
+                        Map<String, String> second = totalCountryBreakdown.get(1);
+                        log.info("[OCR-NEW][TCB] Second row: {}", second);
+                    }
+                }
             }
 
             float avgConfidence = 0f;
@@ -829,6 +966,7 @@ public class OcrNewService {
                     .keyValuePairs(pairs)
                     .formFields(formFields)
                     .salesOrderDetailSizeBreakdown(salesOrderDetailSizeBreakdown)
+                    .totalCountryBreakdown(totalCountryBreakdown)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();
@@ -856,6 +994,119 @@ public class OcrNewService {
 
     private static String oneLine(String s) {
         return safe(s).replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * Extract Total Country Breakdown table rows as a list of maps.
+     * Map keys: country, pmCode, total, and dynamic size/article columns using original header labels.
+     */
+    private static List<Map<String, String>> extractTotalCountryBreakdownFromTables(List<OcrNewTableDto> tables) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (tables == null || tables.isEmpty()) return out;
+
+        for (int ti = 0; ti < tables.size(); ti++) {
+            OcrNewTableDto t = tables.get(ti);
+            List<List<String>> rows = t.getRows();
+            if (rows == null || rows.size() < 2) continue;
+
+            // Find header (within first 5 rows) containing 'Country' and 'Total'
+            int headerIdx = -1;
+            for (int h = 0; h < Math.min(rows.size(), 5); h++) {
+                List<String> hdr = rows.get(h);
+                if (hdr == null) continue;
+                boolean hasCountry = hdr.stream().anyMatch(c -> oneLine(c).toLowerCase(Locale.ROOT).contains("country"));
+                boolean hasTotal = hdr.stream().anyMatch(c -> {
+                    String n = oneLine(c).toLowerCase(Locale.ROOT).replace('1','l').replace('i','l');
+                    return n.equals("total") || n.startsWith("total");
+                });
+                if (hasCountry && hasTotal) { headerIdx = h; break; }
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("[TCB][SCAN] table={} headerIdx={} rows={} cols={}", ti, headerIdx, t.getRowCount(), t.getColumnCount());
+                for (int r = 0; r < Math.min(rows.size(), 3); r++) {
+                    List<String> rw = rows.get(r);
+                    String rowText = rw == null ? "" : rw.stream().filter(Objects::nonNull).map(OcrNewService::oneLine).reduce("", (a,b)-> a.isEmpty()? b : a+" | "+b);
+                    log.debug("[TCB][HDR] table={} row[{}]: {}", ti, r, rowText);
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            List<String> header = rows.get(headerIdx);
+            int iCountry = -1, iPm = -1, iTotal = -1;
+            for (int i = 0; i < header.size(); i++) {
+                String n = oneLine(header.get(i)).toLowerCase(Locale.ROOT);
+                if (iCountry < 0 && n.contains("country")) iCountry = i;
+                if (iPm < 0 && (n.contains("pm") || n.contains("market") || n.contains("code"))) iPm = i;
+                if (iTotal < 0) {
+                    String r = n.replace('1','l').replace('i','l');
+                    if (r.equals("total") || r.startsWith("total")) iTotal = i;
+                }
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("[TCB][COLS] table={} iCountry={} iPm={} iTotal={} header={}", ti, iCountry, iPm, iTotal, header);
+            }
+
+            Set<Integer> metaCols = new HashSet<>();
+            if (iCountry >= 0) metaCols.add(iCountry);
+            if (iPm >= 0) metaCols.add(iPm);
+            if (iTotal >= 0) metaCols.add(iTotal);
+
+            List<Integer> sizeColIdx = new ArrayList<>();
+            List<String> sizeColLabels = new ArrayList<>();
+            for (int i = 0; i < header.size(); i++) {
+                if (metaCols.contains(i)) continue;
+                String lbl = safe(header.get(i)).trim();
+                if (!lbl.isEmpty()) { sizeColIdx.add(i); sizeColLabels.add(lbl); }
+            }
+
+            for (int r = headerIdx + 1; r < rows.size(); r++) {
+                List<String> row = rows.get(r);
+                if (row == null) continue;
+                String first = oneLine(row.get(0)).toLowerCase(Locale.ROOT);
+                if (first.equals("total") || first.equals("total:")) {
+                    // Could capture grand totals if needed; skip adding as data row
+                    continue;
+                }
+
+                String country = iCountry >= 0 && iCountry < row.size() ? safe(row.get(iCountry)).trim() : "";
+                String pmCode = iPm >= 0 && iPm < row.size() ? safe(row.get(iPm)).trim() : "";
+                if (pmCode.isBlank()) {
+                    for (String c : row) {
+                        String v = safe(c).trim();
+                        if (v.matches("(?i)^PM[A-Z0-9-]{2,}$")) { pmCode = v.toUpperCase(Locale.ROOT); break; }
+                    }
+                }
+
+                String total = iTotal >= 0 && iTotal < row.size() ? safe(row.get(iTotal)).trim() : "";
+
+                Map<String, String> m = new LinkedHashMap<>();
+                m.put("country", country);
+                m.put("pmCode", pmCode);
+                for (int si = 0; si < sizeColIdx.size(); si++) {
+                    int ci = sizeColIdx.get(si);
+                    String key = sizeColLabels.get(si);
+                    m.put(key, ci < row.size() ? safe(row.get(ci)).trim() : "");
+                }
+                m.put("total", total);
+
+                // Keep only meaningful rows
+                boolean anyVal = !country.isBlank() || !pmCode.isBlank() || !total.isBlank();
+                if (anyVal) out.add(m);
+            }
+
+            // Found and processed one table; stop here
+            if (!out.isEmpty()) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[TCB][PARSED] table={} rowsParsed={}", ti, out.size());
+                    for (int i = 0; i < Math.min(out.size(), 3); i++) {
+                        log.debug("[TCB][ROW{}] {}", i, out.get(i));
+                    }
+                }
+                break;
+            }
+        }
+
+        return out;
     }
 
     private static float round1(float v) {

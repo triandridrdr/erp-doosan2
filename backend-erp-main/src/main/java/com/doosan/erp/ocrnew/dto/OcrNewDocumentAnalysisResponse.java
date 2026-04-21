@@ -26,6 +26,8 @@ public class OcrNewDocumentAnalysisResponse {
 
     private List<Map<String, String>> salesOrderDetailSizeBreakdown;
 
+    private List<Map<String, String>> totalCountryBreakdown;
+
     private Float averageConfidence;
 
     private Integer pageCount;
