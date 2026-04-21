@@ -38,9 +38,16 @@ public class OcrNewController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "debug", required = false) Boolean debug,
             @Parameter(description = "Use hOCR mode for better handling of fragmented text (split words across lines)")
-            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr
+            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr,
+            @Parameter(description = "Log hOCR and non-hOCR outputs side by side for debugging")
+            @RequestParam(value = "compareModes", required = false, defaultValue = "false") Boolean compareModes
     ) {
-        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(file, debug, Boolean.TRUE.equals(useHocr));
+        OcrNewDocumentAnalysisResponse response = ocrNewService.analyzeDocument(
+                file,
+                debug,
+                Boolean.TRUE.equals(useHocr),
+                Boolean.TRUE.equals(compareModes)
+        );
         return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW analysis completed"));
     }
 
