@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { ocrNewApi } from './api';
 import type { OcrNewDocumentAnalysisResponseData } from './types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -442,7 +443,7 @@ export function OcrNewPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
+                        <SizeAutocompleteInput
                           value={row.size}
                           onChange={(e) => {
                             const v = e.target.value;

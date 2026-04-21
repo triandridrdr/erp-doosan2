@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { salesOrderPrototypeApi } from './api';
 
 const SALES_ORDER_HEADER_FIELDS = [
@@ -317,7 +318,7 @@ export function SalesOrderPrototypeEditPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
+                        <SizeAutocompleteInput
                           value={row.size}
                           onChange={(e) => {
                             const v = e.target.value;
