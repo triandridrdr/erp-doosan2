@@ -222,6 +222,7 @@ export function OcrNewPage() {
         formFields: salesOrderHeaderDraft,
         bomDraftRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
+        totalCountryBreakdown: countryBreakdownDraftRows,
         raw: data,
       };
       return salesOrderPrototypeApi.create(payload);
@@ -495,29 +496,38 @@ export function OcrNewPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.qty}
+                          value={formatIdThousands(row.qty)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)),
+                            );
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.total}
+                          value={formatIdThousands(row.total)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)),
+                            );
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top whitespace-nowrap'>
                         <Input
-                          value={row.noOfAsst ?? ''}
+                          value={formatIdThousands(row.noOfAsst ?? '')}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(v) } : r)),
+                            );
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
@@ -576,7 +586,7 @@ export function OcrNewPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
-                    <th className='px-3 py-2 text-right text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -603,12 +613,12 @@ export function OcrNewPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.total}
+                          value={formatIdThousands(row.total)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
                           }}
-                          style={{ textAlign: 'right' }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
@@ -804,6 +814,24 @@ function pivotDetailRows(
     .filter((r) =>
       [r.countryOfDestination, r.type, r.color, r.size, r.qty, r.total].some((v) => v.trim().length > 0),
     );
+}
+
+function normalizeDigits(input: string): string {
+  if (!input) return '';
+  // keep digits only
+  return (input || '').replace(/\D+/g, '');
+}
+
+const idFormatter = new Intl.NumberFormat('id-ID');
+
+function formatIdThousands(input: string): string {
+  const digits = normalizeDigits(input || '');
+  if (!digits) return '';
+  try {
+    return idFormatter.format(Number(digits));
+  } catch {
+    return digits;
+  }
 }
 
 function isBomDraftTable(rows: Array<Array<string>> | undefined): boolean {
