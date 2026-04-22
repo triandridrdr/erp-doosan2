@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { CheckCircle2 } from 'lucide-react';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { salesOrderPrototypeApi } from './api';
 
@@ -106,6 +108,8 @@ export function SalesOrderPrototypeEditPage() {
   const [bomDraftRows, setBomDraftRows] = useState<BomDraftRow[]>([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<DetailDraftRow[]>([]);
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<CountryBreakdownRow[]>([]);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('Successfully updated draft');
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['sales-order-prototypes', id],
@@ -185,7 +189,8 @@ export function SalesOrderPrototypeEditPage() {
       return salesOrderPrototypeApi.update(id, nextPayload);
     },
     onSuccess: () => {
-      alert('Draft updated.');
+      setSuccessMessage('Successfully updated draft');
+      setSuccessOpen(true);
       refetch();
     },
     onError: (e: Error) => {
@@ -211,6 +216,23 @@ export function SalesOrderPrototypeEditPage() {
 
   return (
     <div className='space-y-6'>
+      <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
+        <div className='flex flex-col items-center text-center gap-4'>
+          <div className='rounded-full bg-green-50 p-3'>
+            <CheckCircle2 className='w-10 h-10 text-green-600' />
+          </div>
+          <p className='text-gray-700'>{successMessage}</p>
+          <Button
+            type='button'
+            onClick={() => {
+              setSuccessOpen(false);
+              navigate('/sales-order-prototype');
+            }}
+          >
+            OK
+          </Button>
+        </div>
+      </Modal>
       <div className='flex items-center justify-between'>
         <div>
           <h1 className='text-2xl font-bold text-gray-900'>Sales Order Prototype</h1>

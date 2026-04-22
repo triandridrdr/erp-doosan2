@@ -1,10 +1,12 @@
 import { useMutation } from '@tanstack/react-query';
-import { AlertCircle, Loader2, Upload } from 'lucide-react';
+import { AlertCircle, Loader2, Upload, CheckCircle2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import { Modal } from '../../components/ui/Modal';
 import { ocrNewApi } from './api';
 import type { OcrNewDocumentAnalysisResponseData } from './types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -23,12 +25,16 @@ const SALES_ORDER_HEADER_FIELDS = [
 ] as const;
 
 export function OcrNewPage() {
+  const navigate = useNavigate();
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [results, setResults] = useState<Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>>([]);
   const [data, setData] = useState<OcrNewDocumentAnalysisResponseData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('Draft updated.');
+  const [lastSavedId, setLastSavedId] = useState<number | null>(null);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<
@@ -228,8 +234,15 @@ export function OcrNewPage() {
       return salesOrderPrototypeApi.create(payload);
     },
     onSuccess: (res) => {
-      const id = (res as any)?.data?.id;
-      alert(`Saved to Sales Order Prototype${id ? ` (id=${id})` : ''}.`);
+      const soId = (res as any)?.data?.id;
+      if (soId !== undefined && soId !== null) {
+        setSuccessMessage(`Successfully created draft id "${soId}"`);
+        setLastSavedId(Number(soId));
+      } else {
+        setSuccessMessage('Successfully created draft.');
+        setLastSavedId(null);
+      }
+      setSuccessOpen(true);
     },
     onError: (e: Error) => {
       alert(`Failed to save draft: ${e.message}`);
@@ -275,6 +288,22 @@ export function OcrNewPage() {
 
   return (
     <div className='space-y-6'>
+      <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
+        <div className='flex flex-col items-center text-center gap-4'>
+          <div className='rounded-full bg-green-50 p-3'>
+            <CheckCircle2 className='w-10 h-10 text-green-600' />
+          </div>
+          <p className='text-gray-700'>{successMessage}</p>
+          <Button
+            type='button'
+            onClick={() => {
+              setSuccessOpen(false);
+            }}
+          >
+            OK
+          </Button>
+        </div>
+      </Modal>
       <div className='bg-white rounded-2xl border border-gray-200 p-6'>
         <div className='flex items-start justify-between gap-4'>
           <div>
