@@ -40,6 +40,13 @@ type DetailDraftRow = {
   editable: boolean;
 };
 
+type CountryBreakdownRow = {
+  country: string;
+  pmCode: string;
+  total: string;
+  editable: boolean;
+};
+
 const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
 
 function pivotDetailRows(
@@ -98,6 +105,7 @@ export function SalesOrderPrototypeEditPage() {
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<BomDraftRow[]>([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<DetailDraftRow[]>([]);
+  const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<CountryBreakdownRow[]>([]);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['sales-order-prototypes', id],
@@ -143,6 +151,20 @@ export function SalesOrderPrototypeEditPage() {
     } else {
       setSalesOrderDetailDraftRows([]);
     }
+
+    const tcb = (payload?.totalCountryBreakdown ?? []) as any[];
+    if (Array.isArray(tcb)) {
+      setCountryBreakdownDraftRows(
+        tcb.map((r) => ({
+          country: (r?.country ?? r?.destinationCountry ?? '').toString(),
+          pmCode: (r?.pmCode ?? r?.pm ?? '').toString(),
+          total: (r?.total ?? r?.Total ?? '').toString(),
+          editable: true,
+        })),
+      );
+    } else {
+      setCountryBreakdownDraftRows([]);
+    }
   };
 
   useEffect(() => {
@@ -158,6 +180,7 @@ export function SalesOrderPrototypeEditPage() {
         formFields: salesOrderHeaderDraft,
         bomDraftRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
+        totalCountryBreakdown: countryBreakdownDraftRows,
       };
       return salesOrderPrototypeApi.update(id, nextPayload);
     },
@@ -328,29 +351,32 @@ export function SalesOrderPrototypeEditPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.qty}
+                          value={formatIdThousands(row.qty)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.total}
+                          value={formatIdThousands(row.total)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top whitespace-nowrap'>
                         <Input
-                          value={row.noOfAsst ?? ''}
+                          value={formatIdThousands(row.noOfAsst ?? '')}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
+                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(v) } : r)));
                           }}
+                          style={{ textAlign: 'left' }}
                         />
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
@@ -361,6 +387,73 @@ export function SalesOrderPrototypeEditPage() {
                           onClick={() => {
                             setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
                           }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 2B – TOTAL COUNTRY BREAKDOWN</div>
+          <Button
+            type='button'
+            variant='primary'
+            onClick={() => {
+              setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', total: '', editable: true }]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {countryBreakdownDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No country breakdown rows.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {countryBreakdownDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.country}
+                          onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, country: e.target.value } : r)))}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.pmCode}
+                          onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, pmCode: e.target.value } : r)))}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands(row.total)}
+                          onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(e.target.value) } : r)))}
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => setCountryBreakdownDraftRows((prev) => prev.filter((_, i) => i !== idx))}
                         >
                           Delete
                         </Button>
@@ -451,4 +544,21 @@ export function SalesOrderPrototypeEditPage() {
       </div>
     </div>
   );
+}
+
+function normalizeDigits(input: string): string {
+  if (!input) return '';
+  return (input || '').replace(/\D+/g, '');
+}
+
+const idFormatter = new Intl.NumberFormat('id-ID');
+
+function formatIdThousands(input: string): string {
+  const digits = normalizeDigits(input || '');
+  if (!digits) return '';
+  try {
+    return idFormatter.format(Number(digits));
+  } catch {
+    return digits;
+  }
 }
