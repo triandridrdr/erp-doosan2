@@ -254,15 +254,27 @@ export function OcrNewPage() {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
 
-  // Pick backend-provided Total Country Breakdown from any uploaded file
+  // Pick backend-provided Total Country Breakdown STRICTLY from TotalCountryBreakdown file
   const backendCountryBreakdown = useMemo(() => {
-    const cur = data?.totalCountryBreakdown;
-    if (cur && cur.length > 0) return { fileName: results[activeFileIndex]?.fileName ?? '', rows: cur };
-    for (const r of results) {
-      const rows = r?.data?.totalCountryBreakdown ?? [];
-      if (rows.length > 0) return { fileName: r.fileName, rows };
+    const isTcbName = (name: string) => {
+      const n = (name || '').toLowerCase();
+      return n.includes('totalcountrybreakdown') || n.includes('total_country_breakdown') || (n.includes('total') && n.includes('country') && n.includes('breakdown'));
+    };
+
+    // Check current analyzed file first: only accept if filename looks like TCB
+    const curFile = results[activeFileIndex]?.fileName ?? '';
+    if (isTcbName(curFile)) {
+      const curRows = data?.totalCountryBreakdown ?? [];
+      if (curRows.length > 0) return { fileName: curFile, rows: curRows };
+      return null; // Do NOT fallback to other files if TCB file has 0 rows
     }
-    return null;
+
+    // Otherwise, find the uploaded file whose name looks like TCB
+    const tcb = results.find((r) => isTcbName(r.fileName ?? ''));
+    if (!tcb) return null;
+    const rows = tcb?.data?.totalCountryBreakdown ?? [];
+    if (rows.length === 0) return null; // Strict: only show when TCB has rows
+    return { fileName: tcb.fileName ?? '', rows };
   }, [data, results, activeFileIndex]);
 
   // Hydrate SECTION 2B draft when backendCountryBreakdown changes

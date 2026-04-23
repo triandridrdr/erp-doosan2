@@ -107,9 +107,13 @@ public class OcrNewService {
             startIdx = 0;
         }
 
-        Pattern pmPat = Pattern.compile("\\bPM[- ]?[A-Z0-9]{2,}\\b", Pattern.CASE_INSENSITIVE);
+        // Accept codes like PM-UK, PMUK, OL-UK, OLUK, OLEEU, etc. Code is REQUIRED to avoid false positives.
+        Pattern codePat = Pattern.compile("\\b(?:PM|OL)[- ]?[A-Z0-9]{2,6}\\b", Pattern.CASE_INSENSITIVE);
+        // Prefer stricter 2-3 letter destination after PM/OL (e.g., OL-IN, PM-UK)
+        Pattern codeStrictPat = Pattern.compile("\\b(?:PM|OL)[- ]?[A-Z]{2,3}\\b", Pattern.CASE_INSENSITIVE);
         Pattern numPat = Pattern.compile("(?<![A-Za-z])\\d[\\d\\s.,]*");
-        Pattern country2Pat = Pattern.compile("^([A-Z]{2})\\b");
+        // Country token at start, allow 2-3 uppercase letters (e.g., OE, OL, OLE)
+        Pattern country2Pat = Pattern.compile("^([A-Z]{2,3})\\b");
 
         for (int i = startIdx; i < normLines.size(); i++) {
             String line = normLines.get(i);
@@ -119,9 +123,37 @@ public class OcrNewService {
                 break;
             }
 
-            Matcher pmM = pmPat.matcher(line);
-            if (!pmM.find()) continue;
-            String pmCode = pmM.group().toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+            // Skip obvious non-row lines
+            if (low.contains("order no") || low.contains("product no") || low.contains("product name")
+                    || low.contains("date of order") || low.contains("supplier code") || low.contains("season:")
+                    || low.contains("supplier name") || low.startsWith("created:") || low.startsWith("page:")) {
+                continue;
+            }
+
+            // Try to detect a code AFTER the leading country token if present
+            int searchFrom = 0;
+            Matcher c2peek = country2Pat.matcher(line);
+            if (c2peek.find()) searchFrom = c2peek.end();
+
+            String pmCode = "";
+            Matcher strictFrom = codeStrictPat.matcher(line.substring(Math.min(searchFrom, line.length())));
+            if (strictFrom.find()) {
+                pmCode = strictFrom.group();
+            } else {
+                Matcher codeM = codePat.matcher(line.substring(Math.min(searchFrom, line.length())));
+                if (codeM.find()) pmCode = codeM.group();
+            }
+            if (pmCode.isBlank()) continue; // require a destination code to qualify this line
+            pmCode = pmCode.toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+            // Normalize missing hyphen: OLIN -> OL-IN
+            if ((pmCode.startsWith("OL") || pmCode.startsWith("PM")) && !pmCode.contains("-") && pmCode.length() >= 4) {
+                pmCode = pmCode.substring(0, 2) + "-" + pmCode.substring(2);
+            }
+            // Validate suffix of code (country part) to avoid tokens like 'OLOL' (duplicated prefix)
+            String suffix = pmCode.replaceFirst("^(OL|PM)-?", "");
+            if (suffix.equals("OL") || suffix.equals("PM") || suffix.length() < 2 || suffix.length() > 3) {
+                continue; // skip malformed code
+            }
 
             // Extract all numeric tokens; use last as total
             List<String> nums = new ArrayList<>();
@@ -159,7 +191,7 @@ public class OcrNewService {
 
             Map<String, String> m = new LinkedHashMap<>();
             m.put("country", country);
-            m.put("pmCode", pmCode);
+            if (!pmCode.isBlank()) m.put("pmCode", pmCode);
             m.put("total", total);
 
             out.add(m);
