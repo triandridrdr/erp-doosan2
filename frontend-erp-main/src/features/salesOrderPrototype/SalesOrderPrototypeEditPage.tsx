@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -111,6 +112,42 @@ function safeJsonParse(v: string): any {
   } catch {
     return null;
   }
+}
+
+function exportRowsToExcel(
+  rows: Array<{
+    countryOfDestination: string;
+    type: string;
+    color: string;
+    size: string;
+    qty: string;
+    total: string;
+    noOfAsst?: string;
+    editable: boolean;
+  }>,
+) {
+  const toNumOrNull = (v: unknown) => {
+    const d = normalizeDigits((v ?? '').toString());
+    if (!d) return null;
+    const n = Number(d);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const jsonRows = rows.map((row) => ({
+    'Country of Destination': (row.countryOfDestination ?? '').toString(),
+    Type: (row.type ?? '').toString(),
+    Color: (row.color ?? '').toString(),
+    Size: (row.size ?? '').toString(),
+    Qty: toNumOrNull(row.qty),
+    Total: toNumOrNull(row.total),
+    'No of Asst': (row.noOfAsst ?? '').toString(),
+    Editable: row.editable ? 'TRUE' : 'FALSE',
+  }));
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(jsonRows);
+  XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
+  XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export function SalesOrderPrototypeEditPage() {
@@ -390,18 +427,28 @@ export function SalesOrderPrototypeEditPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
-          <Button
-            type='button'
-            variant='primary'
-            onClick={() => {
-              setSalesOrderDetailDraftRows((prev) => [
-                ...prev,
-                { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-              ]);
-            }}
-          >
-            Add row
-          </Button>
+          <div className='flex items-center gap-2'>
+            <Button
+              type='button'
+              variant='secondary'
+              disabled={section2NonTotalEntries.length === 0}
+              onClick={() => exportRowsToExcel(section2NonTotalEntries.map(({ row }) => row))}
+            >
+              Convert to Excel
+            </Button>
+            <Button
+              type='button'
+              variant='primary'
+              onClick={() => {
+                setSalesOrderDetailDraftRows((prev) => [
+                  ...prev,
+                  { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                ]);
+              }}
+            >
+              Add row
+            </Button>
+          </div>
         </div>
         <div className='p-6'>
           {section2NonTotalEntries.length === 0 ? (
