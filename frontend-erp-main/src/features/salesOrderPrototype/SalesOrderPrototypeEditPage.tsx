@@ -44,6 +44,7 @@ type DetailDraftRow = {
 
 type CountryBreakdownRow = {
   country: string;
+  countryOfDestination?: string;
   pmCode: string;
   total: string;
   editable: boolean;
@@ -147,47 +148,19 @@ export function SalesOrderPrototypeEditPage() {
     return Array.from(byCountry.entries()).map(([countryOfDestination, total]) => ({ countryOfDestination, total }));
   }, [salesOrderDetailDraftRows]);
 
-  const upsertSection2TotalRowByCountry = (country: string, total: string) => {
-    const nextCountry = (country ?? '').toString();
-    const nextTotal = normalizeDigits((total ?? '').toString());
-    setSalesOrderDetailDraftRows((prev) => {
-      const keep = (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'total');
-      const trimmedCountry = nextCountry.trim();
-      const canonicalTotals = (prev ?? []).filter((r) => {
-        const isTotal = (r?.type ?? '').toString().trim().toLowerCase() === 'total';
-        if (!isTotal) return false;
-        const c = (r?.countryOfDestination ?? '').toString().trim();
-        return c !== trimmedCountry;
-      });
+  const section2TotalCountryLookup = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of section2TotalByCountryRows ?? []) {
+      const c = (r?.countryOfDestination ?? '').toString().trim();
+      if (!c) continue;
+      m.set(c.toLowerCase(), c);
 
-      return [
-        ...keep,
-        ...canonicalTotals,
-        {
-          countryOfDestination: nextCountry,
-          type: 'Total',
-          color: '',
-          size: '',
-          qty: nextTotal,
-          total: '',
-          noOfAsst: '',
-          editable: true,
-        },
-      ];
-    });
-  };
-
-  const deleteSection2TotalRowByCountry = (country: string) => {
-    const c0 = (country ?? '').toString().trim();
-    setSalesOrderDetailDraftRows((prev) =>
-      (prev ?? []).filter((r) => {
-        const isTotal = (r?.type ?? '').toString().trim().toLowerCase() === 'total';
-        if (!isTotal) return true;
-        const c = (r?.countryOfDestination ?? '').toString().trim();
-        return c !== c0;
-      }),
-    );
-  };
+      const mCode = c.match(/\b([A-Z]{2})\b/);
+      const code = (mCode?.[1] ?? '').toString().trim().toLowerCase();
+      if (code) m.set(code, c);
+    }
+    return m;
+  }, [section2TotalByCountryRows]);
 
   const section2cGrandTotal = useMemo(() => {
     let sum = 0;
@@ -248,6 +221,7 @@ export function SalesOrderPrototypeEditPage() {
       setCountryBreakdownDraftRows(
         tcb.map((r) => ({
           country: (r?.country ?? r?.destinationCountry ?? '').toString(),
+          countryOfDestination: (r?.countryOfDestination ?? r?.destinationCountry ?? '').toString(),
           pmCode: (r?.pmCode ?? r?.pm ?? '').toString(),
           total: (r?.total ?? r?.Total ?? '').toString(),
           editable: true,
@@ -540,82 +514,6 @@ export function SalesOrderPrototypeEditPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (TOTAL)</div>
-          <Button
-            type='button'
-            variant='primary'
-            onClick={() => {
-              setSalesOrderDetailDraftRows((prev) => [
-                ...(prev ?? []),
-                { countryOfDestination: '', type: 'Total', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-              ]);
-            }}
-          >
-            Add row
-          </Button>
-        </div>
-        <div className='p-6'>
-          {section2TotalByCountryRows.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No total rows.</div>
-          ) : (
-            <div className='w-full max-h-[40vh] overflow-auto'>
-              <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50 sticky top-0 z-10'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2TotalByCountryRows.map((row, i) => (
-                    <tr key={i} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.countryOfDestination}
-                          onChange={(e) => {
-                            const nextCountry = e.target.value;
-                            const curCountry = row.countryOfDestination;
-                            const curTotal = row.total.toString();
-                            deleteSection2TotalRowByCountry(curCountry);
-                            upsertSection2TotalRowByCountry(nextCountry, curTotal);
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={formatIdThousands(row.total.toString())}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            upsertSection2TotalRowByCountry(row.countryOfDestination, v);
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
-                      <td className='px-3 py-2 align-top'>
-                        <Button
-                          type='button'
-                          variant='danger'
-                          onClick={() => {
-                            deleteSection2TotalRowByCountry(row.countryOfDestination);
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2B – TOTAL COUNTRY BREAKDOWN</div>
           <Button
             type='button'
@@ -637,6 +535,7 @@ export function SalesOrderPrototypeEditPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
@@ -654,6 +553,20 @@ export function SalesOrderPrototypeEditPage() {
                         <Input
                           value={row.pmCode}
                           onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, pmCode: e.target.value } : r)))}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={
+                            (row.countryOfDestination ?? '').toString() ||
+                            section2TotalCountryLookup.get((row.country ?? '').toString().trim().toLowerCase()) ||
+                            ''
+                          }
+                          onChange={(e) =>
+                            setCountryBreakdownDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r)),
+                            )
+                          }
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
