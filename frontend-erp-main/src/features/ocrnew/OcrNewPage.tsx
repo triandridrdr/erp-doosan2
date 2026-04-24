@@ -295,6 +295,58 @@ export function OcrNewPage() {
     return { fileName: tcb.fileName ?? '', rows };
   }, [data, results, activeFileIndex]);
 
+  const extractArticleNoColourLabel = (d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
+    const ff = d?.formFields ?? {};
+
+    const pickKv = (keyAlts: string[]) => {
+      const kvs = d?.keyValuePairs ?? [];
+      for (const kv of kvs) {
+        const k = (kv?.key ?? '').toString().trim().toLowerCase();
+        if (!k) continue;
+        if (keyAlts.some((a) => a.toLowerCase() === k)) {
+          const v = (kv?.value ?? '').toString().trim();
+          if (v) return v;
+        }
+      }
+      return '';
+    };
+
+    const pickLine = (keyAlts: string[]) => {
+      const lines = d?.lines ?? [];
+      for (const ln of lines) {
+        const t = (ln?.text ?? '').toString().trim();
+        if (!t) continue;
+        for (const a of keyAlts) {
+          const re = new RegExp(`^\\s*${a.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\s*:\\s*(.+)\\s*$`, 'i');
+          const m = t.match(re);
+          if (m?.[1]) {
+            const v = m[1].trim();
+            if (v) return v;
+          }
+        }
+      }
+      return '';
+    };
+
+    const articleNo =
+      (ff['Article No'] ?? ff['Article'] ?? '').toString().trim() ||
+      pickKv(['Article No', 'Article']) ||
+      pickLine(['Article No', 'Article']);
+
+    const hmColourCode =
+      (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim() ||
+      pickKv(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']) ||
+      pickLine(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']);
+
+    return [articleNo, hmColourCode].filter((v) => v.length > 0).join(' ').trim();
+  };
+
+  const section2cArticleLabelFromTcb = useMemo(() => {
+    if (!backendCountryBreakdown?.fileName) return '';
+    const tcbRes = results.find((r) => (r?.fileName ?? '') === backendCountryBreakdown.fileName);
+    return extractArticleNoColourLabel(tcbRes?.data);
+  }, [backendCountryBreakdown?.fileName, results]);
+
   // Hydrate SECTION 2B draft when backendCountryBreakdown changes
   useEffect(() => {
     if (!backendCountryBreakdown) {
@@ -363,9 +415,10 @@ export function OcrNewPage() {
 
     const ff = data?.formFields ?? {};
     const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
-    const hmColourCode = (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim();
     const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
-    const articleLabel = [optionNo, hmColourCode].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+    const fromActive = extractArticleNoColourLabel(data);
+    const fallbackLabel = fromActive || [optionNo].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+    const articleLabel = section2cArticleLabelFromTcb || fallbackLabel;
 
     return {
       articleLabel,
@@ -373,7 +426,7 @@ export function OcrNewPage() {
       sizeTotals,
       grandTotal,
     };
-  }, [salesOrderDetailDraftRows, data?.formFields]);
+  }, [salesOrderDetailDraftRows, data, section2cArticleLabelFromTcb]);
 
   const section2cTotalFrom2b = useMemo(() => {
     if (!backendCountryBreakdown) return null;
@@ -390,12 +443,13 @@ export function OcrNewPage() {
 
     const ff = data?.formFields ?? {};
     const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
-    const hmColourCode = (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim();
     const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
-    const articleLabel = [optionNo, hmColourCode].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+    const fromActive = extractArticleNoColourLabel(data);
+    const fallbackLabel = fromActive || [optionNo].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+    const articleLabel = section2cArticleLabelFromTcb || fallbackLabel;
 
     return { articleLabel, total: sum.toString() };
-  }, [backendCountryBreakdown, data?.formFields]);
+  }, [backendCountryBreakdown, data, section2cArticleLabelFromTcb]);
 
   useEffect(() => {
     if (!section2cSizeSummary) {
