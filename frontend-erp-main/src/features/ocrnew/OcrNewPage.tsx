@@ -70,6 +70,24 @@ export function OcrNewPage() {
     }>
   >([]);
 
+  const [section2cDraftRows, setSection2cDraftRows] = useState<
+    Array<{
+      article: string;
+      size: string;
+      qty: string;
+      editable: boolean;
+    }>
+  >([]);
+
+  const [section2cTotalDraftRows, setSection2cTotalDraftRows] = useState<
+    Array<{
+      article: string;
+      total: string;
+      editable: boolean;
+    }>
+  >([]);
+  const [section2cTotalDirty, setSection2cTotalDirty] = useState(false);
+
   const appendLog = (msg: string) => {
     const ts = new Date().toISOString();
     setMultiFileLogs((prev) => [...prev, `[${ts}] ${msg}`]);
@@ -297,6 +315,118 @@ export function OcrNewPage() {
     }));
     setCountryBreakdownDraftRows(rows);
   }, [backendCountryBreakdown]);
+
+  const section2cSizeSummary = useMemo(() => {
+    const draftRows = salesOrderDetailDraftRows ?? [];
+    if (!Array.isArray(draftRows) || draftRows.length === 0) return null;
+
+    const hasTotalType = draftRows.some((r) => (r?.type ?? '').toString().toLowerCase() === 'total');
+    const rowsForSum = hasTotalType
+      ? draftRows.filter((r) => (r?.type ?? '').toString().toLowerCase() !== 'total')
+      : draftRows;
+
+    const sizesSet = new Set<string>();
+    for (const r of rowsForSum) {
+      const sz = normalizeSizeKey((r?.size ?? '').toString());
+      if (sz) sizesSet.add(sz);
+    }
+    if (sizesSet.size === 0) return null;
+
+    const preferredOrder = ['XS', 'S', 'M', 'L', 'XL', 'XS/P', 'S/P', 'M/P', 'L/P', 'XL/P'];
+    const normalizeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '');
+    const sizes = Array.from(sizesSet);
+    sizes.sort((a, b) => {
+      const na = normalizeKey(a);
+      const nb = normalizeKey(b);
+      const ia = preferredOrder.indexOf(na);
+      const ib = preferredOrder.indexOf(nb);
+      if (ia >= 0 && ib >= 0) return ia - ib;
+      if (ia >= 0) return -1;
+      if (ib >= 0) return 1;
+      return na.localeCompare(nb);
+    });
+
+    const totalsBySize = new Map<string, number>();
+    for (const sz of sizes) totalsBySize.set(sz, 0);
+
+    for (const r of rowsForSum) {
+      const sz = normalizeSizeKey((r?.size ?? '').toString());
+      if (!sz) continue;
+      const qtyDigits = normalizeDigits((r?.qty ?? '').toString());
+      if (!qtyDigits) continue;
+      const cur = totalsBySize.get(sz) ?? 0;
+      totalsBySize.set(sz, cur + Number(qtyDigits));
+    }
+
+    const sizeTotals = sizes.map((k) => ({ key: k, total: totalsBySize.get(k) ?? 0 }));
+    const grandTotal = sizeTotals.reduce((acc, x) => acc + (Number.isFinite(x.total) ? x.total : 0), 0);
+
+    const ff = data?.formFields ?? {};
+    const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
+    const hmColourCode = (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim();
+    const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
+    const articleLabel = [optionNo, hmColourCode].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+
+    return {
+      articleLabel,
+      sizeKeys: sizes,
+      sizeTotals,
+      grandTotal,
+    };
+  }, [salesOrderDetailDraftRows, data?.formFields]);
+
+  const section2cTotalFrom2b = useMemo(() => {
+    if (!backendCountryBreakdown) return null;
+    const keys = Object.keys(backendCountryBreakdown.rows?.[0] ?? {});
+    const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
+    const kTotal = findKey(['total', 'tot']) ?? 'total';
+
+    let sum = 0;
+    for (const r of backendCountryBreakdown.rows ?? []) {
+      const d = normalizeDigits((r?.[kTotal] ?? '').toString());
+      if (d) sum += Number(d);
+    }
+    if (sum <= 0) return null;
+
+    const ff = data?.formFields ?? {};
+    const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
+    const hmColourCode = (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim();
+    const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
+    const articleLabel = [optionNo, hmColourCode].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+
+    return { articleLabel, total: sum.toString() };
+  }, [backendCountryBreakdown, data?.formFields]);
+
+  useEffect(() => {
+    if (!section2cSizeSummary) {
+      setSection2cDraftRows([]);
+      return;
+    }
+    setSection2cDraftRows(
+      section2cSizeSummary.sizeTotals.map((x) => ({
+        article: section2cSizeSummary.articleLabel,
+        size: x.key,
+        qty: x.total.toString(),
+        editable: true,
+      })),
+    );
+  }, [section2cSizeSummary]);
+
+  useEffect(() => {
+    if (!section2cTotalFrom2b) {
+      setSection2cTotalDraftRows([]);
+      setSection2cTotalDirty(false);
+      return;
+    }
+    if (section2cTotalDirty) return;
+    setSection2cTotalDraftRows([
+      {
+        article: section2cTotalFrom2b.articleLabel,
+        total: section2cTotalFrom2b.total,
+        editable: true,
+      },
+    ]);
+  }, [section2cTotalFrom2b, section2cTotalDirty]);
 
   return (
     <div className='space-y-6'>
@@ -684,6 +814,133 @@ export function OcrNewPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 2C – COLOUR / SIZE BREAKDOWN</div>
+        </div>
+        <div className='p-6 space-y-6'>
+          {!section2cSizeSummary ? (
+            <div className='text-sm text-gray-500 italic'>No size breakdown detected.</div>
+          ) : (
+            <div className='w-full max-h-[50vh] overflow-auto'>
+              <table className='min-w-[800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {section2cDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.article}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <SizeAutocompleteInput
+                          value={row.size}
+                          onChange={(e) => {
+                            const v = normalizeSizeKey(e.target.value);
+                            setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands(row.qty)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
+                          }}
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setSection2cDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className='border-b border-gray-100 last:border-b-0'>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>Total:</td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>{formatIdThousands((section2cTotalFrom2b?.total ?? section2cSizeSummary.grandTotal.toString()).toString())}</td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!section2cTotalFrom2b ? null : (
+            <div className='w-full max-w-[420px] overflow-auto'>
+              <table className='min-w-[360px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total:</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {section2cTotalDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.article}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSection2cTotalDirty(true);
+                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands(row.total)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSection2cTotalDirty(true);
+                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
+                          }}
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
+                    </tr>
+                  ))}
+                  <tr className='border-b border-gray-100 last:border-b-0'>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>Total:</td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>
+                      {formatIdThousands((section2cTotalDraftRows?.[0]?.total ?? section2cTotalFrom2b.total).toString())}
+                    </td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 3 – BILL OF MATERIALS (BOM DRAFT)</div>
           <Button
             type='button'
@@ -804,7 +1061,30 @@ export function OcrNewPage() {
   );
 }
 
-const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
+const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XS/P', 'S/P', 'M/P', 'L/P', 'XL/P'] as const;
+
+function normalizeSizeKey(input: string): string {
+  const s = (input ?? '').toString().trim();
+  if (!s) return '';
+  return s
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/\*/g, '');
+}
+
+function pickSizeValue(m: Record<string, any>, sizeKey: string): string {
+  if (!m) return '';
+  const target = normalizeSizeKey(sizeKey);
+  const keys = Object.keys(m ?? {});
+  for (const k of keys) {
+    if (normalizeSizeKey(k) === target) {
+      return (m?.[k] ?? '').toString();
+    }
+  }
+  // Fallback for legacy keys that are already normalized (xs, xs/p)
+  const low = target.toLowerCase();
+  return (m?.[target] ?? m?.[low] ?? '').toString();
+}
 
 function pivotDetailRows(
   backendRows: Array<Record<string, any>>,
@@ -827,7 +1107,7 @@ function pivotDetailRows(
             countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
             type: (m?.type ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
-            size: (m?.size ?? '').toString(),
+            size: normalizeSizeKey((m?.size ?? '').toString()),
             qty: (m?.qty ?? '').toString(),
             total: (m?.total ?? m?.Total ?? '').toString(),
             noOfAsst: (m?.noOfAsst ?? '').toString(),
@@ -846,7 +1126,7 @@ function pivotDetailRows(
         type,
         color,
         size: sz,
-        qty: (m?.[sz] ?? m?.[sz.toLowerCase()] ?? '').toString(),
+        qty: pickSizeValue(m, sz),
         total,
         noOfAsst,
         editable: true,
