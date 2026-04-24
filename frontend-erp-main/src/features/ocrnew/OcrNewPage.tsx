@@ -247,6 +247,8 @@ export function OcrNewPage() {
         bomDraftRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         totalCountryBreakdown: countryBreakdownDraftRows,
+        section2cColourSizeBreakdown: section2cDraftRows,
+        section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
         raw: data,
       };
       return salesOrderPrototypeApi.create(payload);
@@ -317,7 +319,7 @@ export function OcrNewPage() {
         const t = (ln?.text ?? '').toString().trim();
         if (!t) continue;
         for (const a of keyAlts) {
-          const re = new RegExp(`^\\s*${a.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\s*:\\s*(.+)\\s*$`, 'i');
+          const re = new RegExp(`^\\s*${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*(.+)\\s*$`, 'i');
           const m = t.match(re);
           if (m?.[1]) {
             const v = m[1].trim();
@@ -481,6 +483,72 @@ export function OcrNewPage() {
       },
     ]);
   }, [section2cTotalFrom2b, section2cTotalDirty]);
+
+  const section2NonTotalEntries = useMemo(() => {
+    return (salesOrderDetailDraftRows ?? [])
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
+  }, [salesOrderDetailDraftRows]);
+
+  const section2TotalByCountryRows = useMemo(() => {
+    const totals = (salesOrderDetailDraftRows ?? []).filter(
+      (r) => (r?.type ?? '').toString().trim().toLowerCase() === 'total',
+    );
+    if (totals.length === 0) return [];
+
+    const byCountry = new Map<string, number>();
+    const normKey = (v: string) => v.toString().trim();
+
+    for (const r of totals) {
+      const countryOfDestination = normKey((r?.countryOfDestination ?? '').toString());
+      const qty = Number(normalizeDigits((r?.qty ?? '').toString()) || '0');
+      byCountry.set(countryOfDestination, (byCountry.get(countryOfDestination) ?? 0) + qty);
+    }
+
+    return Array.from(byCountry.entries()).map(([countryOfDestination, total]) => ({ countryOfDestination, total }));
+  }, [salesOrderDetailDraftRows]);
+
+  const upsertSection2TotalRowByCountry = (country: string, total: string) => {
+    const nextCountry = (country ?? '').toString();
+    const nextTotal = normalizeDigits((total ?? '').toString());
+    setSalesOrderDetailDraftRows((prev) => {
+      const keep = (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'total');
+      const trimmedCountry = nextCountry.trim();
+      const canonicalTotals = (prev ?? []).filter((r) => {
+        const isTotal = (r?.type ?? '').toString().trim().toLowerCase() === 'total';
+        if (!isTotal) return false;
+        const c = (r?.countryOfDestination ?? '').toString().trim();
+        return c !== trimmedCountry;
+      });
+
+      return [
+        ...keep,
+        ...canonicalTotals,
+        {
+          countryOfDestination: nextCountry,
+          type: 'Total',
+          color: '',
+          size: '',
+          qty: nextTotal,
+          total: '',
+          noOfAsst: '',
+          editable: true,
+        },
+      ];
+    });
+  };
+
+  const deleteSection2TotalRowByCountry = (country: string) => {
+    const c0 = (country ?? '').toString().trim();
+    setSalesOrderDetailDraftRows((prev) =>
+      (prev ?? []).filter((r) => {
+        const isTotal = (r?.type ?? '').toString().trim().toLowerCase() === 'total';
+        if (!isTotal) return true;
+        const c = (r?.countryOfDestination ?? '').toString().trim();
+        return c !== c0;
+      }),
+    );
+  };
 
   return (
     <div className='space-y-6'>
@@ -660,7 +728,7 @@ export function OcrNewPage() {
         <div className='p-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : salesOrderDetailDraftRows.length === 0 ? (
+          ) : section2NonTotalEntries.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
@@ -679,7 +747,7 @@ export function OcrNewPage() {
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
-                  {salesOrderDetailDraftRows.map((row, idx) => (
+                  {section2NonTotalEntries.map(({ row, idx }) => (
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
                       <td className='px-3 py-2 align-top'>
                         <Input
@@ -762,6 +830,85 @@ export function OcrNewPage() {
                           variant='danger'
                           onClick={() => {
                             setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (TOTAL)</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setSalesOrderDetailDraftRows((prev) => [
+                ...(prev ?? []),
+                { countryOfDestination: '', type: 'Total', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+              ]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : section2TotalByCountryRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No total rows.</div>
+          ) : (
+            <div className='w-full max-h-[40vh] overflow-auto'>
+              <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {section2TotalByCountryRows.map((row, i) => (
+                    <tr key={i} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.countryOfDestination}
+                          onChange={(e) => {
+                            const nextCountry = e.target.value;
+                            const curCountry = row.countryOfDestination;
+                            const curTotal = row.total.toString();
+                            deleteSection2TotalRowByCountry(curCountry);
+                            upsertSection2TotalRowByCountry(nextCountry, curTotal);
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands(row.total.toString())}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            upsertSection2TotalRowByCountry(row.countryOfDestination, v);
+                          }}
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            deleteSection2TotalRowByCountry(row.countryOfDestination);
                           }}
                         >
                           Delete
