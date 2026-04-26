@@ -49,6 +49,7 @@ public class OcrNewService {
     private static final String PDF_CONTENT_TYPE = "application/pdf";
 
     private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
+    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,2}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
     // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
     // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
@@ -477,6 +478,19 @@ public class OcrNewService {
                         currentRow[0].put(size, v);
                         sawAnySize[0] = true;
                     }
+                    continue;
+                }
+
+                // Some countries use numeric size labels at the start, e.g. "155/80A (XS/P)* 30"
+                Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
+                if (sp.matches()) {
+                    String inside = sp.group(1);
+                    String v = normalizeNumber(sp.group(2));
+                    String size = normalizeSizeKey(inside);
+                    if (size != null && v != null && !v.isBlank()) {
+                        currentRow[0].put(size, v);
+                        sawAnySize[0] = true;
+                    }
                 }
             }
 
@@ -695,7 +709,11 @@ public class OcrNewService {
 
     private static String normalizeSizeKey(String raw) {
         if (raw == null) return null;
-        String s = raw.trim().toUpperCase(Locale.ROOT);
+        String s = raw.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+        s = s.replaceAll("\\*+", "");
+        if (s.endsWith("/P")) {
+            s = s.substring(0, s.length() - 2);
+        }
         if (s.equals("XS")) return "XS";
         if (s.equals("XL")) return "XL";
         if (s.equals("S")) return "S";

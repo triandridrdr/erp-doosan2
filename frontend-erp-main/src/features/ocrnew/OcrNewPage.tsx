@@ -1228,7 +1228,7 @@ export function OcrNewPage() {
   );
 }
 
-const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XS/P', 'S/P', 'M/P', 'L/P', 'XL/P'] as const;
+const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
 
 function normalizeSizeKey(input: string): string {
   const s = (input ?? '').toString().trim();
@@ -1284,7 +1284,7 @@ function pivotDetailRows(
             type: (m?.type ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
             size: normalizeSizeKey((m?.size ?? '').toString()),
-            qty: (m?.qty ?? '').toString(),
+            qty: ((m?.qty ?? '').toString() || '0').toString(),
             total: (m?.total ?? m?.Total ?? '').toString(),
             noOfAsst: (m?.noOfAsst ?? '').toString(),
             editable: true,
@@ -1302,7 +1302,7 @@ function pivotDetailRows(
         type,
         color,
         size: sz,
-        qty: pickSizeValue(m, sz),
+        qty: (pickSizeValue(m, sz) || '0').toString(),
         total,
         noOfAsst,
         editable: true,
