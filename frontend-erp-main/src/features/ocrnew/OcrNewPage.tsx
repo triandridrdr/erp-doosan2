@@ -95,6 +95,31 @@ export function OcrNewPage() {
     setMultiFileLogs((prev) => [...prev, `[${ts}] ${msg}`]);
   };
 
+  const logBackendSection2DetailRows = (fileName: string, d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
+    const rows = (d?.salesOrderDetailSizeBreakdown ?? []) as any[];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      appendLog(`[BACKEND->FE] file=${fileName} salesOrderDetailSizeBreakdown=[]`);
+      return;
+    }
+
+    const mexico = rows.filter((r) => {
+      const c = (r?.countryOfDestination ?? r?.destinationCountry ?? '').toString().toLowerCase();
+      return c.includes('mexico');
+    });
+
+    const sample = (mexico.length > 0 ? mexico : rows).slice(0, 20);
+    appendLog(
+      `[BACKEND->FE] file=${fileName} salesOrderDetailSizeBreakdown_count=${rows.length} sample_count=${sample.length} mexico_count=${mexico.length}`,
+    );
+    for (const r of sample) {
+      try {
+        appendLog(`[BACKEND->FE] row=${JSON.stringify(r)}`);
+      } catch {
+        appendLog(`[BACKEND->FE] row=[unserializable]`);
+      }
+    }
+  };
+
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
     const next: Record<string, string> = {};
@@ -198,6 +223,7 @@ export function OcrNewPage() {
           const tc = res?.data?.tables?.length ?? 0;
           const dc = (res?.data?.salesOrderDetailSizeBreakdown ?? []).length;
           appendLog(`OK file=${f.name} durationMs=${dtMs} pageCount=${pc} tableCount=${tc} detailRowCount=${dc}`);
+          logBackendSection2DetailRows(f.name, res?.data);
           if (res?.data) {
             out.push({ fileName: f.name, data: res.data });
           }
@@ -652,6 +678,14 @@ export function OcrNewPage() {
           </div>
         )}
 
+        {multiFileLogs.length > 0 && (
+          <div className='mt-4 rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden'>
+            <div className='px-4 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600'>Logs</div>
+            <pre className='p-4 text-[11px] leading-relaxed text-gray-800 whitespace-pre-wrap max-h-[240px] overflow-auto'>
+              {multiFileLogs.join('\n')}
+            </pre>
+          </div>
+        )}
       </div>
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
@@ -1225,6 +1259,15 @@ function pickSizeValue(m: Record<string, any>, sizeKey: string): string {
   for (const k of keys) {
     if (normalizeSizeKey(k) === target) {
       return (m?.[k] ?? '').toString();
+    }
+  }
+  for (const k of keys) {
+    const mk = k.match(/\(\s*([A-Za-z]+(?:\s*\/\s*P)?)\s*\)/);
+    if (mk?.[1]) {
+      const extracted = normalizeSizeKey(mk[1]);
+      if (extracted === target) {
+        return (m?.[k] ?? '').toString();
+      }
     }
   }
   // Fallback for legacy keys that are already normalized (xs, xs/p)

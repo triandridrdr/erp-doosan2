@@ -466,6 +466,13 @@ public class OcrNewService {
                     String sizeRaw = sm.group(1);
                     String v = normalizeNumber(sm.group(2));
                     String size = normalizeSizeKey(sizeRaw);
+                    if (size == null) {
+                        Matcher pm = Pattern.compile("\\(\\s*([A-Za-z]{1,2})\\s*(?:\\/\\s*P)?\\s*\\)").matcher(t);
+                        if (pm.find()) {
+                            String inside = pm.group(1);
+                            size = normalizeSizeKey(inside);
+                        }
+                    }
                     if (size != null && v != null && !v.isBlank()) {
                         currentRow[0].put(size, v);
                         sawAnySize[0] = true;

@@ -66,6 +66,37 @@ type Section2cTotalDraftRow = {
 
 const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
 
+function normalizeSizeKey(input: string): string {
+  const s = (input ?? '').toString().trim();
+  if (!s) return '';
+  return s
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/\*/g, '');
+}
+
+function pickSizeValue(m: Record<string, any>, sizeKey: string): string {
+  if (!m) return '';
+  const target = normalizeSizeKey(sizeKey);
+  const keys = Object.keys(m ?? {});
+  for (const k of keys) {
+    if (normalizeSizeKey(k) === target) {
+      return (m?.[k] ?? '').toString();
+    }
+  }
+  for (const k of keys) {
+    const mk = k.match(/\(\s*([A-Za-z]+(?:\s*\/\s*P)?)\s*\)/);
+    if (mk?.[1]) {
+      const extracted = normalizeSizeKey(mk[1]);
+      if (extracted === target) {
+        return (m?.[k] ?? '').toString();
+      }
+    }
+  }
+  const low = target.toLowerCase();
+  return (m?.[target] ?? m?.[low] ?? '').toString();
+}
+
 function pivotDetailRows(
   backendRows: Array<Record<string, any>>,
 ): Array<DetailDraftRow> {
@@ -95,7 +126,7 @@ function pivotDetailRows(
         type,
         color,
         size: sz,
-        qty: (m?.[sz] ?? m?.[sz.toLowerCase()] ?? '').toString(),
+        qty: pickSizeValue(m, sz),
         total,
         noOfAsst,
         editable: true,
