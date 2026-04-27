@@ -377,6 +377,54 @@ export function OcrNewPage() {
     return extractArticleNoColourLabel(tcbRes?.data);
   }, [backendCountryBreakdown?.fileName, results]);
 
+  /**
+   * Prefer the Colour / Size breakdown table extracted directly from the TCB PDF.
+   * Falls back to null when no TCB upload contains it. Returns an exploded list of
+   * { article, size, qty } draft rows ready for Section 2C.
+   */
+  const backendColourSizeBreakdown = useMemo(() => {
+    const isTcbName = (name: string) => {
+      const n = (name || '').toLowerCase();
+      return (
+        n.includes('totalcountrybreakdown') ||
+        n.includes('total_country_breakdown') ||
+        (n.includes('total') && n.includes('country') && n.includes('breakdown'))
+      );
+    };
+
+    // Prefer the active file if it's a TCB and has rows
+    const curFile = results[activeFileIndex]?.fileName ?? '';
+    let source: { fileName: string; rows: Array<Record<string, string>> } | null = null;
+    if (isTcbName(curFile)) {
+      const rows = data?.colourSizeBreakdown ?? [];
+      if (rows.length > 0) source = { fileName: curFile, rows };
+    }
+    if (!source) {
+      const tcb = results.find((r) => isTcbName(r.fileName ?? '') && (r?.data?.colourSizeBreakdown ?? []).length > 0);
+      if (tcb) source = { fileName: tcb.fileName ?? '', rows: tcb?.data?.colourSizeBreakdown ?? [] };
+    }
+    if (!source || source.rows.length === 0) return null;
+
+    const META_KEYS = new Set(['article', 'total']);
+    const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
+    let grandTotal = 0;
+    let articleLabel = '';
+    for (const row of source.rows) {
+      const article = (row?.article ?? '').toString().trim();
+      if (!articleLabel && article) articleLabel = article;
+      for (const [key, val] of Object.entries(row ?? {})) {
+        if (META_KEYS.has(key.toLowerCase())) continue;
+        const qty = (val ?? '').toString().trim();
+        if (!qty) continue;
+        exploded.push({ article, size: key, qty, editable: true });
+        const n = Number(qty.replace(/[^0-9]/g, ''));
+        if (Number.isFinite(n)) grandTotal += n;
+      }
+    }
+    if (exploded.length === 0) return null;
+    return { fileName: source.fileName, rows: exploded, articleLabel, grandTotal };
+  }, [data, results, activeFileIndex]);
+
   // Hydrate SECTION 2B draft when backendCountryBreakdown changes
   useEffect(() => {
     if (!backendCountryBreakdown) {
@@ -483,6 +531,24 @@ export function OcrNewPage() {
   }, [backendCountryBreakdown, data, section2cArticleLabelFromTcb]);
 
   useEffect(() => {
+    // Prefer the actual table extracted from the TCB PDF (backendColourSizeBreakdown).
+    // Fall back to deriving the breakdown from Section 2 only when the PDF didn't
+    // contain a Colour / Size breakdown table.
+    if (backendColourSizeBreakdown) {
+      // Use the article label from TCB header (Article No + H&M Colour Code) when
+      // available, otherwise keep the article string parsed from the table itself.
+      const articleLabel = section2cArticleLabelFromTcb || backendColourSizeBreakdown.articleLabel;
+      setSection2cDraftRows(
+        backendColourSizeBreakdown.rows.map((r) => ({
+          article: articleLabel || r.article,
+          size: r.size,
+          qty: r.qty,
+          editable: true,
+        })),
+      );
+      return;
+    }
+
     if (!section2cSizeSummary) {
       setSection2cDraftRows([]);
       return;
@@ -495,7 +561,7 @@ export function OcrNewPage() {
         editable: true,
       })),
     );
-  }, [section2cSizeSummary]);
+  }, [backendColourSizeBreakdown, section2cSizeSummary, section2cArticleLabelFromTcb]);
 
   useEffect(() => {
     if (!section2cTotalFrom2b) {
@@ -984,7 +1050,7 @@ export function OcrNewPage() {
           <div className='text-xs font-semibold text-gray-500'>SECTION 2C – COLOUR / SIZE BREAKDOWN</div>
         </div>
         <div className='p-6 space-y-6'>
-          {!section2cSizeSummary ? (
+          {!section2cSizeSummary && !backendColourSizeBreakdown ? (
             <div className='text-sm text-gray-500 italic'>No size breakdown detected.</div>
           ) : (
             <div className='w-full max-h-[50vh] overflow-auto'>
@@ -1046,7 +1112,7 @@ export function OcrNewPage() {
                   <tr className='border-b border-gray-100 last:border-b-0'>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>Total:</td>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>{formatIdThousands((section2cTotalFrom2b?.total ?? section2cSizeSummary.grandTotal.toString()).toString())}</td>
+                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>{formatIdThousands((section2cTotalFrom2b?.total ?? backendColourSizeBreakdown?.grandTotal?.toString() ?? section2cSizeSummary?.grandTotal?.toString() ?? '0').toString())}</td>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
                   </tr>

@@ -13,6 +13,8 @@ import com.doosan.erp.ocrnew.model.OcrNewLine;
 import com.doosan.erp.ocrnew.parser.KeyValueParser;
 import com.doosan.erp.ocrnew.parser.TableParser;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -206,6 +208,526 @@ public class OcrNewService {
             log.debug("[TCB-LINES][SUMMARY] rowsParsed={}", out.size());
         }
         return out;
+    }
+
+    /**
+     * Pattern that matches a clothing size column label. Accepts:
+     *   XS, S, M, L, XL, XXS, XXL    with optional trailing punctuation that OCR
+     *                                 may produce in place of '*' (e.g. '*', '+', '.', "'", '"').
+     *   Same with a "/P" or "IP" suffix (Tesseract often misreads '/' as 'I').
+     * Examples that match: "XS", "S*", "M/P", "XL/P*", "XS+", "XLIP", "M.", "S/P."
+     */
+    private static final Pattern SIZE_LABEL_PAT = Pattern.compile(
+            "(?i)^(?:XX?S|S|M|L|XX?L)(?:[*+.,'\"\u2022])?(?:[/I]P(?:[*+.,'\"\u2022])?)?$");
+
+    /**
+     * Collapse spaces inside numeric thousand groups so "5 730" becomes "5730"
+     * and "36 795" becomes "36795".
+     *
+     * Uses a non-digit lookbehind so we only match when the LEADING 1-2 digits
+     * are at the start of a number, never the trailing digits of a longer one.
+     * Without the lookbehind the previous regex incorrectly merged adjacent
+     * 3-digit values like "692 915" into "692915" (it matched the last digit
+     * of 692 + space + 915), wrecking the data row in TCB PDFs whose size
+     * values straddle the 1000 boundary.
+     *
+     * Trade-off: a 7-digit value like "1 234 567" now collapses only to
+     * "1234 567" (two values) instead of "1234567". For H&M docs that's
+     * acceptable since none of the size/total values exceed 5 digits.
+     */
+    private static String collapseThousandSpaces(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String out = s;
+        for (int i = 0; i < 3; i++) {
+            String next = out.replaceAll("(?<!\\d)(\\d{1,2})\\s+(\\d{3})(?!\\d)", "$1$2");
+            if (next.equals(out)) break;
+            out = next;
+        }
+        return out;
+    }
+
+    /**
+     * Lenient header detector for "Colour / Size breakdown" — matches with/without
+     * spaces around the slash and with British/American spellings.
+     */
+    private static int findColourSizeHeaderIndex(List<String> texts) {
+        if (texts == null) return -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String s = oneLine(texts.get(i)).toLowerCase(Locale.ROOT);
+            if (!s.contains("size breakdown")) continue;
+            if (s.contains("colour") || s.contains("color")) return i;
+        }
+        return -1;
+    }
+
+    /** Pattern for a bare size base ("XS", "S", "M", "L", "XL", "XXS", "XXL"). */
+    private static final Pattern SIZE_BASE_PAT = Pattern.compile("(?i)^(?:XX?S|S|M|L|XX?L)$");
+
+    /** Pattern for a "/P" suffix piece, possibly with trailing punctuation. */
+    private static final Pattern SLASH_P_SUFFIX_PAT = Pattern.compile("(?i)^[/I]P[*+.,'\"\u2022]?$");
+
+    /** Pattern for a single trailing punctuation token used in place of "*". */
+    private static final Pattern PUNCT_SUFFIX_PAT = Pattern.compile("^[*+.,'\"\u2022]$");
+
+    /**
+     * Merge tokens that were split mid-size-label by OCR/PDF column wrapping.
+     * Examples (read each as quoted strings; backticks used to avoid an
+     * inadvertent javadoc terminator):
+     *   `M`    + `/P*`  -> `M/P*`
+     *   `S`    + `*`    -> `S*`
+     *   `S*`   + `/P`   -> `S* /P`  (rare, but seen)
+     *   `S/P`  + `*`    -> `S/P*`
+     */
+    private static List<String> mergeSplitSizeLabelTokens(String[] tokens) {
+        List<String> out = new ArrayList<>();
+        int i = 0;
+        while (i < tokens.length) {
+            String tok = tokens[i];
+            if (tok == null || tok.isEmpty()) { i++; continue; }
+            if (i + 1 < tokens.length) {
+                String next = tokens[i + 1];
+                if (next != null && !next.isEmpty()) {
+                    // base + "/P*" → "base/P*"
+                    if (SIZE_BASE_PAT.matcher(tok).matches() && SLASH_P_SUFFIX_PAT.matcher(next).matches()) {
+                        out.add(tok + next);
+                        i += 2;
+                        continue;
+                    }
+                    // base or "base/P" + bare punctuation → append
+                    if (PUNCT_SUFFIX_PAT.matcher(next).matches()
+                            && (SIZE_BASE_PAT.matcher(tok).matches()
+                                || tok.matches("(?i)^(?:XX?S|S|M|L|XX?L)/P$"))) {
+                        out.add(tok + next);
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+            out.add(tok);
+            i++;
+        }
+        return out;
+    }
+
+    /** Extract every size-label-looking token from a line, after merging split labels. */
+    private static List<String> extractSizeKeysFromLine(String line) {
+        List<String> keys = new ArrayList<>();
+        if (line == null || line.isEmpty()) return keys;
+        List<String> tokens = mergeSplitSizeLabelTokens(line.split("\\s+"));
+        for (String tok : tokens) {
+            if (tok.isEmpty()) continue;
+            if (SIZE_LABEL_PAT.matcher(tok).matches()) {
+                keys.add(tok.toUpperCase(Locale.ROOT));
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Try to parse a single article-data row given a line and the expected number
+     * of size columns. Returns the parsed map (with "article", per-size keys, and
+     * "total"), or null if the line doesn't have enough integers to be a data row.
+     *
+     * Strategy: collapse thousand-spaces ("5 730" → "5730"), tokenize, then take
+     * the LAST N integer tokens as the size values. Everything before them (minus
+     * "article" and size-label noise) becomes the article identifier.
+     */
+    private static Map<String, String> parseColourSizeDataRow(String raw, List<String> sizeKeys) {
+        if (raw == null || raw.isEmpty() || sizeKeys == null || sizeKeys.isEmpty()) return null;
+        String low = raw.toLowerCase(Locale.ROOT);
+        if (low.startsWith("total")) return null;
+
+        String collapsed = collapseThousandSpaces(raw);
+        String[] tokens = collapsed.split("\\s+");
+        List<Integer> intIndices = new ArrayList<>();
+        List<String> intValues = new ArrayList<>();
+        for (int t = 0; t < tokens.length; t++) {
+            if (tokens[t].matches("\\d+")) {
+                intIndices.add(t);
+                intValues.add(tokens[t]);
+            }
+        }
+        int n = sizeKeys.size();
+        if (intValues.size() < n) return null;
+
+        int firstSizeIdx = intIndices.get(intIndices.size() - n);
+        List<String> values = intValues.subList(intValues.size() - n, intValues.size());
+
+        List<String> articleTokens = new ArrayList<>();
+        for (int t = 0; t < firstSizeIdx; t++) {
+            String tok = tokens[t];
+            if (tok.equalsIgnoreCase("article")) continue;
+            if (SIZE_LABEL_PAT.matcher(tok).matches()) continue;
+            articleTokens.add(tok);
+        }
+        String article = String.join(" ", articleTokens).trim();
+        if (article.isEmpty()) return null;
+
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("article", article);
+        long sum = 0;
+        for (int s = 0; s < n; s++) {
+            String key = sizeKeys.get(s);
+            String val = values.get(s);
+            m.put(key, val);
+            try { sum += Long.parseLong(val); } catch (NumberFormatException ignore) { /* ignore */ }
+        }
+        m.put("total", String.valueOf(sum));
+        return m;
+    }
+
+    /**
+     * Walk forward from {@code startIdx} (inclusive) up to {@code maxLook} lines
+     * trying to parse each line as an article data row. Returns the first parsed
+     * row, or null.
+     */
+    private static Map<String, String> findFirstDataRow(
+            List<String> texts, int startIdx, int maxLook, List<String> sizeKeys) {
+        int end = Math.min(startIdx + maxLook, texts.size());
+        for (int i = startIdx; i < end; i++) {
+            Map<String, String> row = parseColourSizeDataRow(oneLine(texts.get(i)), sizeKeys);
+            if (row != null) return row;
+        }
+        return null;
+    }
+
+    /**
+     * Extract the "Colour / Size breakdown" sub-table that appears at the bottom of
+     * H&M TotalCountryBreakdown PDFs. Returns one map per article row with size column
+     * labels (e.g. "XS*", "M/P*") as keys, plus an aggregated "total" key.
+     *
+     * Two-pass strategy:
+     *   PASS 1 (header-anchored): find a "Colour / Size breakdown" header, then
+     *     the next size-header line, then the data row.
+     *   PASS 2 (structural fallback): scan EVERY merged line on every page and
+     *     every tolerance for a line with >=3 size labels. Treat that as the
+     *     size-header row, then look for the data row on the same line or the
+     *     next 8 lines. This survives even when Tesseract garbled the header.
+     *
+     * Tolerances tried for both passes: 25 → 12 → 6 px.
+     */
+    static List<Map<String, String>> extractColourSizeBreakdownFromLines(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        log.info("[CSB] starting extraction over {} pages", byPage.size());
+
+        int[] tolerances = {25, 12, 6};
+
+        // --- PASS 1: header-anchored ---
+        for (Map.Entry<Integer, List<OcrNewLine>> e : byPage.entrySet()) {
+            int pageNo = e.getKey();
+            List<OcrNewLine> pageLines = e.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+            pageLines.sort(Comparator.comparingInt(OcrNewLine::getTop).thenComparingInt(OcrNewLine::getLeft));
+
+            for (int tol : tolerances) {
+                List<String> texts = mergeLinesByVisualRow(pageLines, tol);
+                if (texts.isEmpty()) continue;
+
+                int idxHeader = findColourSizeHeaderIndex(texts);
+                if (idxHeader < 0) continue;
+
+                log.info("[CSB][P1] page={} tol={} headerIdx={} headerText='{}'",
+                        pageNo, tol, idxHeader, truncate(oneLine(texts.get(idxHeader)), 200));
+
+                int sizeHeaderIdx = -1;
+                List<String> sizeKeys = null;
+                int scanEnd = Math.min(idxHeader + 10, texts.size());
+                for (int i = idxHeader + 1; i < scanEnd; i++) {
+                    List<String> keys = extractSizeKeysFromLine(oneLine(texts.get(i)));
+                    if (keys.size() >= 3) {
+                        sizeKeys = keys;
+                        sizeHeaderIdx = i;
+                        break;
+                    }
+                }
+
+                if (sizeHeaderIdx < 0 || sizeKeys == null) {
+                    log.info("[CSB][P1] page={} tol={} no size-header row in next {} lines; dumping",
+                            pageNo, tol, scanEnd - idxHeader - 1);
+                    for (int i = idxHeader + 1; i < Math.min(idxHeader + 7, texts.size()); i++) {
+                        log.info("[CSB][P1]   line[{}]: '{}'", i, truncate(oneLine(texts.get(i)), 200));
+                    }
+                    continue;
+                }
+
+                log.info("[CSB][P1] page={} tol={} sizeHeaderIdx={} sizeKeys={} (n={})",
+                        pageNo, tol, sizeHeaderIdx, sizeKeys, sizeKeys.size());
+
+                Map<String, String> row = findFirstDataRow(texts, sizeHeaderIdx, 8, sizeKeys);
+                if (row != null) {
+                    out.add(row);
+                    log.info("[CSB][P1] page={} tol={} parsed row {}", pageNo, tol, row);
+                    log.info("[CSB] DONE (header-anchored) rowsParsed={} firstRow={}", out.size(), out.get(0));
+                    return out;
+                } else {
+                    log.info("[CSB][P1] page={} tol={} sizeKeys found but no data row in next 8 lines",
+                            pageNo, tol);
+                }
+            }
+        }
+
+        // --- PASS 2: structural fallback (no header text required) ---
+        log.info("[CSB][P2] header-anchored failed — trying structural fallback");
+        for (Map.Entry<Integer, List<OcrNewLine>> e : byPage.entrySet()) {
+            int pageNo = e.getKey();
+            List<OcrNewLine> pageLines = e.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+            pageLines.sort(Comparator.comparingInt(OcrNewLine::getTop).thenComparingInt(OcrNewLine::getLeft));
+
+            for (int tol : tolerances) {
+                List<String> texts = mergeLinesByVisualRow(pageLines, tol);
+                if (texts.isEmpty()) continue;
+
+                for (int i = 0; i < texts.size(); i++) {
+                    String line = oneLine(texts.get(i));
+                    if (line.isEmpty()) continue;
+                    List<String> keys = extractSizeKeysFromLine(line);
+                    if (keys.size() < 3) continue;
+
+                    log.info("[CSB][P2] page={} tol={} candidate sizeHeader idx={} keys={} text='{}'",
+                            pageNo, tol, i, keys, truncate(line, 200));
+
+                    Map<String, String> row = findFirstDataRow(texts, i, 8, keys);
+                    if (row != null) {
+                        out.add(row);
+                        log.info("[CSB][P2] page={} tol={} parsed row {}", pageNo, tol, row);
+                        log.info("[CSB] DONE (structural) rowsParsed={} firstRow={}", out.size(), out.get(0));
+                        return out;
+                    }
+                }
+            }
+        }
+
+        // --- Final diagnostic dump: print any line on any page that looks
+        //     remotely related so we can see what Tesseract actually produced.
+        log.info("[CSB] no rows extracted — dumping suspicious lines for diagnosis");
+        Pattern suspicious = Pattern.compile("(?i)\\b(size|article|breakdown|colour|color|XS|XL|XXL|XXS|/P|IP)\\b");
+        for (Map.Entry<Integer, List<OcrNewLine>> e : byPage.entrySet()) {
+            int pageNo = e.getKey();
+            List<OcrNewLine> pageLines = e.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+            List<String> texts = mergeLinesByVisualRow(pageLines, 25);
+            int dumped = 0;
+            for (int i = 0; i < texts.size() && dumped < 25; i++) {
+                String line = oneLine(texts.get(i));
+                if (line.isEmpty()) continue;
+                if (suspicious.matcher(line).find()) {
+                    log.info("[CSB][DUMP] page={} idx={} '{}'", pageNo, i, truncate(line, 240));
+                    dumped++;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Parse a Colour / Size breakdown row out of a free-form text block
+     * (typically produced by {@link PDFTextStripper}). This bypasses OCR
+     * entirely: when the source PDF carries a real text layer, this is much
+     * more reliable than the Tesseract pass which can omit dense table rows.
+     *
+     * Strategy:
+     *   1. Locate the "Colour / Size breakdown" section header (lenient match).
+     *   2. Take a 2000-char window after the header so we don't bleed into
+     *      the size-label legend that follows.
+     *   3. Flatten newlines into spaces, collapse thousand-spaces, tokenize
+     *      with size-label split-merge.
+     *   4. Find the "Article" token. The size-label tokens that follow form
+     *      the size header. The first non-size-label token after them starts
+     *      the article identifier; the next N integers are its size values.
+     */
+    static Map<String, String> extractColourSizeBreakdownFromText(String pageText) {
+        if (pageText == null || pageText.isEmpty()) return null;
+
+        String lower = pageText.toLowerCase(Locale.ROOT);
+        int hdrIdx = lower.indexOf("colour / size breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("color / size breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("colour/size breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("color/size breakdown");
+        if (hdrIdx < 0) {
+            int sb = lower.indexOf("size breakdown");
+            if (sb < 0) return null;
+            int look = Math.max(0, sb - 60);
+            String near = lower.substring(look, sb);
+            if (!near.contains("colour") && !near.contains("color")) return null;
+            hdrIdx = sb;
+        }
+
+        int end = Math.min(pageText.length(), hdrIdx + 2000);
+        String window = pageText.substring(hdrIdx, end);
+
+        String flat = window.replaceAll("[\\r\\n]+", " ");
+        flat = collapseThousandSpaces(flat);
+
+        String[] rawTokens = flat.split("\\s+");
+        List<String> tokens = mergeSplitSizeLabelTokens(rawTokens);
+
+        int articleIdx = -1;
+        for (int i = 0; i < tokens.size(); i++) {
+            if ("article".equalsIgnoreCase(tokens.get(i))) {
+                articleIdx = i;
+                break;
+            }
+        }
+        if (articleIdx < 0) {
+            log.info("[CSB][PDFBOX] no 'Article' token in window after header; tokens preview: {}",
+                    truncate(String.join(" ", tokens.subList(0, Math.min(tokens.size(), 30))), 300));
+            return null;
+        }
+
+        // Walk forward collecting consecutive size labels.
+        List<String> sizeKeys = new ArrayList<>();
+        int t = articleIdx + 1;
+        while (t < tokens.size() && SIZE_LABEL_PAT.matcher(tokens.get(t)).matches()) {
+            sizeKeys.add(tokens.get(t).toUpperCase(Locale.ROOT));
+            t++;
+        }
+        if (sizeKeys.size() < 3) {
+            log.info("[CSB][PDFBOX] sizeKeys too small ({}); tokens after 'Article': {}",
+                    sizeKeys.size(),
+                    truncate(String.join(" ",
+                            tokens.subList(articleIdx, Math.min(tokens.size(), articleIdx + 25))),
+                            300));
+            return null;
+        }
+        int n = sizeKeys.size();
+
+        // Collect the data block until we hit a delimiter that ends the article row
+        // ("Total:", "Article Total:", or another "Article" header below).
+        List<String> blockTokens = new ArrayList<>();
+        while (t < tokens.size()) {
+            String tok = tokens.get(t);
+            String low = tok.toLowerCase(Locale.ROOT);
+            if (low.equals("article") || low.startsWith("total")) break;
+            blockTokens.add(tok);
+            t++;
+        }
+
+        // Within the block, take the LAST N integer tokens as size values; the
+        // tokens before the first such integer are the article identifier (which
+        // can legitimately start with a digit, e.g. "001 22-216").
+        List<Integer> intIndices = new ArrayList<>();
+        List<String> intValues = new ArrayList<>();
+        for (int i = 0; i < blockTokens.size(); i++) {
+            if (blockTokens.get(i).matches("\\d+")) {
+                intIndices.add(i);
+                intValues.add(blockTokens.get(i));
+            }
+        }
+        if (intValues.size() < n) {
+            log.info("[CSB][PDFBOX] data block has only {} integers (need {}); block: {}",
+                    intValues.size(), n,
+                    truncate(String.join(" ", blockTokens), 300));
+            return null;
+        }
+
+        int firstSizeIdx = intIndices.get(intIndices.size() - n);
+        List<String> values = intValues.subList(intValues.size() - n, intValues.size());
+
+        List<String> articleTokens = new ArrayList<>();
+        for (int i = 0; i < firstSizeIdx; i++) {
+            String tok = blockTokens.get(i);
+            if (tok.isEmpty()) continue;
+            if (tok.matches("\\W+")) continue;
+            if (SIZE_LABEL_PAT.matcher(tok).matches()) continue;
+            if ("article".equalsIgnoreCase(tok)) continue;
+            articleTokens.add(tok);
+        }
+        String article = String.join(" ", articleTokens).trim();
+        if (article.isEmpty()) {
+            log.info("[CSB][PDFBOX] empty article after block parse; block: {}",
+                    truncate(String.join(" ", blockTokens), 300));
+            return null;
+        }
+
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("article", article);
+        long sum = 0;
+        for (int s = 0; s < n; s++) {
+            String key = sizeKeys.get(s);
+            String val = values.get(s);
+            m.put(key, val);
+            try { sum += Long.parseLong(val); } catch (NumberFormatException ignore) { /* ignore */ }
+        }
+        m.put("total", String.valueOf(sum));
+        return m;
+    }
+
+    /**
+     * Native-text extraction of the Colour / Size breakdown table for PDF
+     * uploads. Runs {@link PDFTextStripper} per page (then a full-doc pass as
+     * a final fallback) and feeds the text to
+     * {@link #extractColourSizeBreakdownFromText(String)}.
+     *
+     * Returns an empty list if the PDF has no embedded text or the table
+     * isn't present; the caller can then fall back to the OCR-based extractor.
+     */
+    static List<Map<String, String>> extractColourSizeBreakdownFromPdfBytes(byte[] pdfBytes) {
+        if (pdfBytes == null || pdfBytes.length == 0) return List.of();
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            int pageCount = doc.getNumberOfPages();
+            log.info("[CSB][PDFBOX] starting PDF-text extraction over {} pages", pageCount);
+
+            // Try both modes: sorted-by-position usually preserves visual rows,
+            // but on some H&M PDFs the raw stream order works better.
+            boolean[] sortModes = {true, false};
+
+            for (boolean sortByPos : sortModes) {
+                PDFTextStripper stripper = new PDFTextStripper();
+                stripper.setSortByPosition(sortByPos);
+
+                for (int p = 1; p <= pageCount; p++) {
+                    stripper.setStartPage(p);
+                    stripper.setEndPage(p);
+                    String pageText = stripper.getText(doc);
+
+                    String lower = pageText.toLowerCase(Locale.ROOT);
+                    int sbIdx = lower.indexOf("size breakdown");
+                    log.info("[CSB][PDFBOX] sortByPos={} page={} textLen={} sizeBreakdownAt={}",
+                            sortByPos, p, pageText.length(), sbIdx);
+
+                    if (sbIdx >= 0) {
+                        int dumpStart = Math.max(0, sbIdx - 30);
+                        int dumpEnd = Math.min(pageText.length(), sbIdx + 800);
+                        String dump = pageText.substring(dumpStart, dumpEnd)
+                                .replaceAll("[\\r\\n]+", " | ");
+                        log.info("[CSB][PDFBOX] sortByPos={} page={} window: {}",
+                                sortByPos, p, truncate(dump, 800));
+                    }
+
+                    Map<String, String> row = extractColourSizeBreakdownFromText(pageText);
+                    if (row != null) {
+                        log.info("[CSB][PDFBOX] sortByPos={} page={} parsed row {}",
+                                sortByPos, p, row);
+                        return List.of(row);
+                    }
+                }
+
+                // Full-doc pass within this sort mode.
+                stripper.setStartPage(1);
+                stripper.setEndPage(pageCount);
+                String allText = stripper.getText(doc);
+                Map<String, String> row = extractColourSizeBreakdownFromText(allText);
+                if (row != null) {
+                    log.info("[CSB][PDFBOX] sortByPos={} full-doc parsed row {}", sortByPos, row);
+                    return List.of(row);
+                }
+            }
+
+            log.info("[CSB][PDFBOX] no Colour / Size breakdown row found in PDF text");
+            return List.of();
+        } catch (IOException e) {
+            log.warn("[CSB][PDFBOX] failed to read PDF text: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     private static String normalizeNumberToken(String s) {
@@ -930,6 +1452,21 @@ public class OcrNewService {
                 totalCountryBreakdown = extractTotalCountryBreakdownFromLines(allLines);
             }
 
+            // Extract the smaller "Colour / Size breakdown" sub-table that lives at the
+            // bottom of TotalCountryBreakdown PDFs (Article + per-size qty).
+            //
+            // Prefer the PDFBox-based native-text extractor for PDF uploads: Tesseract
+            // tends to drop this dense table on H&M docs even when the rest of the page
+            // OCRs fine. The OCR/line-based extractor remains a fallback for image
+            // uploads or PDFs without an embedded text layer.
+            List<Map<String, String>> colourSizeBreakdown = List.of();
+            if (isPdf(file)) {
+                colourSizeBreakdown = extractColourSizeBreakdownFromPdfBytes(fileBytes);
+            }
+            if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) {
+                colourSizeBreakdown = extractColourSizeBreakdownFromLines(allLines);
+            }
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -1024,6 +1561,7 @@ public class OcrNewService {
                     .formFields(formFields)
                     .salesOrderDetailSizeBreakdown(salesOrderDetailSizeBreakdown)
                     .totalCountryBreakdown(totalCountryBreakdown)
+                    .colourSizeBreakdown(colourSizeBreakdown)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();

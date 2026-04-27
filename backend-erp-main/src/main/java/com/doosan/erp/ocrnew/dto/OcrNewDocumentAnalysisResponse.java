@@ -28,6 +28,13 @@ public class OcrNewDocumentAnalysisResponse {
 
     private List<Map<String, String>> totalCountryBreakdown;
 
+    /**
+     * Colour / Size breakdown sub-table (typically present on TotalCountryBreakdown PDFs).
+     * Each row is a map of: { article, "<sizeKey>": qty, ..., total }.
+     * The first row is the article line, an optional second row aggregates the column totals.
+     */
+    private List<Map<String, String>> colourSizeBreakdown;
+
     private Float averageConfidence;
 
     private Integer pageCount;
