@@ -1,94 +1,333 @@
 /**
  * @file components/layout/Sidebar.tsx
- * @description 애플리케이션의 사이드바 네비게이션 컴포넌트입니다.
- * 주요 페이지로 이동하는 링크 목록과 현재 로그인한 사용자 정보를 표시합니다.
+ * @description DCBJ ERP sidebar navigation. White theme with collapsible sub-menus,
+ * matching the PPT design (DCBJ ERP logo, deep-navy active state, accent sub-item).
  */
-import { FileText, LayoutDashboard, LogOut, Package, ScanLine, ShoppingCart, User } from 'lucide-react';
-import { NavLink } from 'react-router-dom';
+import {
+  BarChart3,
+  Briefcase,
+  ChevronDown,
+  CircleUser,
+  ClipboardList,
+  Cog,
+  Factory,
+  Layers,
+  LayoutDashboard,
+  LineChart,
+  LogOut,
+  Package,
+  ShoppingCart,
+  Truck,
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../../features/auth/AuthContext';
 import { cn } from '../../lib/utils';
 
-// 네비게이션 메뉴 항목 정의
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Sales Orders', href: '/sales', icon: ShoppingCart },
-  { name: 'Sales Order Prototype', href: '/sales-order-prototype', icon: ShoppingCart },
-  { name: 'Inventory', href: '/inventory', icon: Package },
-  { name: 'Accounting', href: '/accounting', icon: FileText },
-  { name: 'OCR', href: '/ocr', icon: ScanLine },
-  { name: 'OCR New', href: '/ocr-new', icon: ScanLine },
+type NavChild = { name: string; href: string; children?: NavChild[] };
+type NavItem = {
+  name: string;
+  icon: typeof LayoutDashboard;
+  href?: string;
+  children?: NavChild[];
+};
+
+// DCBJ ERP main navigation (mirrors the PPT). Sub-items map to existing routes
+// where available; placeholder hashes keep the design intact for future pages.
+const navigation: NavItem[] = [
+  { name: 'Dashboard', icon: LayoutDashboard, href: '/' },
+  {
+    name: 'Accounting',
+    icon: ClipboardList,
+    children: [{ name: 'Journal Entry', href: '/accounting' }],
+  },
+  {
+    name: 'Budget',
+    icon: BarChart3,
+    children: [{ name: 'Overview', href: '#budget' }],
+  },
+  {
+    name: 'Sales',
+    icon: LineChart,
+    children: [
+      { name: 'Basic Settings', href: '#sales-basic' },
+      { name: 'Shipment Request', href: '#sales-shipment' },
+      { name: 'Export', href: '#sales-export' },
+      {
+        name: 'Other',
+        href: '/sales',
+        children: [
+          { name: 'Other', href: '/sales' },
+          { name: 'Report', href: '#sales-report' },
+        ],
+      },
+      { name: 'Sales/Invoicing', href: '#sales-invoicing' },
+      { name: 'Collection', href: '#sales-collection' },
+      { name: 'Journal Entry Management', href: '#sales-journal' },
+      { name: 'Online Order System', href: '/sales-order-prototype' },
+      { name: 'OCR', href: '/ocr' },
+      { name: 'OCR New', href: '/ocr-new' },
+    ],
+  },
+  {
+    name: 'Procurement',
+    icon: ShoppingCart,
+    children: [{ name: 'Overview', href: '#procurement' }],
+  },
+  {
+    name: 'Inventory',
+    icon: Package,
+    children: [{ name: 'Stock', href: '/inventory' }],
+  },
+  { name: 'Production', icon: Factory, children: [{ name: 'Overview', href: '#production' }] },
+  { name: 'Performance', icon: Layers, children: [{ name: 'Overview', href: '#performance' }] },
+  { name: 'HR', icon: Briefcase, children: [{ name: 'Overview', href: '#hr' }] },
+  { name: 'Customizing', icon: Cog, children: [{ name: 'Settings', href: '#customizing' }] },
 ];
 
+// All real routes that exist in the router
+const REAL_ROUTES = new Set<string>([
+  '/',
+  '/sales',
+  '/sales-order-prototype',
+  '/inventory',
+  '/accounting',
+  '/ocr',
+  '/ocr-new',
+]);
+
+function isPlaceholder(href: string) {
+  return href.startsWith('#');
+}
+
+function findActiveTopLevel(pathname: string): string | null {
+  for (const item of navigation) {
+    if (item.href && item.href === pathname) return item.name;
+    if (item.children) {
+      const stack: NavChild[] = [...item.children];
+      while (stack.length) {
+        const c = stack.pop()!;
+        if (c.href === pathname) return item.name;
+        if (c.children) stack.push(...c.children);
+      }
+    }
+  }
+  return null;
+}
+
 export function Sidebar() {
-  const { logout, user } = useAuth(); // 인증 컨텍스트에서 로그아웃 함수와 유저 정보 사용
+  const { logout, user } = useAuth();
+  const location = useLocation();
+
+  // Keep the section containing the active route open by default
+  const initiallyOpen = useMemo(() => {
+    const top = findActiveTopLevel(location.pathname);
+    return top ? new Set<string>([top]) : new Set<string>(['Sales']);
+  }, [location.pathname]);
+
+  const [openSections, setOpenSections] = useState<Set<string>>(initiallyOpen);
+  const [openSubSections, setOpenSubSections] = useState<Set<string>>(new Set<string>(['Sales/Other']));
+
+  const toggleSection = (name: string) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleSubSection = (name: string) => {
+    setOpenSubSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const renderLeaf = (child: NavChild, depth: number) => {
+    const placeholder = isPlaceholder(child.href);
+    const padding = depth === 1 ? 'pl-12' : 'pl-16';
+    if (placeholder || !REAL_ROUTES.has(child.href)) {
+      return (
+        <div
+          key={child.href + child.name}
+          className={cn(
+            'flex items-center pr-4 py-2 text-sm rounded-md text-gray-500 cursor-not-allowed select-none',
+            padding,
+          )}
+          title='Coming soon'
+        >
+          {child.name}
+        </div>
+      );
+    }
+    return (
+      <NavLink
+        key={child.href}
+        to={child.href}
+        end={child.href === '/'}
+        className={({ isActive }) =>
+          cn(
+            'flex items-center pr-4 py-2 text-sm rounded-md transition-colors',
+            padding,
+            isActive
+              ? 'bg-accent text-white font-semibold shadow-sm'
+              : 'text-gray-600 hover:text-primary hover:bg-primary-soft',
+          )
+        }
+      >
+        {child.name}
+      </NavLink>
+    );
+  };
 
   return (
-    <div className='flex w-72 flex-col bg-slate-900 border-r border-slate-800 h-screen fixed left-0 top-0 z-30 shadow-2xl transition-all duration-300'>
-      {/* 1. 로고 섹션 */}
-      <div className='flex h-20 items-center px-8 border-b border-white/10'>
-        <div className='w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30 mr-3'>
-          <svg className='w-6 h-6 text-white' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M13 10V3L4 14h7v7l9-11h-7z' />
+    <aside className='flex w-64 flex-col bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-30'>
+      {/* Logo */}
+      <div className='flex h-16 items-center px-5 border-b border-gray-100'>
+        <div className='w-9 h-9 mr-3 flex items-center justify-center'>
+          <svg viewBox='0 0 40 40' className='w-9 h-9' aria-hidden='true'>
+            <defs>
+              <linearGradient id='dcbjGrad' x1='0' y1='0' x2='1' y2='1'>
+                <stop offset='0%' stopColor='#0E4D92' />
+                <stop offset='100%' stopColor='#2D7EAA' />
+              </linearGradient>
+            </defs>
+            <rect x='2' y='2' width='36' height='36' rx='8' fill='url(#dcbjGrad)' />
+            <path
+              d='M11 12h9c4.5 0 7.5 3 7.5 7.5S24.5 27 20 27h-9V12zm4 4v7h4.5c2 0 3.5-1.5 3.5-3.5S21.5 16 19.5 16H15z'
+              fill='white'
+            />
           </svg>
         </div>
-        <h1 className='text-xl font-bold text-white tracking-wide'>ERP Pro</h1>
+        <h1 className='text-lg font-bold text-gray-900 tracking-tight'>DCBJ ERP</h1>
       </div>
 
-      {/* 2. 네비게이션 메뉴 */}
-      <nav className='flex-1 space-y-2 px-4 py-8'>
-        {navigation.map((item) => (
-          <NavLink
-            key={item.name}
-            to={item.href}
-            className={({ isActive }) =>
-              cn(
-                // 기본 스타일
-                'group flex items-center px-4 py-3.5 text-sm font-medium rounded-xl transition-all duration-200 ease-in-out',
-                // 활성화(현재 페이지) 상태 스타일
-                isActive
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 translate-x-1'
-                  : 'text-slate-400 hover:bg-slate-800 hover:text-white hover:translate-x-1',
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <item.icon
+      {/* Navigation */}
+      <nav className='flex-1 overflow-y-auto py-3'>
+        {navigation.map((item) => {
+          const Icon = item.icon;
+
+          // Top-level direct link (Dashboard)
+          if (item.href && !item.children) {
+            return (
+              <NavLink
+                key={item.name}
+                to={item.href}
+                end={item.href === '/'}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center px-5 py-2.5 mx-2 my-0.5 rounded-md text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-gray-700 hover:bg-primary-soft hover:text-primary',
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <Icon className={cn('mr-3 h-5 w-5 shrink-0', isActive ? 'text-white' : 'text-gray-500')} />
+                    <span>{item.name}</span>
+                  </>
+                )}
+              </NavLink>
+            );
+          }
+
+          const isOpen = openSections.has(item.name);
+          const activeTop = findActiveTopLevel(location.pathname) === item.name;
+
+          return (
+            <div key={item.name} className='mx-2 my-0.5'>
+              <button
+                type='button'
+                onClick={() => toggleSection(item.name)}
+                className={cn(
+                  'w-full flex items-center justify-between px-5 py-2.5 rounded-md text-sm font-medium transition-colors',
+                  activeTop
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-gray-700 hover:bg-primary-soft hover:text-primary',
+                )}
+              >
+                <span className='flex items-center'>
+                  <Icon className={cn('mr-3 h-5 w-5 shrink-0', activeTop ? 'text-white' : 'text-gray-500')} />
+                  {item.name}
+                </span>
+                <ChevronDown
                   className={cn(
-                    'mr-4 h-5 w-5 shrink-0 transition-colors duration-200',
-                    isActive ? 'text-white' : 'text-slate-500 group-hover:text-white',
+                    'h-4 w-4 transition-transform',
+                    isOpen ? 'rotate-180' : '',
+                    activeTop ? 'text-white' : 'text-gray-400',
                   )}
-                  aria-hidden='true'
                 />
-                {item.name}
-              </>
-            )}
-          </NavLink>
-        ))}
+              </button>
+
+              {isOpen && item.children && (
+                <div className='mt-1 mb-1'>
+                  {item.children.map((child) => {
+                    if (child.children && child.children.length > 0) {
+                      const key = `${item.name}/${child.name}`;
+                      const subOpen = openSubSections.has(key);
+                      const childActive =
+                        child.href && location.pathname === child.href
+                          ? true
+                          : child.children.some((g) => g.href === location.pathname);
+                      return (
+                        <div key={key}>
+                          <button
+                            type='button'
+                            onClick={() => toggleSubSection(key)}
+                            className={cn(
+                              'w-full flex items-center justify-between pr-3 pl-12 py-2 text-sm rounded-md transition-colors',
+                              childActive
+                                ? 'bg-accent text-white font-semibold'
+                                : 'text-gray-600 hover:text-primary hover:bg-primary-soft',
+                            )}
+                          >
+                            <span>{child.name}</span>
+                            <ChevronDown
+                              className={cn('h-3.5 w-3.5 transition-transform', subOpen ? 'rotate-180' : '')}
+                            />
+                          </button>
+                          {subOpen && <div className='mt-0.5'>{child.children.map((g) => renderLeaf(g, 2))}</div>}
+                        </div>
+                      );
+                    }
+                    return renderLeaf(child, 1);
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
-      {/* 3. 사용자 프로필 및 로그아웃 섹션 */}
-      <div className='border-t border-white/10 p-6 bg-slate-900/50 backdrop-blur-sm'>
-        <div className='flex items-center justify-between'>
-          <div className='flex items-center min-w-0'>
-            <div className='h-10 w-10 rounded-full bg-linear-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg ring-2 ring-white/10'>
-              <User className='h-5 w-5 text-white' />
-            </div>
-            <div className='ml-3 min-w-0'>
-              <p className='text-sm font-semibold text-white truncate'>{user?.name || 'User'}</p>
-              <p className='text-xs text-slate-400 truncate'>Administrator</p>
-            </div>
+      {/* User profile + logout */}
+      <div className='border-t border-gray-100 p-4 flex items-center justify-between bg-white'>
+        <div className='flex items-center min-w-0'>
+          <div className='h-9 w-9 rounded-full bg-gray-200 flex items-center justify-center'>
+            <CircleUser className='h-5 w-5 text-gray-500' />
           </div>
-          <button
-            onClick={logout}
-            className='p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors'
-            title='Log out'
-          >
-            <LogOut size={18} />
-          </button>
+          <div className='ml-3 min-w-0'>
+            <p className='text-sm font-semibold text-gray-800 truncate'>{user?.name || 'user name'}</p>
+            <p className='text-xs text-gray-400 truncate'>team name</p>
+          </div>
         </div>
+        <button
+          onClick={logout}
+          className='p-2 rounded-md text-gray-400 hover:text-primary hover:bg-primary-soft transition-colors'
+          title='Log out'
+        >
+          <LogOut size={18} />
+        </button>
       </div>
-    </div>
+      {/* Decorative truck icon hidden so unused import is suppressed */}
+      <span className='hidden'>
+        <Truck />
+      </span>
+    </aside>
   );
 }

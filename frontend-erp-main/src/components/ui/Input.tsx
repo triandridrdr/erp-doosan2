@@ -31,12 +31,10 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
 
           <input
             className={cn(
-              // 기본 스타일
-              'flex h-12 w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200',
-              // 아이콘이 있을 경우 왼쪽 패딩 추가
-              leftIcon && 'pl-10',
-              // 에러가 있을 경우 빨간색 테두리와 배경 적용
-              error && 'border-red-500 focus:ring-red-500 bg-red-50/10',
+              // Flat outlined input matching DCBJ design
+              'flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors',
+              leftIcon && 'pl-9',
+              error && 'border-red-500 focus:ring-red-500 focus:border-red-500',
               className,
             )}
             ref={ref}
