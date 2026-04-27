@@ -823,7 +823,7 @@ export function OcrNewPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <SizeAutocompleteInput
-                          value={row.size}
+                          value={formatSizeDisplay(row.size)}
                           onChange={(e) => {
                             const v = e.target.value;
                             setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
@@ -1230,6 +1230,16 @@ export function OcrNewPage() {
 
 const DETAIL_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
 
+function formatSizeDisplay(input: string): string {
+  const s = (input ?? '').toString().trim();
+  if (!s) return '';
+  const norm = normalizeSizeKey(s);
+  if ((norm === 'XS' || norm === 'S' || norm === 'M' || norm === 'L' || norm === 'XL') && !s.includes('(')) {
+    return `${norm} (${norm})*`;
+  }
+  return s;
+}
+
 function normalizeSizeKey(input: string): string {
   const s = (input ?? '').toString().trim();
   if (!s) return '';
@@ -1283,7 +1293,7 @@ function pivotDetailRows(
             countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
             type: (m?.type ?? '').toString(),
             color: (m?.color ?? m?.colour ?? '').toString(),
-            size: normalizeSizeKey((m?.size ?? '').toString()),
+            size: formatSizeDisplay((m?.size ?? '').toString()),
             qty: ((m?.qty ?? '').toString() || '0').toString(),
             total: (m?.total ?? m?.Total ?? '').toString(),
             noOfAsst: (m?.noOfAsst ?? '').toString(),
@@ -1301,7 +1311,7 @@ function pivotDetailRows(
         countryOfDestination: country,
         type,
         color,
-        size: sz,
+        size: formatSizeDisplay(sz),
         qty: (pickSizeValue(m, sz) || '0').toString(),
         total,
         noOfAsst,
