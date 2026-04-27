@@ -4,16 +4,24 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // DCBJ ERP brand palette (deep navy blue)
         primary: {
-          DEFAULT: '#4F46E5', // Indigo-600 (Modern & Trendy)
-          hover: '#4338CA', // Indigo-700
-          light: '#818CF8', // Indigo-400
+          DEFAULT: '#0E4D92', // DCBJ deep navy blue
+          hover: '#0A3D75',
+          light: '#3A78B8',
+          soft: '#E8F0F9',
+        },
+        // Sidebar sub-menu accent (lighter cyan-blue from PPT)
+        accent: {
+          DEFAULT: '#2D7EAA',
+          hover: '#266A91',
         },
         secondary: {
-          DEFAULT: '#64748B', // Slate-500
-          hover: '#475569', // Slate-600
+          DEFAULT: '#64748B',
+          hover: '#475569',
         },
-        background: '#F8FAFC', // Slate-50 (Clean Background)
+        // Lavender-gray app background as in design
+        background: '#F4F4F8',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

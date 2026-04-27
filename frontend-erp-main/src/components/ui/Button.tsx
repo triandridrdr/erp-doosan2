@@ -20,14 +20,14 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const baseStyles =
       'inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none cursor-pointer active:scale-95';
 
-    // 변형(Variant)별 스타일
+    // 변형(Variant)별 스타일 (DCBJ ERP brand)
     const variants = {
-      primary: 'bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-md hover:shadow-lg focus:ring-indigo-600',
-      secondary: 'bg-slate-500 text-white font-medium hover:bg-slate-600 shadow-sm hover:shadow focus:ring-slate-500',
+      primary: 'bg-primary text-white font-semibold hover:bg-primary-hover focus:ring-primary',
+      secondary: 'bg-slate-500 text-white font-medium hover:bg-slate-600 focus:ring-slate-500',
       outline:
-        'border-2 border-gray-200 bg-transparent font-medium hover:bg-gray-50 text-gray-700 hover:border-gray-300',
+        'border border-gray-300 bg-white font-medium hover:bg-gray-50 text-gray-700 focus:ring-primary',
       ghost: 'hover:bg-gray-100 text-gray-700 hover:text-gray-900',
-      danger: 'bg-red-600 text-white font-medium hover:bg-red-700 shadow-sm focus:ring-red-600',
+      danger: 'bg-red-600 text-white font-medium hover:bg-red-700 focus:ring-red-600',
     };
 
     // 크기(Size)별 스타일
