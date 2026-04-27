@@ -782,7 +782,6 @@ export function OcrNewPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -798,7 +797,6 @@ export function OcrNewPage() {
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
                     </tr>
                   ))}
                 </tbody>
@@ -851,7 +849,6 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -920,7 +917,6 @@ export function OcrNewPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -1060,7 +1056,6 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -1095,7 +1090,6 @@ export function OcrNewPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -1114,7 +1108,6 @@ export function OcrNewPage() {
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>{formatIdThousands((section2cTotalFrom2b?.total ?? backendColourSizeBreakdown?.grandTotal?.toString() ?? section2cSizeSummary?.grandTotal?.toString() ?? '0').toString())}</td>
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
                   </tr>
                 </tbody>
               </table>
@@ -1128,7 +1121,6 @@ export function OcrNewPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total:</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -1155,7 +1147,6 @@ export function OcrNewPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                     </tr>
                   ))}
                   <tr className='border-b border-gray-100 last:border-b-0'>
@@ -1163,7 +1154,6 @@ export function OcrNewPage() {
                     <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>
                       {formatIdThousands((section2cTotalDraftRows?.[0]?.total ?? section2cTotalFrom2b.total).toString())}
                     </td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
                   </tr>
                 </tbody>
               </table>
