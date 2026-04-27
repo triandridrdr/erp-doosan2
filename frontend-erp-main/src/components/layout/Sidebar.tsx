@@ -18,8 +18,9 @@ import {
   Package,
   ShoppingCart,
   Truck,
+  X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../../features/auth/AuthContext';
@@ -116,7 +117,14 @@ function findActiveTopLevel(pathname: string): string | null {
   return null;
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Whether the off-canvas drawer is currently open on mobile. */
+  mobileOpen?: boolean;
+  /** Called when the mobile drawer should close (link click / overlay click / X). */
+  onMobileClose?: () => void;
+}
+
+export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}) {
   const { logout, user } = useAuth();
   const location = useLocation();
 
@@ -128,6 +136,23 @@ export function Sidebar() {
 
   const [openSections, setOpenSections] = useState<Set<string>>(initiallyOpen);
   const [openSubSections, setOpenSubSections] = useState<Set<string>>(new Set<string>(['Sales/Other']));
+
+  // Lock body scroll when the mobile drawer is open
+  useEffect(() => {
+    if (mobileOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prev;
+      };
+    }
+  }, [mobileOpen]);
+
+  // Auto-close drawer when route changes (mobile UX)
+  useEffect(() => {
+    if (mobileOpen && onMobileClose) onMobileClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   const toggleSection = (name: string) => {
     setOpenSections((prev) => {
@@ -185,26 +210,53 @@ export function Sidebar() {
   };
 
   return (
-    <aside className='flex w-64 flex-col bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-30'>
-      {/* Logo */}
-      <div className='flex h-16 items-center px-5 border-b border-gray-100'>
-        <div className='w-9 h-9 mr-3 flex items-center justify-center'>
-          <svg viewBox='0 0 40 40' className='w-9 h-9' aria-hidden='true'>
-            <defs>
-              <linearGradient id='dcbjGrad' x1='0' y1='0' x2='1' y2='1'>
-                <stop offset='0%' stopColor='#0E4D92' />
-                <stop offset='100%' stopColor='#2D7EAA' />
-              </linearGradient>
-            </defs>
-            <rect x='2' y='2' width='36' height='36' rx='8' fill='url(#dcbjGrad)' />
-            <path
-              d='M11 12h9c4.5 0 7.5 3 7.5 7.5S24.5 27 20 27h-9V12zm4 4v7h4.5c2 0 3.5-1.5 3.5-3.5S21.5 16 19.5 16H15z'
-              fill='white'
-            />
-          </svg>
+    <>
+      {/* Mobile overlay backdrop */}
+      <div
+        className={cn(
+          'fixed inset-0 z-30 bg-black/40 transition-opacity md:hidden',
+          mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+        )}
+        onClick={onMobileClose}
+        aria-hidden='true'
+      />
+
+      <aside
+        className={cn(
+          'flex w-64 flex-col bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-40 transition-transform duration-200',
+          // Mobile: slide in/out. Desktop: always visible.
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          'md:translate-x-0',
+        )}
+        aria-label='Primary navigation'
+      >
+        {/* Logo + (mobile only) close button */}
+        <div className='flex h-16 items-center px-5 border-b border-gray-100'>
+          <div className='w-9 h-9 mr-3 flex items-center justify-center'>
+            <svg viewBox='0 0 40 40' className='w-9 h-9' aria-hidden='true'>
+              <defs>
+                <linearGradient id='dcbjGrad' x1='0' y1='0' x2='1' y2='1'>
+                  <stop offset='0%' stopColor='#0E4D92' />
+                  <stop offset='100%' stopColor='#2D7EAA' />
+                </linearGradient>
+              </defs>
+              <rect x='2' y='2' width='36' height='36' rx='8' fill='url(#dcbjGrad)' />
+              <path
+                d='M11 12h9c4.5 0 7.5 3 7.5 7.5S24.5 27 20 27h-9V12zm4 4v7h4.5c2 0 3.5-1.5 3.5-3.5S21.5 16 19.5 16H15z'
+                fill='white'
+              />
+            </svg>
+          </div>
+          <h1 className='text-lg font-bold text-gray-900 tracking-tight'>DCBJ ERP</h1>
+          <button
+            type='button'
+            onClick={onMobileClose}
+            className='ml-auto p-1.5 rounded-md hover:bg-gray-100 text-gray-500 md:hidden'
+            aria-label='Close navigation'
+          >
+            <X className='h-5 w-5' />
+          </button>
         </div>
-        <h1 className='text-lg font-bold text-gray-900 tracking-tight'>DCBJ ERP</h1>
-      </div>
 
       {/* Navigation */}
       <nav className='flex-1 overflow-y-auto py-3'>
@@ -324,10 +376,11 @@ export function Sidebar() {
           <LogOut size={18} />
         </button>
       </div>
-      {/* Decorative truck icon hidden so unused import is suppressed */}
-      <span className='hidden'>
-        <Truck />
-      </span>
-    </aside>
+        {/* Decorative truck icon hidden so unused import is suppressed */}
+        <span className='hidden'>
+          <Truck />
+        </span>
+      </aside>
+    </>
   );
 }

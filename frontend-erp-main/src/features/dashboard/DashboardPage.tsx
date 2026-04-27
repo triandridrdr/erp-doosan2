@@ -132,39 +132,42 @@ function SalesPurchaseChart() {
   const yTicks = [60000, 50000, 40000, 30000, 20000, 10000];
 
   return (
-    <div className='bg-white rounded-lg border border-gray-200 p-5'>
+    <div className='bg-white rounded-lg border border-gray-200 p-3 sm:p-5'>
       <h3 className='text-sm font-semibold text-gray-800 mb-4'>Sales &amp; Purchase</h3>
 
-      <div className='relative h-56'>
-        {/* Y axis ticks + grid lines */}
-        <div className='absolute inset-0 flex flex-col justify-between text-[10px] text-gray-400'>
-          {yTicks.map((t) => (
-            <div key={t} className='flex items-center gap-2'>
-              <span className='w-10 text-right'>{t.toLocaleString()}</span>
-              <div className='flex-1 border-t border-dashed border-gray-100' />
-            </div>
-          ))}
-        </div>
-
-        {/* Bars */}
-        <div className='absolute inset-0 ml-12 flex items-end justify-between gap-1.5 pb-4'>
-          {monthly.map((d) => (
-            <div key={d.m} className='flex flex-col items-center flex-1'>
-              <div className='flex items-end gap-0.5 h-44'>
-                <div
-                  className='w-2.5 rounded-t bg-blue-400'
-                  style={{ height: `${(d.purchase / max) * 100}%` }}
-                  title={`Purchase: ${d.purchase}`}
-                />
-                <div
-                  className='w-2.5 rounded-t bg-emerald-400'
-                  style={{ height: `${(d.sales / max) * 100}%` }}
-                  title={`Sales: ${d.sales}`}
-                />
+      {/* Horizontal scroll container on narrow screens */}
+      <div className='overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0'>
+        <div className='relative h-56 min-w-[480px]'>
+          {/* Y axis ticks + grid lines */}
+          <div className='absolute inset-0 flex flex-col justify-between text-[10px] text-gray-400'>
+            {yTicks.map((t) => (
+              <div key={t} className='flex items-center gap-2'>
+                <span className='w-10 text-right'>{t.toLocaleString()}</span>
+                <div className='flex-1 border-t border-dashed border-gray-100' />
               </div>
-              <span className='text-[10px] text-gray-500 mt-1'>{d.m}</span>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Bars */}
+          <div className='absolute inset-0 ml-12 flex items-end justify-between gap-1.5 pb-4'>
+            {monthly.map((d) => (
+              <div key={d.m} className='flex flex-col items-center flex-1'>
+                <div className='flex items-end gap-0.5 h-44'>
+                  <div
+                    className='w-2.5 rounded-t bg-blue-400'
+                    style={{ height: `${(d.purchase / max) * 100}%` }}
+                    title={`Purchase: ${d.purchase}`}
+                  />
+                  <div
+                    className='w-2.5 rounded-t bg-emerald-400'
+                    style={{ height: `${(d.sales / max) * 100}%` }}
+                    title={`Sales: ${d.sales}`}
+                  />
+                </div>
+                <span className='text-[10px] text-gray-500 mt-1'>{d.m}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -203,10 +206,10 @@ function IncomeBreakdown() {
   };
 
   return (
-    <div className='bg-white rounded-lg border border-gray-200 p-5'>
-      <div className='flex items-center justify-between mb-4'>
+    <div className='bg-white rounded-lg border border-gray-200 p-3 sm:p-5'>
+      <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4'>
         <h3 className='text-sm font-semibold text-gray-800'>Income Breakdown</h3>
-        <div className='flex items-center bg-gray-100 rounded-md p-0.5 text-xs'>
+        <div className='flex items-center bg-gray-100 rounded-md p-0.5 text-xs self-start sm:self-auto'>
           {(['Day', 'Week', 'Month'] as const).map((r) => (
             <button
               key={r}
@@ -223,8 +226,8 @@ function IncomeBreakdown() {
         </div>
       </div>
 
-      <div className='flex items-center gap-6'>
-        <svg width='160' height='160' viewBox='0 0 160 160'>
+      <div className='flex flex-col sm:flex-row items-center sm:items-center gap-4 sm:gap-6'>
+        <svg width='160' height='160' viewBox='0 0 160 160' className='shrink-0'>
           {arcs.map((seg) => {
             const [sx, sy] = polar(seg.start);
             const [ex, ey] = polar(seg.end);

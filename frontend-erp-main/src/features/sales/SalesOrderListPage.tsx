@@ -119,8 +119,8 @@ export function SalesOrderListPage() {
   return (
     <div className='space-y-4'>
       {/* Tabs + New Order */}
-      <div className='bg-white rounded-lg border border-gray-200 px-4 py-2.5 flex items-center justify-between'>
-        <div className='flex items-center gap-1'>
+      <div className='bg-white rounded-lg border border-gray-200 px-3 sm:px-4 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2'>
+        <div className='flex items-center gap-1 overflow-x-auto'>
           {TABS.map((t) => (
             <button
               key={t}
@@ -130,27 +130,25 @@ export function SalesOrderListPage() {
                 setPage(1);
               }}
               className={cn(
-                'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
-                tab === t
-                  ? 'bg-primary-soft text-primary'
-                  : 'text-gray-600 hover:bg-gray-50',
+                'px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors whitespace-nowrap',
+                tab === t ? 'bg-primary-soft text-primary' : 'text-gray-600 hover:bg-gray-50',
               )}
             >
               {t}
             </button>
           ))}
         </div>
-        <Button onClick={() => setIsCreateModalOpen(true)} className='h-8 px-3 text-xs'>
+        <Button onClick={() => setIsCreateModalOpen(true)} className='h-8 px-3 text-xs self-start sm:self-auto'>
           <Plus className='w-3.5 h-3.5 mr-1' />
           New Order
         </Button>
       </div>
 
       {/* Filter form */}
-      <div className='bg-white rounded-lg border border-gray-200 px-5 py-4'>
-        <div className='grid grid-cols-12 gap-x-4 gap-y-3 items-center'>
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Oder Date</label>
-          <div className='col-span-4 flex items-center gap-2'>
+      <div className='bg-white rounded-lg border border-gray-200 px-3 sm:px-5 py-4'>
+        <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-x-4 gap-y-3 lg:items-center'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Oder Date</label>
+          <div className='sm:col-span-1 lg:col-span-4 flex items-center gap-2'>
             <input
               type='date'
               value={orderDateFrom}
@@ -166,61 +164,59 @@ export function SalesOrderListPage() {
             />
           </div>
 
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Buyer P/O</label>
-          <div className='col-span-4'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Buyer P/O</label>
+          <div className='lg:col-span-4'>
             <Input value={buyerPO} onChange={(e) => setBuyerPO(e.target.value)} />
           </div>
 
-          <div className='col-span-2 flex justify-end'>
+          <div className='sm:col-span-2 lg:col-span-2 flex justify-end'>
             <Button
               type='button'
               variant='outline'
-              className='h-9 px-5 text-xs'
-              onClick={() => {
-                setPage(1);
-              }}
+              className='h-9 px-5 text-xs w-full sm:w-auto'
+              onClick={() => setPage(1)}
             >
               <Search className='w-3.5 h-3.5 mr-1' /> Inquiry
             </Button>
           </div>
 
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Style</label>
-          <div className='col-span-4'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Style</label>
+          <div className='lg:col-span-4'>
             <Input value={style} onChange={(e) => setStyle(e.target.value)} />
           </div>
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Customer</label>
-          <div className='col-span-4'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Customer</label>
+          <div className='lg:col-span-4'>
             <Input value={customer} onChange={(e) => setCustomer(e.target.value)} />
           </div>
-          <div className='col-span-2' />
+          <div className='hidden lg:block lg:col-span-2' />
 
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Department</label>
-          <div className='col-span-4 relative'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Department</label>
+          <div className='lg:col-span-4 relative'>
             <Input value={department} onChange={(e) => setDepartment(e.target.value)} className='pr-8' />
             <Search className='absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400' />
           </div>
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Item Name</label>
-          <div className='col-span-4 relative'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Item Name</label>
+          <div className='lg:col-span-4 relative'>
             <Input value={itemName} onChange={(e) => setItemName(e.target.value)} className='pr-8' />
             <Search className='absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400' />
           </div>
-          <div className='col-span-2' />
+          <div className='hidden lg:block lg:col-span-2' />
 
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Employee</label>
-          <div className='col-span-4 relative'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Employee</label>
+          <div className='lg:col-span-4 relative'>
             <Input value={employee} onChange={(e) => setEmployee(e.target.value)} className='pr-8' />
             <Search className='absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400' />
           </div>
-          <label className='col-span-1 text-xs font-medium text-gray-700'>Item Code</label>
-          <div className='col-span-4 relative'>
+          <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Item Code</label>
+          <div className='lg:col-span-4 relative'>
             <Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} className='pr-8' />
             <Search className='absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400' />
           </div>
-          <div className='col-span-2 flex justify-end'>
+          <div className='sm:col-span-2 lg:col-span-2 flex justify-end'>
             <Button
               type='button'
               variant='outline'
-              className='h-9 px-5 text-xs'
+              className='h-9 px-5 text-xs w-full sm:w-auto'
               onClick={() => setShowDetail((v) => !v)}
             >
               Detail Inquiry {showDetail ? '\u2296' : '\u2295'}
@@ -230,20 +226,20 @@ export function SalesOrderListPage() {
 
         {/* Detail Inquiry expanded section */}
         {showDetail && (
-          <div className='mt-4 pt-4 border-t border-dashed border-gray-200 grid grid-cols-12 gap-x-4 gap-y-3 items-center'>
-            <label className='col-span-1 text-xs font-medium text-gray-700'>Customer Type</label>
-            <div className='col-span-4 relative'>
+          <div className='mt-4 pt-4 border-t border-dashed border-gray-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-x-4 gap-y-3 lg:items-center'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Customer Type</label>
+            <div className='lg:col-span-4 relative'>
               <Input value={customerType} onChange={(e) => setCustomerType(e.target.value)} className='pr-8' />
               <Search className='absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400' />
             </div>
-            <label className='col-span-1 text-xs font-medium text-gray-700'>In Charger</label>
-            <div className='col-span-4'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>In Charger</label>
+            <div className='lg:col-span-4'>
               <Input value={inCharger} onChange={(e) => setInCharger(e.target.value)} />
             </div>
-            <div className='col-span-2' />
+            <div className='hidden lg:block lg:col-span-2' />
 
-            <label className='col-span-1 text-xs font-medium text-gray-700'>Area</label>
-            <div className='col-span-4'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Area</label>
+            <div className='lg:col-span-4'>
               <select
                 value={area}
                 onChange={(e) => setArea(e.target.value)}
@@ -254,18 +250,18 @@ export function SalesOrderListPage() {
                 <option>Export</option>
               </select>
             </div>
-            <label className='col-span-1 text-xs font-medium text-gray-700'>Payment Condition</label>
-            <div className='col-span-4'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Payment Condition</label>
+            <div className='lg:col-span-4'>
               <Input value={paymentCondition} onChange={(e) => setPaymentCondition(e.target.value)} />
             </div>
-            <div className='col-span-2' />
+            <div className='hidden lg:block lg:col-span-2' />
 
-            <label className='col-span-1 text-xs font-medium text-gray-700'>Delivery Place</label>
-            <div className='col-span-4'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Delivery Place</label>
+            <div className='lg:col-span-4'>
               <Input value={deliveryPlace} onChange={(e) => setDeliveryPlace(e.target.value)} />
             </div>
-            <label className='col-span-1 text-xs font-medium text-gray-700'>Memo</label>
-            <div className='col-span-7'>
+            <label className='lg:col-span-1 text-xs font-medium text-gray-700'>Memo</label>
+            <div className='sm:col-span-1 lg:col-span-7'>
               <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
             </div>
           </div>
