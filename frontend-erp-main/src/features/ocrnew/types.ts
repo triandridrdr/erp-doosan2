@@ -44,6 +44,11 @@ export interface OcrNewDocumentAnalysisResponseData {
   formFields: Record<string, string>;
   salesOrderDetailSizeBreakdown?: Array<Record<string, string>>;
   totalCountryBreakdown?: Array<Record<string, string>>;
+  /**
+   * Colour / Size breakdown sub-table extracted from a TotalCountryBreakdown PDF.
+   * One entry per article row; size column labels (e.g. "XS*", "M/P*") become map keys.
+   */
+  colourSizeBreakdown?: Array<Record<string, string>>;
   averageConfidence: number;
   pageCount: number;
 }
