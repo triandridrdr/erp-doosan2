@@ -69,12 +69,12 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className='grid grid-cols-12 items-center gap-2'>
-      <label className='col-span-4 text-xs font-medium text-gray-700'>
+    <div className='grid grid-cols-1 sm:grid-cols-12 sm:items-center gap-1 sm:gap-2'>
+      <label className='sm:col-span-4 text-xs font-medium text-gray-700'>
         {label}
         {required && <span className='text-red-500 ml-0.5'>*</span>}
       </label>
-      <div className='col-span-8'>{children}</div>
+      <div className='sm:col-span-8'>{children}</div>
     </div>
   );
 }
@@ -240,8 +240,8 @@ export function SalesOrderCreateModal({ isOpen, onClose }: Props) {
             ))}
           </div>
 
-          {/* Two-column form */}
-          <div className='px-5 py-4 grid grid-cols-2 gap-x-8 gap-y-2.5'>
+          {/* Two-column form (stacks on mobile) */}
+          <div className='px-3 sm:px-5 py-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 md:gap-x-8 gap-y-2.5'>
             {/* Left column */}
             <FieldRow label='Oder Date' required>
               <input
@@ -366,15 +366,15 @@ export function SalesOrderCreateModal({ isOpen, onClose }: Props) {
           </div>
 
           {/* Item table toolbar */}
-          <div className='px-5 pt-3 flex items-center justify-between'>
-            <Button type='button' variant='outline' className='h-7 px-3 text-xs' onClick={addLine}>
+          <div className='px-3 sm:px-5 pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2'>
+            <Button type='button' variant='outline' className='h-7 px-3 text-xs self-start' onClick={addLine}>
               Item Release
             </Button>
             <div className='flex items-center gap-2'>
               <select
                 value={sizeMode}
                 onChange={(e) => setSizeMode(e.target.value)}
-                className='h-7 rounded border border-gray-300 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary'
+                className='h-7 rounded border border-gray-300 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary flex-1 sm:flex-none'
               >
                 <option>National Size</option>
                 <option>International Size</option>
@@ -386,10 +386,10 @@ export function SalesOrderCreateModal({ isOpen, onClose }: Props) {
           </div>
 
           {/* Item table */}
-          <div className='px-5 pt-2 pb-3'>
+          <div className='px-3 sm:px-5 pt-2 pb-3'>
             <div className='border border-gray-200 rounded'>
               <div className='overflow-x-auto'>
-                <table className='min-w-full text-xs'>
+                <table className='min-w-[900px] text-xs'>
                   <thead className='bg-gray-50 text-gray-600'>
                     <tr>
                       <th className='px-2 py-2 text-left font-medium'>Item Name</th>
@@ -511,18 +511,30 @@ export function SalesOrderCreateModal({ isOpen, onClose }: Props) {
             </div>
           </div>
 
-          {/* Footer summary row inside form */}
-          <div className='px-5 pb-4 flex items-center gap-3'>
-            <Button type='button' variant='outline' className='h-7 px-3 text-xs' onClick={deleteLastLine}>
+          {/* Footer summary row inside form (wraps on small screens) */}
+          <div className='px-3 sm:px-5 pb-4 flex flex-col sm:flex-row sm:items-center gap-3'>
+            <Button type='button' variant='outline' className='h-7 px-3 text-xs self-start' onClick={deleteLastLine}>
               Delete line item
             </Button>
-            <div className='ml-auto flex items-center gap-3 text-xs'>
+            <div className='sm:ml-auto grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2 sm:gap-3 text-xs'>
               <label className='text-gray-700'>Supply Amount</label>
-              <input readOnly value={supplyTotal.toLocaleString()} className={cn(BORDER_INPUT, 'h-7 w-32 text-right bg-gray-50')} />
+              <input
+                readOnly
+                value={supplyTotal.toLocaleString()}
+                className={cn(BORDER_INPUT, 'h-7 sm:w-32 text-right bg-gray-50')}
+              />
               <label className='text-gray-700'>VAT Amount</label>
-              <input readOnly value={vatAmount.toLocaleString()} className={cn(BORDER_INPUT, 'h-7 w-32 text-right bg-gray-50')} />
+              <input
+                readOnly
+                value={vatAmount.toLocaleString()}
+                className={cn(BORDER_INPUT, 'h-7 sm:w-32 text-right bg-gray-50')}
+              />
               <label className='text-gray-700'>Total</label>
-              <input readOnly value={total.toLocaleString()} className={cn(BORDER_INPUT, 'h-7 w-32 text-right bg-gray-50')} />
+              <input
+                readOnly
+                value={total.toLocaleString()}
+                className={cn(BORDER_INPUT, 'h-7 sm:w-32 text-right bg-gray-50')}
+              />
             </div>
           </div>
         </form>
