@@ -221,25 +221,27 @@ public class OcrNewService {
             "(?i)^(?:XX?S|S|M|L|XX?L)(?:[*+.,'\"\u2022])?(?:[/I]P(?:[*+.,'\"\u2022])?)?$");
 
     /**
-     * Collapse spaces inside numeric thousand groups so "5 730" becomes "5730"
-     * and "36 795" becomes "36795".
+     * Collapse spaces inside numeric thousand groups so "1 589" becomes "1589"
+     * and "5 730" becomes "5730".
      *
-     * Uses a non-digit lookbehind so we only match when the LEADING 1-2 digits
-     * are at the start of a number, never the trailing digits of a longer one.
-     * Without the lookbehind the previous regex incorrectly merged adjacent
-     * 3-digit values like "692 915" into "692915" (it matched the last digit
-     * of 692 + space + 915), wrecking the data row in TCB PDFs whose size
-     * values straddle the 1000 boundary.
+     * Only collapses when the leading part is exactly ONE digit (1-9).
+     * Two-digit leading parts like "94 188" are intentionally NOT collapsed
+     * because in H&M CSB tables they represent two separate size values
+     * (94 and 188), not a single thousand-separated number.
      *
-     * Trade-off: a 7-digit value like "1 234 567" now collapses only to
-     * "1234 567" (two values) instead of "1234567". For H&M docs that's
-     * acceptable since none of the size/total values exceed 5 digits.
+     * Uses a non-digit lookbehind so we only match when the LEADING digit
+     * is at the start of a number, never the trailing digit of a longer one.
+     *
+     * Trade-off: a value like "36 795" (36,795) is NOT collapsed.
+     * For H&M docs that's acceptable since individual CSB size values
+     * rarely exceed 9,999 and totals in the single-digit thousands
+     * (e.g. "6 307") are handled correctly.
      */
     private static String collapseThousandSpaces(String s) {
         if (s == null || s.isEmpty()) return s;
         String out = s;
         for (int i = 0; i < 3; i++) {
-            String next = out.replaceAll("(?<!\\d)(\\d{1,2})\\s+(\\d{3})(?!\\d)", "$1$2");
+            String next = out.replaceAll("(?<!\\d)(\\d)\\s+(\\d{3})(?!\\d)", "$1$2");
             if (next.equals(out)) break;
             out = next;
         }
@@ -247,14 +249,17 @@ public class OcrNewService {
     }
 
     /**
-     * Lenient header detector for "Colour / Size breakdown" — matches with/without
-     * spaces around the slash and with British/American spellings.
+     * Lenient header detector for "Colour / Size breakdown" — matches both
+     * "Colour / Size breakdown" and "Size / Colour breakdown" (reversed order
+     * seen in SizePerColourBreakdown PDFs), with/without spaces around the
+     * slash and with British/American spellings.
      */
     private static int findColourSizeHeaderIndex(List<String> texts) {
         if (texts == null) return -1;
         for (int i = 0; i < texts.size(); i++) {
             String s = oneLine(texts.get(i)).toLowerCase(Locale.ROOT);
-            if (!s.contains("size breakdown")) continue;
+            if (!s.contains("breakdown")) continue;
+            if (!s.contains("size")) continue;
             if (s.contains("colour") || s.contains("color")) return i;
         }
         return -1;
@@ -552,13 +557,29 @@ public class OcrNewService {
         if (hdrIdx < 0) hdrIdx = lower.indexOf("color / size breakdown");
         if (hdrIdx < 0) hdrIdx = lower.indexOf("colour/size breakdown");
         if (hdrIdx < 0) hdrIdx = lower.indexOf("color/size breakdown");
+        // Also try reversed order: "Size / Colour breakdown"
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("size / colour breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("size / color breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("size/colour breakdown");
+        if (hdrIdx < 0) hdrIdx = lower.indexOf("size/color breakdown");
         if (hdrIdx < 0) {
+            // Fallback: find "size breakdown" or "colour breakdown" near each other
             int sb = lower.indexOf("size breakdown");
-            if (sb < 0) return null;
-            int look = Math.max(0, sb - 60);
-            String near = lower.substring(look, sb);
-            if (!near.contains("colour") && !near.contains("color")) return null;
-            hdrIdx = sb;
+            if (sb >= 0) {
+                int look = Math.max(0, sb - 60);
+                String near = lower.substring(look, sb);
+                if (near.contains("colour") || near.contains("color")) hdrIdx = sb;
+            }
+            if (hdrIdx < 0) {
+                int cb = lower.indexOf("colour breakdown");
+                if (cb < 0) cb = lower.indexOf("color breakdown");
+                if (cb >= 0) {
+                    int look = Math.max(0, cb - 60);
+                    String near = lower.substring(look, cb);
+                    if (near.contains("size")) hdrIdx = cb;
+                }
+            }
+            if (hdrIdx < 0) return null;
         }
 
         int end = Math.min(pageText.length(), hdrIdx + 2000);
@@ -570,32 +591,29 @@ public class OcrNewService {
         String[] rawTokens = flat.split("\\s+");
         List<String> tokens = mergeSplitSizeLabelTokens(rawTokens);
 
+        // Find the "Article" token that is immediately followed by ≥3 size labels.
+        // This skips false matches like "Article No:", "Article / Product No:", etc.
         int articleIdx = -1;
+        List<String> sizeKeys = null;
+        int t = 0;
         for (int i = 0; i < tokens.size(); i++) {
-            if ("article".equalsIgnoreCase(tokens.get(i))) {
+            if (!"article".equalsIgnoreCase(tokens.get(i))) continue;
+            List<String> candidateKeys = new ArrayList<>();
+            int j = i + 1;
+            while (j < tokens.size() && SIZE_LABEL_PAT.matcher(tokens.get(j)).matches()) {
+                candidateKeys.add(tokens.get(j).toUpperCase(Locale.ROOT));
+                j++;
+            }
+            if (candidateKeys.size() >= 3) {
                 articleIdx = i;
+                sizeKeys = candidateKeys;
+                t = j;
                 break;
             }
         }
-        if (articleIdx < 0) {
-            log.info("[CSB][PDFBOX] no 'Article' token in window after header; tokens preview: {}",
+        if (articleIdx < 0 || sizeKeys == null) {
+            log.info("[CSB][PDFBOX] no 'Article' token with ≥3 size labels in window; tokens preview: {}",
                     truncate(String.join(" ", tokens.subList(0, Math.min(tokens.size(), 30))), 300));
-            return null;
-        }
-
-        // Walk forward collecting consecutive size labels.
-        List<String> sizeKeys = new ArrayList<>();
-        int t = articleIdx + 1;
-        while (t < tokens.size() && SIZE_LABEL_PAT.matcher(tokens.get(t)).matches()) {
-            sizeKeys.add(tokens.get(t).toUpperCase(Locale.ROOT));
-            t++;
-        }
-        if (sizeKeys.size() < 3) {
-            log.info("[CSB][PDFBOX] sizeKeys too small ({}); tokens after 'Article': {}",
-                    sizeKeys.size(),
-                    truncate(String.join(" ",
-                            tokens.subList(articleIdx, Math.min(tokens.size(), articleIdx + 25))),
-                            300));
             return null;
         }
         int n = sizeKeys.size();
@@ -691,7 +709,9 @@ public class OcrNewService {
 
                     String lower = pageText.toLowerCase(Locale.ROOT);
                     int sbIdx = lower.indexOf("size breakdown");
-                    log.info("[CSB][PDFBOX] sortByPos={} page={} textLen={} sizeBreakdownAt={}",
+                    if (sbIdx < 0) sbIdx = lower.indexOf("colour breakdown");
+                    if (sbIdx < 0) sbIdx = lower.indexOf("color breakdown");
+                    log.info("[CSB][PDFBOX] sortByPos={} page={} textLen={} breakdownAt={}",
                             sortByPos, p, pageText.length(), sbIdx);
 
                     if (sbIdx >= 0) {
@@ -1400,6 +1420,61 @@ public class OcrNewService {
                 }
             }
 
+            // ── Supplementary: PDFBox native text for lines Tesseract missed ───
+            String fname = file.getOriginalFilename();
+            if (isPdf(file)) {
+                try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(fileBytes))) {
+                    PDFTextStripper stripper = new PDFTextStripper();
+                    stripper.setSortByPosition(true);
+                    int totalPages = doc.getNumberOfPages();
+                    for (int p = 0; p < totalPages; p++) {
+                        int pageNum = p + 1; // 1-indexed
+                        stripper.setStartPage(pageNum);
+                        stripper.setEndPage(pageNum);
+                        String pageText = stripper.getText(doc);
+                        if (pageText == null || pageText.isBlank()) continue;
+
+                        // Collect existing Tesseract line texts for this page (lowered, trimmed) for dedup
+                        Set<String> existingTexts = new HashSet<>();
+                        for (OcrNewLine ol : allLines) {
+                            if (ol.getPage() == pageNum) {
+                                existingTexts.add(oneLine(ol.getText()).toLowerCase(Locale.ROOT).trim());
+                            }
+                        }
+
+                        String[] nativeLines = pageText.split("\\r?\\n");
+                        int syntheticTop = 0;
+                        for (String nl : nativeLines) {
+                            String trimmed = nl.trim();
+                            if (trimmed.isBlank()) continue;
+                            String key = trimmed.toLowerCase(Locale.ROOT);
+                            // Skip if Tesseract already captured a line containing this text
+                            boolean alreadyPresent = false;
+                            for (String et : existingTexts) {
+                                if (et.contains(key) || key.contains(et)) {
+                                    alreadyPresent = true;
+                                    break;
+                                }
+                            }
+                            if (alreadyPresent) continue;
+
+                            // Add as supplementary line with synthetic bounding box
+                            syntheticTop += 5;
+                            allLines.add(OcrNewLine.builder()
+                                    .page(pageNum)
+                                    .text(trimmed)
+                                    .left(0).top(syntheticTop).right(1000).bottom(syntheticTop + 20)
+                                    .confidence(99f)
+                                    .words(List.of())
+                                    .build());
+                            log.info("[OCR-PDFBOX-SUPPLEMENT] file={} page={} added: {}", fname, pageNum, truncate(trimmed, 300));
+                        }
+                    }
+                } catch (IOException ex) {
+                    log.warn("[OCR-PDFBOX-SUPPLEMENT] failed: {}", ex.getMessage());
+                }
+            }
+
             allLines.sort(Comparator
                     .comparingInt(OcrNewLine::getPage)
                     .thenComparingInt(OcrNewLine::getTop)
@@ -1535,7 +1610,9 @@ public class OcrNewService {
             }
 
             // ── Always-on result summary (grep keyword: [OCR-RESULT]) ──────────
-            String fname = file.getOriginalFilename();
+            log.info("╔══════════════════════════════════════════════════════════════════════╗");
+            log.info("║  [OCR-RESULT]  START — file: {}", fname);
+            log.info("╚══════════════════════════════════════════════════════════════════════╝");
             log.info("[OCR-RESULT] file={} pages={} ocrLines={} tables={} detailRows={} tcbRows={} csbRows={} formFields={}",
                     fname, pageImages.size(), allLines.size(), tables.size(),
                     salesOrderDetailSizeBreakdown.size(),
@@ -1583,6 +1660,10 @@ public class OcrNewService {
                     }
                 }
             }
+
+            log.info("╔══════════════════════════════════════════════════════════════════════╗");
+            log.info("║  [OCR-RESULT]  END — file: {}", fname);
+            log.info("╚══════════════════════════════════════════════════════════════════════╝");
 
             float avgConfidence = 0f;
             if (!allLines.isEmpty()) {

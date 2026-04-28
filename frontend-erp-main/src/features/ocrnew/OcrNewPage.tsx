@@ -610,9 +610,22 @@ export function OcrNewPage() {
       if (!c) continue;
       m.set(c.toLowerCase(), c);
 
-      const mCode = c.match(/\b([A-Z]{2})\b/);
-      const code = (mCode?.[1] ?? '').toString().trim().toLowerCase();
-      if (code) m.set(code, c);
+      // Index by ALL 2-letter uppercase codes found (e.g. OE, OJ, OK, OT ...)
+      const allCodes = c.match(/\b[A-Z]{2}\b/g) ?? [];
+      for (const code of allCodes) {
+        const lc = code.toLowerCase();
+        if (!m.has(lc)) m.set(lc, c);
+      }
+
+      // Also index by PM/OL code pattern embedded in parentheses, e.g. (OL-KR), (PMSCA)
+      const pmMatch = c.match(/\(([A-Z]{2}[A-Z0-9-]+)\)?/);
+      if (pmMatch) {
+        const pmCode = pmMatch[1].toUpperCase();
+        m.set(pmCode.toLowerCase(), c);
+        // Also with normalized hyphen: OL-KR, PM-UK
+        const normalized = pmCode.replace(/^(OL|PM)(?!-)/, '$1-');
+        if (normalized !== pmCode) m.set(normalized.toLowerCase(), c);
+      }
     }
     return m;
   }, [section2TotalByCountryRows]);
@@ -974,6 +987,7 @@ export function OcrNewPage() {
                           value={
                             (row.countryOfDestination ?? '').toString() ||
                             section2TotalCountryLookup.get((row.country ?? '').toString().trim().toLowerCase()) ||
+                            section2TotalCountryLookup.get((row.pmCode ?? '').toString().trim().toLowerCase()) ||
                             ''
                           }
                           onChange={(e) => {
