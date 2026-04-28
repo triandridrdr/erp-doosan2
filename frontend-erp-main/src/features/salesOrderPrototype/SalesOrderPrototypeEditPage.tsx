@@ -2,8 +2,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
-
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
@@ -21,6 +19,9 @@ const SALES_ORDER_HEADER_FIELDS = [
   'Product Type',
   'Customs Customer Group',
   'Type of Construction',
+  'Development No',
+  'Terms of Delivery',
+  'Time of Delivery',
 ] as const;
 
 type BomDraftRow = {
@@ -143,41 +144,6 @@ function safeJsonParse(v: string): any {
   } catch {
     return null;
   }
-}
-
-function exportRowsToExcel(
-  rows: Array<{
-    countryOfDestination: string;
-    type: string;
-    color: string;
-    size: string;
-    qty: string;
-    total: string;
-    noOfAsst?: string;
-    editable: boolean;
-  }>,
-) {
-  const toNumOrNull = (v: unknown) => {
-    const d = normalizeDigits((v ?? '').toString());
-    if (!d) return null;
-    const n = Number(d);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  const jsonRows = rows.map((row) => ({
-    'Country of Destination': (row.countryOfDestination ?? '').toString(),
-    Type: (row.type ?? '').toString(),
-    Color: (row.color ?? '').toString(),
-    Size: (row.size ?? '').toString(),
-    Qty: toNumOrNull(row.qty),
-    Total: toNumOrNull(row.total),
-    'No of Asst': (row.noOfAsst ?? '').toString(),
-  }));
-
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(jsonRows);
-  XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
-  XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export function SalesOrderPrototypeEditPage() {
@@ -414,7 +380,7 @@ export function SalesOrderPrototypeEditPage() {
               disabled={saveDraftMutation.isPending}
               onClick={() => saveDraftMutation.mutate()}
             >
-              Save Draft
+              Update Draft
             </Button>
           </div>
         </div>
@@ -456,14 +422,6 @@ export function SalesOrderPrototypeEditPage() {
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
           <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='secondary'
-              disabled={section2NonTotalEntries.length === 0}
-              onClick={() => exportRowsToExcel(section2NonTotalEntries.map(({ row }) => row))}
-            >
-              Convert to Excel
-            </Button>
             <Button
               type='button'
               variant='primary'

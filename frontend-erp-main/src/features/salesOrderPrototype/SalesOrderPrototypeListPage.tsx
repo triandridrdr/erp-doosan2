@@ -1,13 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { Modal } from '../../components/ui/Modal';
 import { salesOrderPrototypeApi } from './api';
 
 export function SalesOrderPrototypeListPage() {
   const [q, setQ] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -91,17 +95,7 @@ export function SalesOrderPrototypeListPage() {
                       <Button
                         type='button'
                         variant='danger'
-                        onClick={async () => {
-                          const ok = window.confirm(`Delete prototype id=${r.id}?`);
-                          if (!ok) return;
-                          try {
-                            await salesOrderPrototypeApi.delete(r.id);
-                            await refetch();
-                          } catch (e) {
-                            const msg = e instanceof Error ? e.message : String(e);
-                            alert(`Failed to delete: ${msg}`);
-                          }
-                        }}
+                        onClick={() => setDeleteTarget(r.id)}
                       >
                         Delete
                       </Button>
@@ -113,6 +107,41 @@ export function SalesOrderPrototypeListPage() {
           </table>
         </div>
       </div>
+      <Modal isOpen={deleteTarget !== null} onClose={() => setDeleteTarget(null)} title='DELETE' maxWidth='max-w-sm'>
+        <div className='flex flex-col items-center text-center gap-4 py-2'>
+          <div className='rounded-full border-4 border-orange-300 p-3'>
+            <AlertCircle className='w-10 h-10 text-orange-400' />
+          </div>
+          <h3 className='text-xl font-bold text-gray-800'>DELETE</h3>
+          <p className='text-gray-600'>Delete Sales Order id={deleteTarget}?</p>
+          <div className='flex gap-3 mt-2'>
+            <Button
+              type='button'
+              variant='danger'
+              disabled={deleting}
+              onClick={async () => {
+                if (deleteTarget === null) return;
+                setDeleting(true);
+                try {
+                  await salesOrderPrototypeApi.delete(deleteTarget);
+                  setDeleteTarget(null);
+                  await refetch();
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  alert(`Failed to delete: ${msg}`);
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </Button>
+            <Button type='button' variant='outline' onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
