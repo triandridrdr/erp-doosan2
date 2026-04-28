@@ -14,7 +14,7 @@ const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
   'Date (ISO)',
   'Season',
-  'Buyer Code',
+  'Supplier Code',
   'Supplier',
   'Article / Product No',
   'Product Name',
