@@ -633,7 +633,6 @@ export function OcrNewPage() {
       Qty: toNumOrNull(row.qty),
       Total: toNumOrNull(row.total),
       'No of Asst': (row.noOfAsst ?? '').toString(),
-      Editable: row.editable ? 'TRUE' : 'FALSE',
     }));
 
     const wb = XLSX.utils.book_new();
@@ -722,36 +721,16 @@ export function OcrNewPage() {
         {results.length > 1 && (
           <div className='mt-4 flex flex-wrap gap-2'>
             {results.map((r, idx) => (
-              <button
+              <span
                 key={r.fileName}
-                type='button'
-                className={
-                  idx === activeFileIndex
-                    ? 'px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white'
-                    : 'px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'
-                }
-                onClick={() => {
-                  setActiveFileIndex(idx);
-                  const nextData = results[idx]?.data ?? null;
-                  setData(nextData);
-
-                  hydrateDraftsFromData(nextData);
-                }}
+                className='px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'
               >
                 {r.fileName}
-              </button>
+              </span>
             ))}
           </div>
         )}
 
-        {multiFileLogs.length > 0 && (
-          <div className='mt-4 rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden'>
-            <div className='px-4 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600'>Logs</div>
-            <pre className='p-4 text-[11px] leading-relaxed text-gray-800 whitespace-pre-wrap max-h-[240px] overflow-auto'>
-              {multiFileLogs.join('\n')}
-            </pre>
-          </div>
-        )}
       </div>
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
@@ -782,7 +761,6 @@ export function OcrNewPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -798,7 +776,6 @@ export function OcrNewPage() {
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
                     </tr>
                   ))}
                 </tbody>
@@ -812,14 +789,6 @@ export function OcrNewPage() {
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
           <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='secondary'
-              disabled={!data || section2NonTotalEntries.length === 0}
-              onClick={exportSection2SizeBreakdownToExcel}
-            >
-              Convert to Excel
-            </Button>
             <Button
               type='button'
               variant='primary'
@@ -851,7 +820,6 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -920,7 +888,6 @@ export function OcrNewPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -1060,7 +1027,6 @@ export function OcrNewPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -1095,7 +1061,6 @@ export function OcrNewPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -1121,54 +1086,6 @@ export function OcrNewPage() {
             </div>
           )}
 
-          {!section2cTotalFrom2b ? null : (
-            <div className='w-full max-w-[420px] overflow-auto'>
-              <table className='min-w-[360px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total:</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2cTotalDraftRows.map((row, idx) => (
-                    <tr key={idx} className='border-b border-gray-100'>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.article}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSection2cTotalDirty(true);
-                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={formatIdThousands(row.total)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSection2cTotalDirty(true);
-                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
-                    </tr>
-                  ))}
-                  <tr className='border-b border-gray-100 last:border-b-0'>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>Total:</td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>
-                      {formatIdThousands((section2cTotalDraftRows?.[0]?.total ?? section2cTotalFrom2b.total).toString())}
-                    </td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </div>
 

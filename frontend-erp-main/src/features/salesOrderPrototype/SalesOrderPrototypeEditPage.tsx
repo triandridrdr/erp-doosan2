@@ -172,7 +172,6 @@ function exportRowsToExcel(
     Qty: toNumOrNull(row.qty),
     Total: toNumOrNull(row.total),
     'No of Asst': (row.noOfAsst ?? '').toString(),
-    Editable: row.editable ? 'TRUE' : 'FALSE',
   }));
 
   const wb = XLSX.utils.book_new();
@@ -429,7 +428,6 @@ export function SalesOrderPrototypeEditPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -445,7 +443,6 @@ export function SalesOrderPrototypeEditPage() {
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>TRUE</td>
                     </tr>
                   ))}
                 </tbody>
@@ -495,7 +492,6 @@ export function SalesOrderPrototypeEditPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -558,7 +554,6 @@ export function SalesOrderPrototypeEditPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -685,7 +680,6 @@ export function SalesOrderPrototypeEditPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -720,7 +714,6 @@ export function SalesOrderPrototypeEditPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
@@ -746,45 +739,6 @@ export function SalesOrderPrototypeEditPage() {
             </div>
           )}
 
-          {section2cTotalDraftRows.length === 0 ? null : (
-            <div className='w-full max-w-[420px] overflow-auto'>
-              <table className='min-w-[360px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total:</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Editable</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2cTotalDraftRows.map((row, idx) => (
-                    <tr key={idx} className='border-b border-gray-100'>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.article}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={formatIdThousands(row.total)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSection2cTotalDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top whitespace-nowrap'>{row.editable ? 'TRUE' : 'FALSE'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </div>
 
@@ -815,6 +769,7 @@ export function SalesOrderPrototypeEditPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -854,6 +809,17 @@ export function SalesOrderPrototypeEditPage() {
                             setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: e.target.value } : r)))
                           }
                         />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setBomDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
