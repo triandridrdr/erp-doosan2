@@ -685,13 +685,6 @@ export function SalesOrderPrototypeEditPage() {
                       </td>
                     </tr>
                   ))}
-                  <tr className='border-b border-gray-100 last:border-b-0'>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>Total:</td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'>{formatIdThousands(section2cGrandTotal.toString())}</td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                    <td className='px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap'></td>
-                  </tr>
                 </tbody>
               </table>
             </div>
