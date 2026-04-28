@@ -1379,7 +1379,7 @@ public class OcrNewService {
             List<OcrNewLine> rawLinesForDetail = new ArrayList<>();
             List<OcrNewLine> rawLinesForTables = useHocr ? new ArrayList<>() : allLines;
             for (int i = 0; i < pageImages.size(); i++) {
-                BufferedImage pageImage = pageImages.get(i);
+                BufferedImage pageImage = removeColoredBorders(pageImages.get(i));
                 List<OcrNewLine> hocrPageLines = null;
                 List<OcrNewLine> rawPageLines = ocrEngine.extractLinesFromImage(pageImage, i);
 
@@ -1530,6 +1530,56 @@ public class OcrNewService {
                     if (totalCountryBreakdown.size() > 1) {
                         Map<String, String> second = totalCountryBreakdown.get(1);
                         log.info("[OCR-NEW][TCB] Second row: {}", second);
+                    }
+                }
+            }
+
+            // ── Always-on result summary (grep keyword: [OCR-RESULT]) ──────────
+            String fname = file.getOriginalFilename();
+            log.info("[OCR-RESULT] file={} pages={} ocrLines={} tables={} detailRows={} tcbRows={} csbRows={} formFields={}",
+                    fname, pageImages.size(), allLines.size(), tables.size(),
+                    salesOrderDetailSizeBreakdown.size(),
+                    totalCountryBreakdown == null ? 0 : totalCountryBreakdown.size(),
+                    colourSizeBreakdown == null ? 0 : colourSizeBreakdown.size(),
+                    formFields.size());
+            // Dump all raw OCR lines so we can verify what Tesseract actually read
+            for (int li = 0; li < allLines.size(); li++) {
+                OcrNewLine l = allLines.get(li);
+                log.info("[OCR-RESULT][LINE] file={} page={} line[{}]: {}", fname, l.getPage(), li, truncate(oneLine(l.getText()), 400));
+            }
+            // Dump form fields
+            formFields.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(en -> log.info("[OCR-RESULT][FIELD] file={} {} = {}", fname, en.getKey(), truncate(oneLine(en.getValue()), 300)));
+            // Dump detail rows
+            for (int di = 0; di < salesOrderDetailSizeBreakdown.size(); di++) {
+                log.info("[OCR-RESULT][DETAIL] file={} row[{}] {}", fname, di, salesOrderDetailSizeBreakdown.get(di));
+            }
+            // Dump TCB rows
+            if (totalCountryBreakdown != null) {
+                for (int ti = 0; ti < totalCountryBreakdown.size(); ti++) {
+                    log.info("[OCR-RESULT][TCB] file={} row[{}] {}", fname, ti, totalCountryBreakdown.get(ti));
+                }
+            }
+            // Dump CSB rows
+            if (colourSizeBreakdown != null) {
+                for (int ci = 0; ci < colourSizeBreakdown.size(); ci++) {
+                    log.info("[OCR-RESULT][CSB] file={} row[{}] {}", fname, ci, colourSizeBreakdown.get(ci));
+                }
+            }
+            // Dump table summaries
+            for (int ti = 0; ti < tables.size(); ti++) {
+                OcrNewTableDto t = tables.get(ti);
+                log.info("[OCR-RESULT][TABLE] file={} table[{}] page={} rows={} cols={}", fname, ti, t.getPage(), t.getRowCount(), t.getColumnCount());
+                if (t.getRows() != null) {
+                    for (int r = 0; r < Math.min(t.getRows().size(), 10); r++) {
+                        List<String> row = t.getRows().get(r);
+                        String rowText = row == null ? "" : row.stream()
+                                .filter(Objects::nonNull)
+                                .map(OcrNewService::oneLine)
+                                .map(s -> truncate(s, 100))
+                                .reduce("", (a, b) -> a.isEmpty() ? b : a + " | " + b);
+                        log.info("[OCR-RESULT][TABLE] file={} table[{}] row[{}]: {}", fname, ti, r, truncate(rowText, 800));
                     }
                 }
             }
@@ -1900,5 +1950,33 @@ public class OcrNewService {
         if (m == null || k == null || v == null) return;
         String t = v.trim();
         if (!t.isBlank()) m.put(k, t);
+    }
+
+    /**
+     * Pre-process a page image by replacing colored border pixels (red, dark-red,
+     * orange-red) with white so that Tesseract can read the text underneath/inside.
+     * The filter targets pixels whose red channel dominates green and blue.
+     */
+    private static BufferedImage removeColoredBorders(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        // Work on a copy so the original stays intact for other uses.
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = src.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                // Detect red/dark-red border pixels:
+                //   R channel is dominant and significantly higher than G and B.
+                if (r > 100 && r > g + 50 && r > b + 50) {
+                    dst.setRGB(x, y, 0xFFFFFF); // white
+                } else {
+                    dst.setRGB(x, y, rgb);
+                }
+            }
+        }
+        return dst;
     }
 }
