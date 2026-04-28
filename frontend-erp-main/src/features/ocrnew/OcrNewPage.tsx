@@ -1032,9 +1032,18 @@ export function OcrNewPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2C – COLOUR / SIZE BREAKDOWN</div>
+          <Button
+            type='button'
+            variant='primary'
+            onClick={() => {
+              setSection2cDraftRows((prev) => [...(prev ?? []), { article: '', size: '', qty: '', editable: true }]);
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6 space-y-6'>
-          {!section2cSizeSummary && !backendColourSizeBreakdown ? (
+          {!section2cSizeSummary && !backendColourSizeBreakdown && section2cDraftRows.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No size breakdown detected.</div>
           ) : (
             <div className='w-full max-h-[50vh] overflow-auto'>
