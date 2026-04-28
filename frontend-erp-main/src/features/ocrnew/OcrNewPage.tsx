@@ -23,6 +23,9 @@ const SALES_ORDER_HEADER_FIELDS = [
   'Product Type',
   'Customs Customer Group',
   'Type of Construction',
+  'Development No',
+  'Terms of Delivery',
+  'Time of Delivery',
 ] as const;
 
 export function OcrNewPage() {

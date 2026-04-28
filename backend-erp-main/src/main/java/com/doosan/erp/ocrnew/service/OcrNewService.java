@@ -1498,6 +1498,7 @@ public class OcrNewService {
 
             List<OcrNewKeyValuePairDto> pairs = keyValueParser.parseKeyValuePairs(allLines);
             Map<String, String> formFields = keyValueParser.toFieldMap(pairs);
+            enrichDeliveryFields(formFields, allLines);
             List<OcrNewTableDto> tables;
             if (useHocr) {
                 rawLinesForTables.sort(Comparator
@@ -2059,5 +2060,142 @@ public class OcrNewService {
             }
         }
         return dst;
+    }
+
+    // ── Delivery fields enrichment for Section 1 Header ──────────────────────
+
+    private static final Pattern DATE_PATTERN = Pattern.compile(
+            "\\b(\\d{1,2})\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*,?\\s+(\\d{4})\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Enrich formFields with:
+     * - "Development No" (usually already captured, ensure present)
+     * - "Terms of Delivery" (e.g. "Transport by Sea, Packing Mode Flat, FCA...")
+     * - "Time of Delivery" (delivery schedule dates with planning markets)
+     */
+    static void enrichDeliveryFields(Map<String, String> formFields, List<OcrNewLine> allLines) {
+        if (formFields == null || allLines == null || allLines.isEmpty()) return;
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l != null && l.getText() != null) {
+                texts.add(oneLine(l.getText()).trim());
+            }
+        }
+
+        // ── Terms of Delivery ─────────────────────────────────────────────
+        if (!formFields.containsKey("Terms of Delivery") || formFields.get("Terms of Delivery").isBlank()) {
+            String termsValue = extractTermsOfDelivery(texts);
+            if (termsValue != null && !termsValue.isBlank()) {
+                formFields.put("Terms of Delivery", termsValue);
+            }
+        }
+
+        // ── Time of Delivery ──────────────────────────────────────────────
+        if (!formFields.containsKey("Time of Delivery") || formFields.get("Time of Delivery").isBlank()) {
+            String timeValue = extractTimeOfDelivery(texts);
+            if (timeValue != null && !timeValue.isBlank()) {
+                formFields.put("Time of Delivery", timeValue);
+            }
+        }
+    }
+
+    /**
+     * Extract "Terms of Delivery" value by finding the section header and
+     * looking for "Transport by..." or "FOB" or "FCA" or similar Incoterms text.
+     */
+    private static String extractTermsOfDelivery(List<String> texts) {
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("terms of delivery")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return null;
+
+        // Collect lines after header until next section (Time of Delivery, Quantity per Article, etc.)
+        StringBuilder sb = new StringBuilder();
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 15); i++) {
+            String line = texts.get(i).trim();
+            String low = line.toLowerCase(Locale.ROOT);
+            // Stop at next section header
+            if (low.contains("time of delivery") || low.contains("quantity per artic")
+                    || low.contains("planning market") || low.contains("% total")) break;
+            if (line.isBlank()) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(line);
+        }
+
+        String block = sb.toString().trim();
+        if (block.isEmpty()) return null;
+
+        // Try to extract the key transport term: "Transport by Sea/Air/..."
+        Pattern transportPat = Pattern.compile("(?i)(Transport\\s+by\\s+\\S+(?:\\s*,\\s*[^.]+)?)");
+        Matcher m = transportPat.matcher(block);
+        if (m.find()) {
+            return m.group(1).trim();
+        }
+
+        // Fallback: look for Incoterms (FOB, FCA, CIF, etc.)
+        Pattern incoPat = Pattern.compile("(?i)\\b(FOB|FCA|CIF|CFR|EXW|DAP|DDP)\\b.*");
+        Matcher im = incoPat.matcher(block);
+        if (im.find()) {
+            return im.group(0).trim();
+        }
+
+        // Last fallback: return the whole block (trimmed)
+        return block.length() > 200 ? block.substring(0, 200) : block;
+    }
+
+    /**
+     * Extract "Time of Delivery" from the delivery schedule table.
+     * Returns a semicolon-separated list of "date – markets" entries.
+     * Example: "26 Jan, 2026 – OE, SW, OF; 02 Feb, 2026 – OU, LH"
+     */
+    private static String extractTimeOfDelivery(List<String> texts) {
+        // Find "Time of Delivery" header
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("time of delivery")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return null;
+
+        // Scan lines after header for date patterns
+        List<String> entries = new ArrayList<>();
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 30); i++) {
+            String line = texts.get(i).trim();
+            if (line.isBlank()) continue;
+            String low = line.toLowerCase(Locale.ROOT);
+            // Stop if we hit the next major section
+            if (low.contains("quantity per artic") || low.contains("article no")
+                    || low.contains("h&m colour")) break;
+            if (low.startsWith("total")) break;
+
+            Matcher dm = DATE_PATTERN.matcher(line);
+            if (dm.find()) {
+                String date = dm.group(0);
+                // Remainder after date may include planning markets and quantity
+                String rest = line.substring(dm.end()).trim();
+                // Remove trailing quantity/percentage numbers
+                rest = rest.replaceAll("\\s+\\d[\\d\\s]*%?\\s*$", "").trim();
+                // Remove leading/trailing punctuation
+                rest = rest.replaceAll("^[|,;\\s]+", "").replaceAll("[|,;\\s]+$", "").trim();
+                if (!rest.isEmpty()) {
+                    entries.add(date + " \u2013 " + rest);
+                } else {
+                    entries.add(date);
+                }
+            }
+        }
+
+        if (entries.isEmpty()) return null;
+        return String.join("; ", entries);
     }
 }
