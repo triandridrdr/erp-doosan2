@@ -39,6 +39,23 @@ type NavItem = {
 const navigation: NavItem[] = [
   { name: 'Dashboard', icon: LayoutDashboard, href: '/' },
   {
+    name: 'Pre-Sales',
+    icon: LineChart,
+    children: [
+      {
+        name: 'Sales Order Scan',
+        href: '#presales-sos',
+        children: [
+          { name: 'Purchase Order', href: '#presales-po' },
+          { name: 'Supplementary', href: '#presales-supplementary' },
+          { name: 'Size Per Colour Breakdown', href: '#presales-size-per-colour-breakdown' },
+          { name: 'Total Country Breakdown', href: '#presales-total-country-breakdown' },
+          { name: 'All', href: '#presales-all' },
+        ],
+      },
+    ],
+  },
+  {
     name: 'Accounting',
     icon: ClipboardList,
     children: [{ name: 'Journal Entry', href: '/accounting' }],
@@ -131,7 +148,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}
   // Keep the section containing the active route open by default
   const initiallyOpen = useMemo(() => {
     const top = findActiveTopLevel(location.pathname);
-    return top ? new Set<string>([top]) : new Set<string>(['Sales']);
+    return top ? new Set<string>([top]) : new Set<string>(['Sales', 'Pre-Sales']);
   }, [location.pathname]);
 
   const [openSections, setOpenSections] = useState<Set<string>>(initiallyOpen);
@@ -174,7 +191,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}
 
   const renderLeaf = (child: NavChild, depth: number) => {
     const placeholder = isPlaceholder(child.href);
-    const padding = depth === 1 ? 'pl-12' : 'pl-16';
+    const padding = depth === 1 ? 'pl-12' : depth === 2 ? 'pl-16' : 'pl-20';
     if (placeholder || !REAL_ROUTES.has(child.href)) {
       return (
         <div
@@ -207,6 +224,42 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}
         {child.name}
       </NavLink>
     );
+  };
+
+  const nodeHasActiveRoute = (n: NavChild): boolean => {
+    if (n.href && n.href === location.pathname) return true;
+    if (!n.children || n.children.length === 0) return false;
+    return n.children.some((c) => nodeHasActiveRoute(c));
+  };
+
+  const renderNode = (pathKey: string, node: NavChild, depth: number) => {
+    if (node.children && node.children.length > 0) {
+      const key = `${pathKey}/${node.name}`;
+      const subOpen = openSubSections.has(key);
+      const nodeActive = nodeHasActiveRoute(node);
+
+      const padding = depth === 1 ? 'pl-12' : depth === 2 ? 'pl-16' : 'pl-20';
+
+      return (
+        <div key={key}>
+          <button
+            type='button'
+            onClick={() => toggleSubSection(key)}
+            className={cn(
+              'w-full flex items-center justify-between pr-3 py-2 text-sm rounded-md transition-colors',
+              padding,
+              nodeActive ? 'bg-accent text-white font-semibold' : 'text-gray-600 hover:text-primary hover:bg-primary-soft',
+            )}
+          >
+            <span>{node.name}</span>
+            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', subOpen ? 'rotate-180' : '')} />
+          </button>
+          {subOpen && <div className='mt-0.5'>{node.children.map((c) => renderNode(key, c, depth + 1))}</div>}
+        </div>
+      );
+    }
+
+    return renderLeaf(node, depth);
   };
 
   return (
@@ -320,35 +373,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}
               {isOpen && item.children && (
                 <div className='mt-1 mb-1'>
                   {item.children.map((child) => {
-                    if (child.children && child.children.length > 0) {
-                      const key = `${item.name}/${child.name}`;
-                      const subOpen = openSubSections.has(key);
-                      const childActive =
-                        child.href && location.pathname === child.href
-                          ? true
-                          : child.children.some((g) => g.href === location.pathname);
-                      return (
-                        <div key={key}>
-                          <button
-                            type='button'
-                            onClick={() => toggleSubSection(key)}
-                            className={cn(
-                              'w-full flex items-center justify-between pr-3 pl-12 py-2 text-sm rounded-md transition-colors',
-                              childActive
-                                ? 'bg-accent text-white font-semibold'
-                                : 'text-gray-600 hover:text-primary hover:bg-primary-soft',
-                            )}
-                          >
-                            <span>{child.name}</span>
-                            <ChevronDown
-                              className={cn('h-3.5 w-3.5 transition-transform', subOpen ? 'rotate-180' : '')}
-                            />
-                          </button>
-                          {subOpen && <div className='mt-0.5'>{child.children.map((g) => renderLeaf(g, 2))}</div>}
-                        </div>
-                      );
-                    }
-                    return renderLeaf(child, 1);
+                    return renderNode(item.name, child, 1);
                   })}
                 </div>
               )}

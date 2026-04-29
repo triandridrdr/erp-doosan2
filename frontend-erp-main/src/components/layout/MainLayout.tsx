@@ -17,7 +17,7 @@ const pagePathByRoute: Record<string, string> = {
   '/inventory': 'Inventory / Stock',
   '/accounting': 'Accounting / Journal Entry',
   '/ocr': 'Sales / OCR',
-  '/ocr-new': 'Sales / OCR New',
+  '/ocr-new': 'Pre-Sales / Sales Order Scan / OCR New',
 };
 
 export function MainLayout() {
