@@ -50,8 +50,14 @@ public class OcrNewService {
 
     private static final String PDF_CONTENT_TYPE = "application/pdf";
 
-    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
-    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,2}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*$");
+    // Allow trailing ) or other chars after the number (OCR artifacts)
+    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,2}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
+    // Flexible fallback: finds size label followed by parenthetical size format and a number
+    // Matches patterns like "XL (XL/P)* 41" even with OCR artifacts
+    private static final Pattern SIZE_VALUE_LINE_FLEX = Pattern.compile("(?i)\\b(X[SL]|S|M|L)\\s*\\([^)]+\\)[^\\d]*(\\d+)\\s*\\)?\\s*$");
+    // Pattern for XL lines where OCR misreads numbers as letters (e.g., "41" -> "A" or "4l")
+    private static final Pattern SIZE_VALUE_LINE_OCR_FIX = Pattern.compile("(?i)^\\s*(X[SL]|XS)\\s*\\([^)]+\\)\\*?\\s*([A-Za-z0-9]+)\\)?\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
     // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
     // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
@@ -938,6 +944,11 @@ public class OcrNewService {
                 if (t.isBlank()) continue;
 
                 String lower = t.toLowerCase(Locale.ROOT);
+                // Log all lines to trace processing order
+                log.info("[LINE-TRACE] page={} idx={} currentRowType={} line='{}'", 
+                        e.getKey(), i, 
+                        currentRow[0] == null ? "null" : currentRow[0].get("type"), 
+                        t.length() > 100 ? t.substring(0, 100) + "..." : t);
                 if (lower.startsWith("bill of material")) break;
 
                 if (lower.equals("assortment") || lower.startsWith("assortment ") ||
@@ -981,7 +992,55 @@ public class OcrNewService {
                     continue;
                 }
 
-                if (currentRow[0] == null) continue;
+                if (currentRow[0] == null) {
+                    // Try to backfill size lines that appear after Quantity into the last emitted row
+                    String tUp = t.toUpperCase(Locale.ROOT);
+                    if (tUp.contains("XS") || tUp.contains("XL") || tUp.matches(".*\\b[SML]\\s*\\(.*")) {
+                        log.info("[LINE-BACKFILL] currentRow=null, attempting backfill for: '{}'", t);
+                        // Try to parse as size line and backfill into last row on this page
+                        String size = null;
+                        String v = null;
+                        Matcher sm = SIZE_VALUE_LINE.matcher(t);
+                        if (sm.matches()) {
+                            size = normalizeSizeKey(sm.group(1));
+                            v = normalizeNumber(sm.group(2));
+                        }
+                        if (size == null) {
+                            Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
+                            if (sp.matches()) {
+                                size = normalizeSizeKey(sp.group(1));
+                                v = normalizeNumber(sp.group(2));
+                            }
+                        }
+                        if (size == null) {
+                            Matcher sf = SIZE_VALUE_LINE_FLEX.matcher(t);
+                            if (sf.find()) {
+                                size = normalizeSizeKey(sf.group(1));
+                                v = normalizeNumber(sf.group(2));
+                            }
+                        }
+                        if (size == null) {
+                            // Try OCR fix pattern for misread numbers
+                            Matcher so = SIZE_VALUE_LINE_OCR_FIX.matcher(t);
+                            if (so.matches()) {
+                                size = normalizeSizeKey(so.group(1));
+                                v = fixOcrNumber(so.group(2));
+                            }
+                        }
+                        if (size != null && v != null && !v.isBlank() && out.size() > pageOutStart) {
+                            // Backfill into the last emitted row for this page
+                            Map<String, String> lastRow = out.get(out.size() - 1);
+                            String existing = lastRow.get(size);
+                            if (existing == null || "0".equals(existing)) {
+                                log.info("[LINE-BACKFILL] SUCCESS: size={} value={} into row type={}", size, v, lastRow.get("type"));
+                                lastRow.put(size, v);
+                                // Recalculate total if needed
+                                recalculateTotalIfNeeded(lastRow);
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 Matcher qm = QUANTITY_LINE.matcher(t);
                 if (qm.matches()) {
@@ -1017,6 +1076,7 @@ public class OcrNewService {
                         }
                     }
                     if (size != null && v != null && !v.isBlank()) {
+                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE matched: line='{}' -> size={} value={}", t, size, v);
                         currentRow[0].put(size, v);
                         sawAnySize[0] = true;
                     }
@@ -1030,8 +1090,42 @@ public class OcrNewService {
                     String v = normalizeNumber(sp.group(2));
                     String size = normalizeSizeKey(inside);
                     if (size != null && v != null && !v.isBlank()) {
+                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS matched: line='{}' -> size={} value={}", t, size, v);
                         currentRow[0].put(size, v);
                         sawAnySize[0] = true;
+                    }
+                } else {
+                    // Third fallback: flexible pattern for size lines that don't match strict patterns
+                    Matcher sf = SIZE_VALUE_LINE_FLEX.matcher(t);
+                    if (sf.find()) {
+                        String sizeRaw = sf.group(1);
+                        String v = normalizeNumber(sf.group(2));
+                        String size = normalizeSizeKey(sizeRaw);
+                        if (size != null && v != null && !v.isBlank()) {
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX matched: line='{}' -> size={} value={}", t, size, v);
+                            currentRow[0].put(size, v);
+                            sawAnySize[0] = true;
+                        }
+                    } else {
+                        // Fourth fallback: OCR fix pattern for misread numbers (e.g., "A" for "41")
+                        Matcher so = SIZE_VALUE_LINE_OCR_FIX.matcher(t);
+                        if (so.matches()) {
+                            String sizeRaw = so.group(1);
+                            String rawVal = so.group(2);
+                            String v = fixOcrNumber(rawVal);
+                            String size = normalizeSizeKey(sizeRaw);
+                            if (size != null && v != null && !v.isBlank()) {
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_OCR_FIX matched: line='{}' -> size={} rawVal='{}' fixedVal={}", t, size, rawVal, v);
+                                currentRow[0].put(size, v);
+                                sawAnySize[0] = true;
+                            }
+                        } else {
+                            // Log lines that might look like size lines but didn't match any pattern
+                            String tUp = t.toUpperCase(Locale.ROOT);
+                            if (tUp.contains("XS") || tUp.contains("XL") || (tUp.contains("(") && tUp.contains(")"))) {
+                                log.info("[SIZE-PARSE] NO MATCH for potential size line: '{}'", t);
+                            }
+                        }
                     }
                 }
             }
@@ -1185,11 +1279,116 @@ public class OcrNewService {
                 anyNumeric = true;
             } catch (NumberFormatException ignored) {}
         }
-        // If total missing or blank: set computed sum if we had any numeric values; otherwise default to 0
+        
+        // If total is known, verify sizes sum matches total
+        // If not, try to find and correct a single suspicious size value
         String tot = row.get("total");
+        if (tot != null && !tot.isBlank()) {
+            try {
+                int expectedTotal = Integer.parseInt(tot.replaceAll("\\s+", ""));
+                if (expectedTotal > 0 && sum != expectedTotal) {
+                    // Find a size that looks suspicious (single digit when others are larger, or very small compared to difference)
+                    int diff = expectedTotal - sum;
+                    if (diff > 0) {
+                        // Look for a size that could be corrected
+                        // Common OCR error: "41" read as "A" converted to "4", diff would be 37
+                        for (String sz : sizes) {
+                            String v = row.get(sz);
+                            if (v == null) continue;
+                            try {
+                                int val = Integer.parseInt(v.replaceAll("\\s+", ""));
+                                // If this size is small (single digit or <10) and adding diff makes sense
+                                // e.g., val=4, diff=37 => corrected=41
+                                if (val < 10 && val > 0) {
+                                    int corrected = val + diff;
+                                    // Sanity check: corrected value should be reasonable (not too large)
+                                    if (corrected > 0 && corrected < 1000) {
+                                        log.info("[SIZE-VERIFY] Correcting {} from {} to {} (total={}, sum was {})", 
+                                                sz, val, corrected, expectedTotal, sum);
+                                        row.put(sz, String.valueOf(corrected));
+                                        sum = expectedTotal; // Update sum
+                                        break;
+                                    }
+                                }
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+        
+        // If total missing or blank: set computed sum if we had any numeric values; otherwise default to 0
         if (tot == null || tot.isBlank()) {
             row.put("total", String.valueOf(anyNumeric ? sum : 0));
         }
+    }
+
+    /**
+     * Recalculate the total for a row after a size value has been backfilled.
+     * Only updates total if the current total seems to be missing the newly added value.
+     */
+    private static void recalculateTotalIfNeeded(Map<String, String> row) {
+        if (row == null) return;
+        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+        int sum = 0;
+        for (String sz : sizes) {
+            String v = row.get(sz);
+            if (v != null && !v.isBlank()) {
+                try {
+                    sum += Integer.parseInt(v.replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        // Update total to match the sum of sizes
+        row.put("total", String.valueOf(sum));
+    }
+
+    /**
+     * Attempt to fix OCR-misread characters in a number string.
+     * Common OCR errors: A->4, l/I->1, O->0, S->5, B->8, etc.
+     * If the input is already a valid number, return it normalized.
+     * If the input is a single letter that commonly represents a digit, try to convert.
+     */
+    private static String fixOcrNumber(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        
+        // If already a number, normalize and return
+        if (s.matches("\\d[\\d\\s]*")) {
+            return normalizeNumber(s);
+        }
+        
+        // Try character-by-character replacement for common OCR errors
+        StringBuilder sb = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            switch (c) {
+                case 'O': case 'o': sb.append('0'); break;
+                case 'l': case 'I': case 'i': sb.append('1'); break;
+                case 'S': case 's': sb.append('5'); break;
+                case 'B': sb.append('8'); break;
+                case 'A': sb.append('4'); break;  // Common OCR misread
+                case 'Z': case 'z': sb.append('2'); break;
+                case 'G': case 'g': sb.append('6'); break;
+                case 'T': case 't': sb.append('7'); break;
+                case ' ': break; // skip spaces
+                default:
+                    if (Character.isDigit(c)) {
+                        sb.append(c);
+                    }
+                    // Skip other non-digit characters
+                    break;
+            }
+        }
+        
+        String result = sb.toString();
+        if (result.isEmpty()) return null;
+        
+        // If the result is a valid number, return it
+        if (result.matches("\\d+")) {
+            return result;
+        }
+        
+        return null;
     }
 
     /**
