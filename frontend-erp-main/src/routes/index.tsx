@@ -14,6 +14,11 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { StockListPage } from '../features/inventory/StockListPage';
 import { OcrPage } from '../features/ocr/OcrPage';
 import { OcrNewPage } from '../features/ocrnew/OcrNewPage';
+import { AllScanPage } from '../features/presales/AllScanPage';
+import { PurchaseOrderScanPage } from '../features/presales/PurchaseOrderScanPage';
+import { SizePerColourBreakdownScanPage } from '../features/presales/SizePerColourBreakdownScanPage';
+import { SupplementaryScanPage } from '../features/presales/SupplementaryScanPage';
+import { TotalCountryBreakdownScanPage } from '../features/presales/TotalCountryBreakdownScanPage';
 import { SalesOrderListPage } from '../features/sales/SalesOrderListPage';
 import { SalesOrderPrototypeEditPage } from '../features/salesOrderPrototype/SalesOrderPrototypeEditPage';
 import { SalesOrderPrototypeListPage } from '../features/salesOrderPrototype/SalesOrderPrototypeListPage';
@@ -40,6 +45,11 @@ const router = createBrowserRouter([
       { path: 'accounting', element: <JournalEntryListPage /> },
       { path: 'ocr', element: <OcrPage /> },
       { path: 'ocr-new', element: <OcrNewPage /> },
+      { path: 'presales/purchase-order-scan', element: <PurchaseOrderScanPage /> },
+      { path: 'presales/supplementary-scan', element: <SupplementaryScanPage /> },
+      { path: 'presales/size-per-colour-breakdown-scan', element: <SizePerColourBreakdownScanPage /> },
+      { path: 'presales/total-country-breakdown-scan', element: <TotalCountryBreakdownScanPage /> },
+      { path: 'presales/all-scan', element: <AllScanPage /> },
     ],
   },
   { path: '*', element: <Navigate to='/' replace /> },

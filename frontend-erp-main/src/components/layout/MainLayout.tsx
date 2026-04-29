@@ -18,6 +18,11 @@ const pagePathByRoute: Record<string, string> = {
   '/accounting': 'Accounting / Journal Entry',
   '/ocr': 'Sales / OCR',
   '/ocr-new': 'Pre-Sales / Sales Order Scan / OCR New',
+  '/presales/purchase-order-scan': 'Pre-Sales / Sales Order Scan / Purchase Order',
+  '/presales/supplementary-scan': 'Pre-Sales / Sales Order Scan / Supplementary',
+  '/presales/size-per-colour-breakdown-scan': 'Pre-Sales / Sales Order Scan / Size Per Colour Breakdown',
+  '/presales/total-country-breakdown-scan': 'Pre-Sales / Sales Order Scan / Total Country Breakdown',
+  '/presales/all-scan': 'Pre-Sales / Sales Order Scan / All',
 };
 
 export function MainLayout() {

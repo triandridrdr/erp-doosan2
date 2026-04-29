@@ -46,11 +46,11 @@ const navigation: NavItem[] = [
         name: 'Sales Order Scan',
         href: '#presales-sos',
         children: [
-          { name: 'Purchase Order', href: '#presales-po' },
-          { name: 'Supplementary', href: '#presales-supplementary' },
-          { name: 'Size Per Colour Breakdown', href: '#presales-size-per-colour-breakdown' },
-          { name: 'Total Country Breakdown', href: '#presales-total-country-breakdown' },
-          { name: 'All', href: '#presales-all' },
+          { name: 'Purchase Order', href: '/presales/purchase-order-scan' },
+          { name: 'Supplementary', href: '/presales/supplementary-scan' },
+          { name: 'Size Per Colour Breakdown', href: '/presales/size-per-colour-breakdown-scan' },
+          { name: 'Total Country Breakdown', href: '/presales/total-country-breakdown-scan' },
+          { name: 'All', href: '/presales/all-scan' },
         ],
       },
     ],
@@ -113,6 +113,11 @@ const REAL_ROUTES = new Set<string>([
   '/accounting',
   '/ocr',
   '/ocr-new',
+  '/presales/purchase-order-scan',
+  '/presales/supplementary-scan',
+  '/presales/size-per-colour-breakdown-scan',
+  '/presales/total-country-breakdown-scan',
+  '/presales/all-scan',
 ]);
 
 function isPlaceholder(href: string) {
