@@ -4865,7 +4865,6 @@ public class OcrNewService {
                     || low.contains("total quantity") || low.startsWith("total:")) {
                 break;
             }
-
             Matcher dm = DATE_PATTERN.matcher(line);
             if (!dm.find()) continue;
 
@@ -4898,7 +4897,6 @@ public class OcrNewService {
                     break;
                 }
             }
-
             String planningMarkets = "";
             String quantity = "";
             String percentTotalQty = "";
@@ -5486,9 +5484,6 @@ public class OcrNewService {
                 texts.add(oneLine(l.getText()).trim());
             }
         }
-
-        log.info("[PO-INVOICE-PRICE] Searching in {} text lines", texts.size());
-
         // Find "Invoice Average Price" header
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
@@ -5517,7 +5512,6 @@ public class OcrNewService {
             String line = texts.get(i).trim();
             if (line.isBlank()) continue;
             String low = line.toLowerCase(Locale.ROOT);
-
             if (low.contains("sales sample") || low.contains("terms of delivery")
                     || low.contains("time of delivery") || low.contains("quantity per artic")) {
                 break;
@@ -5552,7 +5546,6 @@ public class OcrNewService {
                 lastPrice = "";
             }
         }
-
         log.info("[PO-INVOICE-PRICE] Total rows extracted: {}", out.size());
         return out;
     }

@@ -68,7 +68,6 @@ export function PurchaseOrderScanPage() {
   const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
   const [salesSampleDestinationStudioAddressByPageDraft, setSalesSampleDestinationStudioAddressByPageDraft] = useState<Record<number, string>>({});
   const [salesSampleArticleRows, setSalesSampleArticleRows] = useState<Array<Record<string, string>>>([]);
-
   useEffect(() => {
     setActivePage((p) => Math.min(Math.max(1, p), pageCount));
   }, [pageCount]);
@@ -493,7 +492,6 @@ const saveDraftMutation = useMutation({
       salesSampleTerms: salesSampleTimeOfDeliveryByPageDraft[Number(row.page)] ?? '',
       destinationStudioAddress: salesSampleDestinationStudioAddressByPageDraft[Number(row.page)] ?? '',
     }));
-
     const payload = {
       documentType: 'purchase-order',
       source: 'presales-purchase-order',
@@ -764,7 +762,6 @@ useEffect(() => {
       { key: 'Type of Construct', label: 'Type of Construct' },
     ];
   }, []);
-
   const poMetaFields = useMemo(() => {
     return [
       { key: 'Country of Production', label: 'Country of Production' },
