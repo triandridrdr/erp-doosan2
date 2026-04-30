@@ -2609,7 +2609,10 @@ public class OcrNewService {
      */
     private static List<Map<String, String>> extractPurchaseOrderTimeOfDelivery(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
-        if (allLines == null || allLines.isEmpty()) return out;
+        if (allLines == null || allLines.isEmpty()) {
+            log.debug("[PO-TIME-DELIVERY] allLines is null or empty");
+            return out;
+        }
 
         List<String> texts = new ArrayList<>();
         for (OcrNewLine l : allLines) {
@@ -2618,66 +2621,91 @@ public class OcrNewService {
             }
         }
 
+        log.info("[PO-TIME-DELIVERY] Searching in {} text lines", texts.size());
+
         // Find "Time of Delivery" header
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
             String low = texts.get(i).toLowerCase(Locale.ROOT);
             if (low.contains("time of delivery")) {
                 headerIdx = i;
+                log.info("[PO-TIME-DELIVERY] Found header at line {}: {}", i, texts.get(i));
                 break;
             }
         }
-        if (headerIdx < 0) return out;
+        if (headerIdx < 0) {
+            log.warn("[PO-TIME-DELIVERY] Header 'Time of Delivery' not found");
+            return out;
+        }
 
-        // Scan lines after header for date patterns + planning markets + quantity + percentage
-        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 40); i++) {
+        Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 60); i++) {
             String line = texts.get(i).trim();
             if (line.isBlank()) continue;
-            String low = line.toLowerCase(Locale.ROOT);
-            
-            // Stop at next major section
-            if (low.contains("quantity per artic") || low.contains("article no") 
-                    || low.contains("total quantity") || low.startsWith("total:")) break;
 
-            // Match date pattern
+            String low = line.toLowerCase(Locale.ROOT);
+            if (low.contains("quantity per artic") || low.contains("article no")
+                    || low.contains("total quantity") || low.startsWith("total:")) {
+                break;
+            }
+
             Matcher dm = DATE_PATTERN.matcher(line);
-            if (!dm.find()) continue;
+            if (!dm.find()) {
+                continue;
+            }
 
             String timeOfDelivery = dm.group(0).trim();
             String remainder = line.substring(dm.end()).trim();
 
-            // Extract planning markets (PM codes or country codes)
-            String planningMarkets = "";
+            StringBuilder planningMarketsBuf = new StringBuilder();
             String quantity = "";
             String percentTotalQty = "";
 
-            // Try to extract planning markets (e.g., "BE (PMSEU)", "KR (PM-KR), ID (PM-ID)")
-            Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(remainder);
-            List<String> pmCodes = new ArrayList<>();
-            while (pmMatcher.find()) {
-                pmCodes.add(pmMatcher.group().trim());
-            }
-            if (!pmCodes.isEmpty()) {
-                planningMarkets = String.join(", ", pmCodes);
+            for (int j = i; j < Math.min(texts.size(), i + 6); j++) {
+                String seg = texts.get(j).trim();
+                if (seg.isBlank()) continue;
+                String segLow = seg.toLowerCase(Locale.ROOT);
+                if (j > i) {
+                    Matcher dm2 = DATE_PATTERN.matcher(seg);
+                    if (dm2.find()) break;
+                    if (segLow.contains("quantity per artic") || segLow.contains("article no")
+                            || segLow.contains("total quantity") || segLow.startsWith("total:")) {
+                        break;
+                    }
+                }
+
+                String candidate = (j == i) ? remainder : seg;
+
+                Matcher qpMatcher = qtyPercentPat.matcher(candidate);
+                if (qpMatcher.find()) {
+                    quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
+                    percentTotalQty = qpMatcher.group(2).trim();
+                    candidate = candidate.substring(0, qpMatcher.start()).trim();
+                }
+
+                Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(candidate);
+                List<String> pmCodes = new ArrayList<>();
+                while (pmMatcher.find()) {
+                    pmCodes.add(pmMatcher.group().trim());
+                }
+                if (!pmCodes.isEmpty()) {
+                    if (planningMarketsBuf.length() > 0) planningMarketsBuf.append(", ");
+                    planningMarketsBuf.append(String.join(", ", pmCodes));
+                }
             }
 
-            // Extract quantity and percentage from end of line
-            // Pattern: "2 765 8%" or "16 587 45%"
-            Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
-            Matcher qpMatcher = qtyPercentPat.matcher(remainder);
-            if (qpMatcher.find()) {
-                quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
-                percentTotalQty = qpMatcher.group(2).trim();
-            }
-
+            String planningMarkets = planningMarketsBuf.toString().trim();
             Map<String, String> row = new LinkedHashMap<>();
             row.put("timeOfDelivery", timeOfDelivery);
             row.put("planningMarkets", planningMarkets);
             row.put("quantity", quantity);
             row.put("percentTotalQty", percentTotalQty);
             out.add(row);
+            log.info("[PO-TIME-DELIVERY] Extracted row: {} | {} | {} | {}", timeOfDelivery, planningMarkets, quantity, percentTotalQty);
         }
 
+        log.info("[PO-TIME-DELIVERY] Total rows extracted: {}", out.size());
         return out;
     }
 
@@ -2687,7 +2715,10 @@ public class OcrNewService {
      */
     private static List<Map<String, String>> extractPurchaseOrderQuantityPerArticle(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
-        if (allLines == null || allLines.isEmpty()) return out;
+        if (allLines == null || allLines.isEmpty()) {
+            log.debug("[PO-QTY-ARTICLE] allLines is null or empty");
+            return out;
+        }
 
         List<String> texts = new ArrayList<>();
         for (OcrNewLine l : allLines) {
@@ -2696,67 +2727,127 @@ public class OcrNewService {
             }
         }
 
+        log.info("[PO-QTY-ARTICLE] Searching in {} text lines", texts.size());
+
         // Find "Quantity per Article" header
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
             String low = texts.get(i).toLowerCase(Locale.ROOT);
             if (low.contains("quantity per artic")) {
                 headerIdx = i;
+                log.info("[PO-QTY-ARTICLE] Found header at line {}: {}", i, texts.get(i));
                 break;
             }
         }
-        if (headerIdx < 0) return out;
+        if (headerIdx < 0) {
+            log.warn("[PO-QTY-ARTICLE] Header 'Quantity per Article' not found");
+            return out;
+        }
 
-        // Pattern to match article data row:
-        // "001 22-216 02 g 2GPOO (V5) 6.92 USD 36 795"
-        // or "001 22-21 6 02 6.85 USD 36 795"
-        Pattern articlePat = Pattern.compile("^(\\d{3})\\s+([\\d\\-]+)\\s+(.+?)\\s+(\\d+\\.\\d+\\s+[A-Z]{3})\\s+([\\d\\s]+)$");
+        Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
+        Pattern articleStartPat = Pattern.compile("^(\\d{3})\\s+([\\d\\-]+)\\s*(.*)$");
 
-        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 50); i++) {
+        String lastColourLine = "";
+        String pendingArticleNo = "";
+        String pendingHmColourCode = "";
+        String pendingMiddle = "";
+
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 120); i++) {
             String line = texts.get(i).trim();
             if (line.isBlank()) continue;
             String low = line.toLowerCase(Locale.ROOT);
 
             // Stop at next section
             if (low.contains("total quantity") || low.contains("invoice average")
-                    || low.contains("sales sample")) break;
+                    || low.contains("sales sample") || low.contains("time of delivery")) {
+                break;
+            }
 
-            Matcher m = articlePat.matcher(line);
-            if (m.find()) {
-                String articleNo = m.group(1).trim();
-                String hmColourCode = m.group(2).trim();
-                String middle = m.group(3).trim();
-                String cost = m.group(4).trim();
-                String qtyArticle = m.group(5).replaceAll("\\s+", " ").trim();
+            if (!line.matches("^\\d{3}\\b.*")
+                    && !costQtyPat.matcher(line).find()
+                    && !low.contains("article no")
+                    && !low.contains("colour code")
+                    && !low.contains("qty/article")
+                    && !low.contains("cost")) {
+                if (!line.matches("^[A-Z]{2}$")) {
+                    lastColourLine = lastColourLine.isBlank() ? line : (lastColourLine + " " + line);
+                }
+                continue;
+            }
 
-                // Parse middle part: "02 g 2GPOO (V5)" or "6 02"
-                // Try to extract PT Article Number, Colour, Option No
-                String ptArticleNumber = "";
-                String colour = "";
-                String optionNo = "";
-
-                // Simple heuristic: split by spaces and look for patterns
-                String[] parts = middle.split("\\s+");
-                if (parts.length >= 2) {
-                    ptArticleNumber = parts[0] + (parts.length > 1 ? " " + parts[1] : "");
-                    if (middle.contains("(")) {
-                        int parenIdx = middle.indexOf('(');
-                        optionNo = middle.substring(parenIdx).replaceAll("[()]", "").trim();
+            Matcher start = articleStartPat.matcher(line);
+            if (start.find()) {
+                pendingArticleNo = start.group(1).trim();
+                pendingHmColourCode = start.group(2).trim();
+                pendingMiddle = start.group(3).trim();
+                continue;
+            }
+            if (!pendingArticleNo.isBlank()) {
+                Matcher hmFix = Pattern.compile("^(\\d)\\s+(.*)$").matcher(line);
+                if (hmFix.find() && pendingHmColourCode.matches("\\d{2}-\\d{2}$")) {
+                    pendingHmColourCode = pendingHmColourCode + hmFix.group(1);
+                    String rest = hmFix.group(2).trim();
+                    if (!rest.isBlank()) {
+                        pendingMiddle = pendingMiddle.isBlank() ? rest : (pendingMiddle + " " + rest);
                     }
+                    continue;
+                }
+            }
+
+            Matcher cq = costQtyPat.matcher(line);
+            if (cq.find() && !pendingArticleNo.isBlank()) {
+                String cost = cq.group(1).trim() + " " + cq.group(2).trim();
+                String qtyArticle = cq.group(3).replaceAll("\\s+", " ").trim();
+
+                String combinedMiddle = pendingMiddle;
+
+                String ptArticleNumber = "";
+                String optionNo = "";
+                String colour = lastColourLine.trim();
+
+                String middle = combinedMiddle;
+                if (middle == null) middle = "";
+                String[] parts = middle.trim().isEmpty() ? new String[0] : middle.trim().split("\\s+");
+                if (parts.length >= 1) {
+                    ptArticleNumber = parts[0];
+                    if (parts.length >= 2) {
+                        ptArticleNumber = parts[0] + " " + parts[1];
+                    }
+                }
+                if (middle.contains("(")) {
+                    int parenIdx = middle.indexOf('(');
+                    optionNo = middle.substring(parenIdx).replaceAll("[()]", "").trim();
+                } else if (middle.matches(".*\\b[0-9A-Z]{3,}\\b.*")) {
+                    Matcher opt = Pattern.compile("\\b([0-9A-Z]{3,})\\b").matcher(middle);
+                    if (opt.find()) optionNo = opt.group(1).trim();
                 }
 
                 Map<String, String> row = new LinkedHashMap<>();
-                row.put("articleNo", articleNo);
-                row.put("hmColourCode", hmColourCode);
+                row.put("articleNo", pendingArticleNo);
+                row.put("hmColourCode", pendingHmColourCode);
                 row.put("ptArticleNumber", ptArticleNumber);
                 row.put("colour", colour);
                 row.put("optionNo", optionNo);
                 row.put("cost", cost);
                 row.put("qtyArticle", qtyArticle);
                 out.add(row);
+                log.info("[PO-QTY-ARTICLE] Extracted row: {} | {} | {} | {} | {} | {} | {}",
+                        pendingArticleNo, pendingHmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle);
+
+                pendingArticleNo = "";
+                pendingHmColourCode = "";
+                pendingMiddle = "";
+                lastColourLine = "";
+                continue;
+            }
+
+            if (!pendingArticleNo.isBlank()) {
+                if (pendingMiddle.isBlank()) pendingMiddle = line;
+                else pendingMiddle = pendingMiddle + " " + line;
             }
         }
 
+        log.info("[PO-QTY-ARTICLE] Total rows extracted: {}", out.size());
         return out;
     }
 
@@ -2766,7 +2857,10 @@ public class OcrNewService {
      */
     private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPrice(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
-        if (allLines == null || allLines.isEmpty()) return out;
+        if (allLines == null || allLines.isEmpty()) {
+            log.debug("[PO-INVOICE-PRICE] allLines is null or empty");
+            return out;
+        }
 
         List<String> texts = new ArrayList<>();
         for (OcrNewLine l : allLines) {
@@ -2775,46 +2869,70 @@ public class OcrNewService {
             }
         }
 
+        log.info("[PO-INVOICE-PRICE] Searching in {} text lines", texts.size());
+
         // Find "Invoice Average Price" header
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
             String low = texts.get(i).toLowerCase(Locale.ROOT);
             if (low.contains("invoice average price")) {
                 headerIdx = i;
+                log.info("[PO-INVOICE-PRICE] Found header at line {}: {}", i, texts.get(i));
                 break;
             }
         }
-        if (headerIdx < 0) return out;
+        if (headerIdx < 0) {
+            log.warn("[PO-INVOICE-PRICE] Header 'Invoice Average Price' not found");
+            return out;
+        }
 
-        // Pattern to match price + currency: "113364.36 IDR" or "6.85 USD"
-        Pattern pricePat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})$");
-        // Pattern to match country code: "ID", "JP", "TH", "VN", etc.
-        Pattern countryPat = Pattern.compile("^([A-Z]{2})$");
+        // Support both formats:
+        // - two lines: "113364.36 IDR" then "ID"
+        // - one line:  "6.85 USD IN"
+        Pattern priceOnlyPat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})$");
+        Pattern countryOnlyPat = Pattern.compile("^([A-Z]{2})$");
+        Pattern priceCountrySameLinePat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})\\s+([A-Z]{2})$");
 
         String lastPrice = "";
-        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 20); i++) {
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 40); i++) {
             String line = texts.get(i).trim();
             if (line.isBlank()) continue;
             String low = line.toLowerCase(Locale.ROOT);
 
-            // Stop at next section
             if (low.contains("sales sample") || low.contains("terms of delivery")
-                    || low.contains("time of delivery")) break;
+                    || low.contains("time of delivery") || low.contains("quantity per artic")) {
+                break;
+            }
 
-            Matcher priceMatcher = pricePat.matcher(line);
-            Matcher countryMatcher = countryPat.matcher(line);
+            Matcher sameLine = priceCountrySameLinePat.matcher(line);
+            if (sameLine.find()) {
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("invoiceAveragePrice", sameLine.group(1) + " " + sameLine.group(2));
+                row.put("country", sameLine.group(3));
+                out.add(row);
+                log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", row.get("invoiceAveragePrice"), row.get("country"));
+                lastPrice = "";
+                continue;
+            }
 
-            if (priceMatcher.find()) {
+            Matcher priceOnly = priceOnlyPat.matcher(line);
+            Matcher countryOnly = countryOnlyPat.matcher(line);
+            if (priceOnly.find()) {
                 lastPrice = line;
-            } else if (countryMatcher.find() && !lastPrice.isEmpty()) {
+                continue;
+            }
+
+            if (countryOnly.find() && !lastPrice.isEmpty()) {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("invoiceAveragePrice", lastPrice);
                 row.put("country", line);
                 out.add(row);
+                log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", lastPrice, line);
                 lastPrice = "";
             }
         }
 
+        log.info("[PO-INVOICE-PRICE] Total rows extracted: {}", out.size());
         return out;
     }
 }

@@ -10,21 +10,38 @@ import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 
-const SALES_ORDER_HEADER_FIELDS = [
-  'SO Number',
-  'Date (ISO)',
-  'Season',
-  'Supplier Code',
-  'Supplier',
-  'Article / Product No',
-  'Product Name',
-  'Product Type',
-  'Customs Customer Group',
-  'Type of Construction',
-  'Development No',
-  'Terms of Delivery',
-  'Time of Delivery',
-] as const;
+const pickFirstNonBlank = (vals: Array<unknown>) => {
+  for (const v of vals) {
+    const t = (v ?? '').toString().trim();
+    if (t.length > 0) return t;
+  }
+  return '';
+};
+
+const hydratePoHeaderDraftFromFormFields = (ff: Record<string, any>) => {
+  const next: Record<string, string> = {};
+  next['Order No'] = pickFirstNonBlank([ff['Order No'], ff['SO Number'], ff['SO'], ff['Purchase Order No']]);
+  next['PT Prod No'] = pickFirstNonBlank([ff['PT Prod No'], ff['PT Prod No:'], ff['PT Product No']]);
+  next['Order Date'] = pickFirstNonBlank([ff['Date of Order'], ff['Order Date'], ff['Date (ISO)'], ff['Date']]);
+  next['Supplier Code'] = pickFirstNonBlank([ff['Supplier Code']]);
+  next['Option No'] = pickFirstNonBlank([ff['Option No'], ff['Option']]);
+  next['Development No'] = pickFirstNonBlank([ff['Development No']]);
+  next['Product No'] = pickFirstNonBlank([ff['Product No'], ff['Article / Product No'], ff['Article No']]);
+  next['Product Name'] = pickFirstNonBlank([ff['Product Name']]);
+  next['Product Desc'] = pickFirstNonBlank([ff['Product Description'], ff['Product Desc']]);
+  next['Season'] = pickFirstNonBlank([ff['Season']]);
+  next['Customer Group'] = pickFirstNonBlank([ff['Customs Customer Group'], ff['Customer Group']]);
+  next['Type of Construct'] = pickFirstNonBlank([ff['Type of Construction'], ff['Type of Construct']]);
+
+  next['Country of Production'] = pickFirstNonBlank([ff['Country of Production']]);
+  next['Country of Bakery'] = pickFirstNonBlank([ff['Country of Delivery'], ff['Country of Bakery']]);
+  next['Country of Origin'] = pickFirstNonBlank([ff['Country of Origin']]);
+  next['Term of Payment'] = pickFirstNonBlank([ff['Terms of Payment'], ff['Term of Payment']]);
+  next['No of Pieces'] = pickFirstNonBlank([ff['No of Pieces'], ff['No Pieces']]);
+  next['Sales Models'] = pickFirstNonBlank([ff['Sales Mode'], ff['Sales Models']]);
+  next['Terms of Delivery'] = pickFirstNonBlank([ff['Terms of Delivery']]);
+  return next;
+};
 
 export function PurchaseOrderScanPage() {
   const navigate = useNavigate();
@@ -158,11 +175,7 @@ export function PurchaseOrderScanPage() {
 
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
-    const next: Record<string, string> = {};
-    for (const f of SALES_ORDER_HEADER_FIELDS) {
-      next[f] = ff[f] ?? '';
-    }
-    setSalesOrderHeaderDraft(next);
+    setSalesOrderHeaderDraft(hydratePoHeaderDraftFromFormFields(ff));
 
     const bomTable = (d?.tables ?? []).find((t) => isBomDraftTable(t.rows));
     if (bomTable?.rows?.length) {
@@ -193,19 +206,17 @@ export function PurchaseOrderScanPage() {
   };
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
-    const mergedHeader: Record<string, string> = {};
-    for (const f of SALES_ORDER_HEADER_FIELDS) {
-      let v = '';
-      for (const r of out) {
-        const cand = (r?.data?.formFields?.[f] ?? '').toString().trim();
-        if (cand) {
-          v = cand;
-          break;
+    const mergedFf: Record<string, any> = {};
+    for (const r of out) {
+      const ff = r?.data?.formFields ?? {};
+      for (const [k, v] of Object.entries(ff)) {
+        const t = (v ?? '').toString().trim();
+        if (t.length > 0 && (mergedFf[k] ?? '').toString().trim().length === 0) {
+          mergedFf[k] = t;
         }
       }
-      mergedHeader[f] = v;
     }
-    setSalesOrderHeaderDraft(mergedHeader);
+    setSalesOrderHeaderDraft(hydratePoHeaderDraftFromFormFields(mergedFf));
 
     let bomRows: Array<{
       position: string;
