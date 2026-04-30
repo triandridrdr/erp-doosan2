@@ -1138,6 +1138,8 @@ public class OcrNewService {
             // IMPORTANT: reconcile Solid FIRST, so fillMissingAssortmentValues
             // gets correct Solid values when deriving Assortment.
             reconcileSolidWithTotal(out, pageOutStart);
+            // Fallback for when both Solid and Total have the same OCR truncation error
+            fixTruncatedSizeValues(out, pageOutStart);
             fillMissingAssortmentValues(out, pageOutStart, texts);
         }
 
@@ -1255,6 +1257,110 @@ public class OcrNewService {
         if (changed) {
             solid.put("total", String.valueOf(newSolidSum));
         }
+    }
+
+    /**
+     * Fallback fix for when BOTH Solid and Total rows have truncated size values.
+     *
+     * This handles a rare OCR error pattern where a two-digit number like "41" is
+     * read as a single digit "4" (or letter "A" → 4) in BOTH Solid and Total rows.
+     * Since both are corrupted, {@link #reconcileSolidWithTotal} cannot help.
+     *
+     * Detection: if Solid and Total are both missing the SAME amount from their
+     * respective Quantity fields, and they share a size with an identical small
+     * value (single digit), that size likely had its trailing digit(s) truncated.
+     *
+     * Fix: add the missing amount to that size in both rows.
+     *
+     * Example (Malaysia page 14):
+     *   Solid: XS=85, S=107, M=75, L=60, XL=4, Quantity=368 → sum=331, missing=37
+     *   Total: XS=115, S=137, M=105, L=60, XL=4, Quantity=458 → sum=421, missing=37
+     *   Both XL=4, both missing 37 → XL should be 4+37=41.
+     */
+    private static void fixTruncatedSizeValues(List<Map<String, String>> rows, int startIdx) {
+        if (rows == null || startIdx >= rows.size()) return;
+
+        Map<String, String> solid = null, total = null;
+        for (int i = startIdx; i < rows.size(); i++) {
+            String type = rows.get(i).getOrDefault("type", "");
+            if ("Solid".equals(type) && solid == null) solid = rows.get(i);
+            else if ("Total".equals(type) && total == null) total = rows.get(i);
+        }
+
+        if (solid == null || total == null) return;
+
+        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+
+        // Parse Solid values
+        int solidQuantity, solidSum = 0;
+        int[] solidVals = new int[sizes.size()];
+        try {
+            solidQuantity = Integer.parseInt(solid.getOrDefault("total", "0").replaceAll("\\s+", ""));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        for (int i = 0; i < sizes.size(); i++) {
+            try {
+                solidVals[i] = Integer.parseInt(solid.getOrDefault(sizes.get(i), "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+            solidSum += solidVals[i];
+        }
+
+        // Parse Total values
+        int totalQuantity, totalSum = 0;
+        int[] totalVals = new int[sizes.size()];
+        try {
+            totalQuantity = Integer.parseInt(total.getOrDefault("total", "0").replaceAll("\\s+", ""));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        for (int i = 0; i < sizes.size(); i++) {
+            try {
+                totalVals[i] = Integer.parseInt(total.getOrDefault(sizes.get(i), "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+            totalSum += totalVals[i];
+        }
+
+        // Both must be inconsistent
+        if (solidSum == solidQuantity || totalSum == totalQuantity) return;
+
+        int solidMissing = solidQuantity - solidSum;
+        int totalMissing = totalQuantity - totalSum;
+
+        // Both must be missing the SAME positive amount
+        if (solidMissing <= 0 || solidMissing != totalMissing) return;
+
+        // Find a size where both Solid and Total have the same small value (likely truncated)
+        // Prefer single-digit values as they're most likely truncated two-digit numbers
+        int candidateIdx = -1;
+        for (int i = 0; i < sizes.size(); i++) {
+            if (solidVals[i] == totalVals[i] && solidVals[i] > 0 && solidVals[i] < 10) {
+                // Check if adding missing would result in a reasonable value
+                int corrected = solidVals[i] + solidMissing;
+                // Sanity: corrected should be a plausible 2-digit number
+                if (corrected >= 10 && corrected < 1000) {
+                    candidateIdx = i;
+                    break;
+                }
+            }
+        }
+
+        if (candidateIdx < 0) return;
+
+        String sz = sizes.get(candidateIdx);
+        int oldVal = solidVals[candidateIdx];
+        int newVal = oldVal + solidMissing;
+
+        log.info("[TRUNCATION-FIX] size={} old={} new={} (missing={}) country={}",
+                sz, oldVal, newVal, solidMissing, solid.getOrDefault("destinationCountry", ""));
+
+        // Fix both Solid and Total
+        solid.put(sz, String.valueOf(newVal));
+        total.put(sz, String.valueOf(newVal));
+
+        // Update totals (they should now match Quantity)
+        solid.put("total", String.valueOf(solidSum + solidMissing));
+        total.put("total", String.valueOf(totalSum + totalMissing));
     }
 
     private static void fillMissingAssortmentValues(
