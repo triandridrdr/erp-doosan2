@@ -324,6 +324,7 @@ export function PurchaseOrderScanPage() {
     mutationFn: async () => {
       if (!data) throw new Error('No data.');
       const payload = {
+        documentType: 'purchase-order',
         source: 'presales-purchase-order',
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
@@ -334,7 +335,7 @@ export function PurchaseOrderScanPage() {
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.create(payload);
+      return salesOrderPrototypeApi.createOrMerge(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;

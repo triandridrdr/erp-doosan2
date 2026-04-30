@@ -23,4 +23,34 @@ public class SalesOrderPrototype extends BaseEntity {
     @Lob
     @Column(name = "payload_json", nullable = false, columnDefinition = "LONGTEXT")
     private String payloadJson;
+
+    // Document type tracking
+    @Column(name = "purchase_order_uploaded")
+    private Boolean purchaseOrderUploaded = false;
+
+    @Column(name = "supplementary_uploaded")
+    private Boolean supplementaryUploaded = false;
+
+    @Column(name = "size_per_colour_uploaded")
+    private Boolean sizePerColourUploaded = false;
+
+    @Column(name = "total_country_uploaded")
+    private Boolean totalCountryUploaded = false;
+
+    // Separate JSON storage per document type
+    @Lob
+    @Column(name = "purchase_order_json", columnDefinition = "LONGTEXT")
+    private String purchaseOrderJson;
+
+    @Lob
+    @Column(name = "supplementary_json", columnDefinition = "LONGTEXT")
+    private String supplementaryJson;
+
+    @Lob
+    @Column(name = "size_per_colour_json", columnDefinition = "LONGTEXT")
+    private String sizePerColourJson;
+
+    @Lob
+    @Column(name = "total_country_json", columnDefinition = "LONGTEXT")
+    private String totalCountryJson;
 }

@@ -17,6 +17,10 @@ export const salesOrderPrototypeApi = {
     const response = await client.post<ApiResponse<SalesOrderPrototype>>('/api/v1/sales-order-prototypes', payload);
     return response.data;
   },
+  createOrMerge: async (payload: CreateSalesOrderPrototypeRequest) => {
+    const response = await client.post<ApiResponse<SalesOrderPrototype>>('/api/v1/sales-order-prototypes/merge', payload);
+    return response.data;
+  },
   update: async (id: number, payload: CreateSalesOrderPrototypeRequest) => {
     const response = await client.put<ApiResponse<SalesOrderPrototype>>(`/api/v1/sales-order-prototypes/${id}`, payload);
     return response.data;

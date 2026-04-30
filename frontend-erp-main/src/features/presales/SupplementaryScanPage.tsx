@@ -313,6 +313,7 @@ export function SupplementaryScanPage() {
     mutationFn: async () => {
       if (!data) throw new Error('No data.');
       const payload = {
+        documentType: 'supplementary',
         source: 'presales-supplementary',
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
@@ -323,7 +324,7 @@ export function SupplementaryScanPage() {
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.create(payload);
+      return salesOrderPrototypeApi.createOrMerge(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;

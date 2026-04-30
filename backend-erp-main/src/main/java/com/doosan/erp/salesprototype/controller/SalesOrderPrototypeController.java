@@ -57,4 +57,21 @@ public class SalesOrderPrototypeController {
         service.delete(id);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
+
+    @PostMapping("/merge")
+    @Operation(summary = "Create or merge sales order prototype by SO Number",
+            description = "Finds existing record by SO Number and merges data based on document type. " +
+                    "If no existing record found, creates a new one.")
+    public ResponseEntity<ApiResponse<SalesOrderPrototypeResponse>> createOrMerge(@RequestBody Map<String, Object> payload) {
+        String documentType = "";
+        Object dt = payload.get("documentType");
+        if (dt != null) documentType = dt.toString();
+
+        String analyzedFileName = "";
+        Object fn = payload.get("analyzedFileName");
+        if (fn != null) analyzedFileName = fn.toString();
+
+        SalesOrderPrototypeResponse res = service.createOrMerge(documentType, analyzedFileName, payload);
+        return ResponseEntity.ok(ApiResponse.success(res));
+    }
 }

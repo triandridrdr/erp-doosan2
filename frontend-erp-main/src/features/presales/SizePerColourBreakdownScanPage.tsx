@@ -172,6 +172,7 @@ export function SizePerColourBreakdownScanPage() {
     mutationFn: async () => {
       if (!data) throw new Error('No data.');
       const payload = {
+        documentType: 'size-per-colour-breakdown',
         source: 'presales-size-per-colour-breakdown',
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
@@ -179,7 +180,7 @@ export function SizePerColourBreakdownScanPage() {
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.create(payload);
+      return salesOrderPrototypeApi.createOrMerge(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;

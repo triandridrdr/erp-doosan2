@@ -112,13 +112,14 @@ export function TotalCountryBreakdownScanPage() {
     mutationFn: async () => {
       if (!data) throw new Error('No data.');
       const payload = {
+        documentType: 'total-country-breakdown',
         source: 'presales-total-country-breakdown',
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
         totalCountryBreakdown: countryBreakdownDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.create(payload);
+      return salesOrderPrototypeApi.createOrMerge(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;
