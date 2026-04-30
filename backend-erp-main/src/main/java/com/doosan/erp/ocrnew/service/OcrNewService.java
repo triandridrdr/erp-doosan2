@@ -1147,15 +1147,22 @@ public class OcrNewService {
     /**
      * Reconcile the Solid row for a page using the Total row as a trusted reference.
      *
+     * Background: the H&M breakdown PDF groups orders into Assortment packs and
+     * Solid items. The Total row aggregates both:
+     *   Total[size] = Solid[size] + (Assortment[size] * NoOfAsst)
+     * where {@code NoOfAsst} is the number of assortment packs and
+     * {@code Assortment[size]} is the per-pack quantity of that size.
+     *
      * The parser sometimes under-counts Solid sizes due to OCR errors:
      *   - a size value misread as a single digit (e.g. "41" -> "4"),
      *   - a size line skipped entirely (so the size stays 0).
      *
-     * When the Total row is internally consistent (its per-size values sum to
-     * its "total" field) we trust it and set
-     *   Solid[size] = Total[size] - Assortment[size]
-     * for every size. This cleanly fixes both under-count scenarios without
-     * guessing which size was wrong.
+     * This method fixes those cases by:
+     *   1. Skipping when Solid is already internally consistent
+     *      (sum of its per-size values equals its Quantity field) — OCR
+     *      likely parsed correctly, do not touch.
+     *   2. Otherwise trusting Total (only if it is internally consistent) and
+     *      recomputing: Solid[size] = Total[size] - Assortment[size] * NoOfAsst.
      *
      * Must run BEFORE {@link #fillMissingAssortmentValues} because that method
      * derives Assortment from {@code Total - Solid}; a wrong Solid corrupts it.
@@ -1175,7 +1182,23 @@ public class OcrNewService {
 
         List<String> sizes = List.of("XS", "S", "M", "L", "XL");
 
-        // Only trust Total if its per-size values sum equals its "total" field.
+        // (1) Skip if Solid is already self-consistent (per-size sum == Quantity).
+        // Prevents corrupting correctly-parsed rows (e.g., Sweden, Switzerland).
+        int solidTotal;
+        try {
+            solidTotal = Integer.parseInt(solid.getOrDefault("total", "0").replaceAll("\\s+", ""));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        int solidSum = 0;
+        for (String sz : sizes) {
+            try {
+                solidSum += Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (solidTotal > 0 && solidSum == solidTotal) return;
+
+        // (2) Only trust Total if its per-size values sum equals its "total" field.
         int totalExpected;
         try {
             totalExpected = Integer.parseInt(total.getOrDefault("total", "0").replaceAll("\\s+", ""));
@@ -1192,7 +1215,15 @@ public class OcrNewService {
         }
         if (totalSum != totalExpected) return; // Total row not self-consistent, don't trust it
 
-        // Reconcile Solid: Solid[size] = Total[size] - Assortment[size]
+        // (3) Parse No of Asst (number of assortment packs). Defaults to 0.
+        int noOfAsst = 0;
+        if (assortment != null) {
+            try {
+                noOfAsst = Integer.parseInt(assortment.getOrDefault("noOfAsst", "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // (4) Reconcile using: Solid[size] = Total[size] - (Assortment[size] * NoOfAsst)
         boolean changed = false;
         int newSolidSum = 0;
         for (String sz : sizes) {
@@ -1209,10 +1240,11 @@ public class OcrNewService {
                 solidVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
             } catch (NumberFormatException ignored) {}
 
-            int expectedSolid = Math.max(0, totVal - assortVal);
+            int assortContribution = assortVal * noOfAsst;
+            int expectedSolid = Math.max(0, totVal - assortContribution);
             if (solidVal != expectedSolid) {
-                log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}) country={}",
-                        sz, solidVal, expectedSolid, totVal, assortVal,
+                log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}*noOfAsst={}) country={}",
+                        sz, solidVal, expectedSolid, totVal, assortVal, noOfAsst,
                         solid.getOrDefault("destinationCountry", ""));
                 solid.put(sz, String.valueOf(expectedSolid));
                 changed = true;
