@@ -1937,6 +1937,11 @@ public class OcrNewService {
                 colourSizeBreakdown = extractColourSizeBreakdownFromLines(allLines);
             }
 
+            // ── Purchase Order specific extractions ────────────────────────────
+            List<Map<String, String>> poTimeOfDelivery = extractPurchaseOrderTimeOfDelivery(allLines);
+            List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
+            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -2088,6 +2093,9 @@ public class OcrNewService {
                     .salesOrderDetailSizeBreakdown(salesOrderDetailSizeBreakdown)
                     .totalCountryBreakdown(totalCountryBreakdown)
                     .colourSizeBreakdown(colourSizeBreakdown)
+                    .purchaseOrderTimeOfDelivery(poTimeOfDelivery)
+                    .purchaseOrderQuantityPerArticle(poQuantityPerArticle)
+                    .purchaseOrderInvoiceAvgPrice(poInvoiceAvgPrice)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();
@@ -2591,5 +2599,222 @@ public class OcrNewService {
 
         if (entries.isEmpty()) return null;
         return String.join("; ", entries);
+    }
+
+    // ── Purchase Order specific parsers ──────────────────────────────────
+
+    /**
+     * Extract "Time of Delivery" table from Purchase Order PDF.
+     * Columns: timeOfDelivery, planningMarkets, quantity, percentTotalQty
+     */
+    private static List<Map<String, String>> extractPurchaseOrderTimeOfDelivery(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l != null && l.getText() != null) {
+                texts.add(oneLine(l.getText()).trim());
+            }
+        }
+
+        // Find "Time of Delivery" header
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("time of delivery")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return out;
+
+        // Scan lines after header for date patterns + planning markets + quantity + percentage
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 40); i++) {
+            String line = texts.get(i).trim();
+            if (line.isBlank()) continue;
+            String low = line.toLowerCase(Locale.ROOT);
+            
+            // Stop at next major section
+            if (low.contains("quantity per artic") || low.contains("article no") 
+                    || low.contains("total quantity") || low.startsWith("total:")) break;
+
+            // Match date pattern
+            Matcher dm = DATE_PATTERN.matcher(line);
+            if (!dm.find()) continue;
+
+            String timeOfDelivery = dm.group(0).trim();
+            String remainder = line.substring(dm.end()).trim();
+
+            // Extract planning markets (PM codes or country codes)
+            String planningMarkets = "";
+            String quantity = "";
+            String percentTotalQty = "";
+
+            // Try to extract planning markets (e.g., "BE (PMSEU)", "KR (PM-KR), ID (PM-ID)")
+            Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(remainder);
+            List<String> pmCodes = new ArrayList<>();
+            while (pmMatcher.find()) {
+                pmCodes.add(pmMatcher.group().trim());
+            }
+            if (!pmCodes.isEmpty()) {
+                planningMarkets = String.join(", ", pmCodes);
+            }
+
+            // Extract quantity and percentage from end of line
+            // Pattern: "2 765 8%" or "16 587 45%"
+            Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+            Matcher qpMatcher = qtyPercentPat.matcher(remainder);
+            if (qpMatcher.find()) {
+                quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
+                percentTotalQty = qpMatcher.group(2).trim();
+            }
+
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("timeOfDelivery", timeOfDelivery);
+            row.put("planningMarkets", planningMarkets);
+            row.put("quantity", quantity);
+            row.put("percentTotalQty", percentTotalQty);
+            out.add(row);
+        }
+
+        return out;
+    }
+
+    /**
+     * Extract "Quantity per Article" table from Purchase Order PDF.
+     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle
+     */
+    private static List<Map<String, String>> extractPurchaseOrderQuantityPerArticle(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l != null && l.getText() != null) {
+                texts.add(oneLine(l.getText()).trim());
+            }
+        }
+
+        // Find "Quantity per Article" header
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("quantity per artic")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return out;
+
+        // Pattern to match article data row:
+        // "001 22-216 02 g 2GPOO (V5) 6.92 USD 36 795"
+        // or "001 22-21 6 02 6.85 USD 36 795"
+        Pattern articlePat = Pattern.compile("^(\\d{3})\\s+([\\d\\-]+)\\s+(.+?)\\s+(\\d+\\.\\d+\\s+[A-Z]{3})\\s+([\\d\\s]+)$");
+
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 50); i++) {
+            String line = texts.get(i).trim();
+            if (line.isBlank()) continue;
+            String low = line.toLowerCase(Locale.ROOT);
+
+            // Stop at next section
+            if (low.contains("total quantity") || low.contains("invoice average")
+                    || low.contains("sales sample")) break;
+
+            Matcher m = articlePat.matcher(line);
+            if (m.find()) {
+                String articleNo = m.group(1).trim();
+                String hmColourCode = m.group(2).trim();
+                String middle = m.group(3).trim();
+                String cost = m.group(4).trim();
+                String qtyArticle = m.group(5).replaceAll("\\s+", " ").trim();
+
+                // Parse middle part: "02 g 2GPOO (V5)" or "6 02"
+                // Try to extract PT Article Number, Colour, Option No
+                String ptArticleNumber = "";
+                String colour = "";
+                String optionNo = "";
+
+                // Simple heuristic: split by spaces and look for patterns
+                String[] parts = middle.split("\\s+");
+                if (parts.length >= 2) {
+                    ptArticleNumber = parts[0] + (parts.length > 1 ? " " + parts[1] : "");
+                    if (middle.contains("(")) {
+                        int parenIdx = middle.indexOf('(');
+                        optionNo = middle.substring(parenIdx).replaceAll("[()]", "").trim();
+                    }
+                }
+
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("articleNo", articleNo);
+                row.put("hmColourCode", hmColourCode);
+                row.put("ptArticleNumber", ptArticleNumber);
+                row.put("colour", colour);
+                row.put("optionNo", optionNo);
+                row.put("cost", cost);
+                row.put("qtyArticle", qtyArticle);
+                out.add(row);
+            }
+        }
+
+        return out;
+    }
+
+    /**
+     * Extract "Invoice Average Price" table from Purchase Order PDF.
+     * Columns: invoiceAveragePrice, country
+     */
+    private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPrice(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l != null && l.getText() != null) {
+                texts.add(oneLine(l.getText()).trim());
+            }
+        }
+
+        // Find "Invoice Average Price" header
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("invoice average price")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return out;
+
+        // Pattern to match price + currency: "113364.36 IDR" or "6.85 USD"
+        Pattern pricePat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})$");
+        // Pattern to match country code: "ID", "JP", "TH", "VN", etc.
+        Pattern countryPat = Pattern.compile("^([A-Z]{2})$");
+
+        String lastPrice = "";
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 20); i++) {
+            String line = texts.get(i).trim();
+            if (line.isBlank()) continue;
+            String low = line.toLowerCase(Locale.ROOT);
+
+            // Stop at next section
+            if (low.contains("sales sample") || low.contains("terms of delivery")
+                    || low.contains("time of delivery")) break;
+
+            Matcher priceMatcher = pricePat.matcher(line);
+            Matcher countryMatcher = countryPat.matcher(line);
+
+            if (priceMatcher.find()) {
+                lastPrice = line;
+            } else if (countryMatcher.find() && !lastPrice.isEmpty()) {
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("invoiceAveragePrice", lastPrice);
+                row.put("country", line);
+                out.add(row);
+                lastPrice = "";
+            }
+        }
+
+        return out;
     }
 }

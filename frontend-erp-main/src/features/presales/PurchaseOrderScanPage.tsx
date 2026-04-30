@@ -2,12 +2,10 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
@@ -35,10 +33,20 @@ export function PurchaseOrderScanPage() {
   const [results, setResults] = useState<Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>>([]);
   const [data, setData] = useState<OcrNewDocumentAnalysisResponseData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Draft updated.');
   const [lastSavedId, setLastSavedId] = useState<number | null>(null);
+
+  const pageCount = Math.max(1, Number(data?.pageCount ?? 1));
+  const [activePage, setActivePage] = useState<number>(1);
+
+  const [timeOfDeliveryRows, setTimeOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
+  const [quantityPerArticleRows, setQuantityPerArticleRows] = useState<Array<Record<string, string>>>([]);
+  const [invoiceAvgPriceRows, setInvoiceAvgPriceRows] = useState<Array<Record<string, string>>>([]);
+
+  useEffect(() => {
+    setActivePage((p) => Math.min(Math.max(1, p), pageCount));
+  }, [pageCount]);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<
@@ -91,37 +99,10 @@ export function PurchaseOrderScanPage() {
       editable: boolean;
     }>
   >([]);
-  const [section2cTotalDirty, setSection2cTotalDirty] = useState(false);
-
-  const appendLog = (msg: string) => {
-    const ts = new Date().toISOString();
-    setMultiFileLogs((prev) => [...prev, `[${ts}] ${msg}`]);
-  };
-
-  const logBackendSection2DetailRows = (fileName: string, d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
-    const rows = (d?.salesOrderDetailSizeBreakdown ?? []) as any[];
-    if (!Array.isArray(rows) || rows.length === 0) {
-      appendLog(`[BACKEND->FE] file=${fileName} salesOrderDetailSizeBreakdown=[]`);
-      return;
-    }
-
-    const mexico = rows.filter((r) => {
-      const c = (r?.countryOfDestination ?? r?.destinationCountry ?? '').toString().toLowerCase();
-      return c.includes('mexico');
-    });
-
-    const sample = (mexico.length > 0 ? mexico : rows).slice(0, 20);
-    appendLog(
-      `[BACKEND->FE] file=${fileName} salesOrderDetailSizeBreakdown_count=${rows.length} sample_count=${sample.length} mexico_count=${mexico.length}`,
-    );
-    for (const r of sample) {
-      try {
-        appendLog(`[BACKEND->FE] row=${JSON.stringify(r)}`);
-      } catch {
-        appendLog(`[BACKEND->FE] row=[unserializable]`);
-      }
-    }
-  };
+  void setSection2cTotalDraftRows;
+  const [_section2cTotalDirty, _setSection2cTotalDirty] = useState(false);
+  void _section2cTotalDirty;
+  void _setSection2cTotalDirty;
 
   const normalizeDigits = (v: string) => {
     const d = (v ?? '').toString().replace(/[^0-9]/g, '');
@@ -204,6 +185,11 @@ export function PurchaseOrderScanPage() {
     } else {
       setSalesOrderDetailDraftRows([]);
     }
+
+    // Purchase Order specific tables
+    setTimeOfDeliveryRows(d?.purchaseOrderTimeOfDelivery ?? []);
+    setQuantityPerArticleRows(d?.purchaseOrderQuantityPerArticle ?? []);
+    setInvoiceAvgPriceRows(d?.purchaseOrderInvoiceAvgPrice ?? []);
   };
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
@@ -266,422 +252,341 @@ export function PurchaseOrderScanPage() {
   };
 
   const analyzeMutation = useMutation({
-    mutationFn: async (files: File[]) => {
-      const out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }> = [];
-      for (const f of files) {
-        const t0 = performance.now();
-        appendLog(`START file=${f.name} sizeBytes=${f.size}`);
-        try {
-          const res = await ocrNewApi.analyze(f);
-          const dtMs = Math.round(performance.now() - t0);
-          const pc = (res as any)?.data?.pageCount ?? 0;
-          const tc = (res as any)?.data?.tables?.length ?? 0;
-          const dc = ((res as any)?.data?.salesOrderDetailSizeBreakdown ?? []).length;
-          appendLog(`OK file=${f.name} durationMs=${dtMs} pageCount=${pc} tableCount=${tc} detailRowCount=${dc}`);
-          logBackendSection2DetailRows(f.name, (res as any)?.data);
-          if ((res as any)?.data) {
-            out.push({ fileName: f.name, data: (res as any).data });
-          }
-        } catch (e) {
-          const dtMs = Math.round(performance.now() - t0);
-          const msg = e instanceof Error ? e.message : String(e);
-          appendLog(`ERROR file=${f.name} durationMs=${dtMs} message=${msg}`);
-          throw e;
+  mutationFn: async (files: File[]) => {
+    const out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }> = [];
+    for (const f of files) {
+      try {
+        const res = await ocrNewApi.analyze(f);
+        if (res?.data) {
+          out.push({ fileName: f.name, data: res.data });
         }
+      } catch (e) {
+        throw e;
       }
-      return out;
-    },
-    onSuccess: (out) => {
-      setResults(out);
-      setError(null);
-      setActiveFileIndex(0);
-      const first = out?.[0]?.data ?? null;
-      setData(first);
-
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-
-      if (out.length <= 1) {
-        hydrateDraftsFromData(first);
-      } else {
-        hydrateDraftsFromResultsMerged(out);
-      }
-    },
-    onError: (e: Error) => {
-      setError(e.message);
-      setData(null);
-      setResults([]);
-      setSalesOrderHeaderDraft({});
-      setBomDraftRows([]);
-      setSalesOrderDetailDraftRows([]);
-
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    },
-  });
-
-  const isPending = analyzeMutation.isPending;
-
-  const saveDraftMutation = useMutation({
-    mutationFn: async () => {
-      if (!data) throw new Error('No data.');
-      const payload = {
-        documentType: 'purchase-order',
-        source: 'presales-purchase-order',
-        analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
-        formFields: salesOrderHeaderDraft,
-        bomDraftRows,
-        salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
-        totalCountryBreakdown: countryBreakdownDraftRows,
-        section2cColourSizeBreakdown: section2cDraftRows,
-        section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
-        raw: data,
-      };
-      return salesOrderPrototypeApi.createOrMerge(payload);
-    },
-    onSuccess: (res) => {
-      const soId = (res as any)?.data?.id;
-      if (soId !== undefined && soId !== null) {
-        setSuccessMessage(`Successfully created draft id "${soId}"`);
-        setLastSavedId(Number(soId));
-      } else {
-        setSuccessMessage('Successfully created draft.');
-        setLastSavedId(null);
-      }
-      setSuccessOpen(true);
-    },
-    onError: (e: Error) => {
-      alert(`Failed to save draft: ${e.message}`);
-    },
-  });
-
-  const hasHeaderDraft = useMemo(() => {
-    return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
-  }, [salesOrderHeaderDraft]);
-
-  const backendCountryBreakdown = useMemo(() => {
-    const isTcbName = (name: string) => {
-      const n = (name || '').toLowerCase();
-      return n.includes('totalcountrybreakdown') || n.includes('total_country_breakdown') || (n.includes('total') && n.includes('country') && n.includes('breakdown'));
-    };
-
-    const curFile = results[activeFileIndex]?.fileName ?? '';
-    if (isTcbName(curFile)) {
-      const curRows = data?.totalCountryBreakdown ?? [];
-      if (curRows.length > 0) return { fileName: curFile, rows: curRows };
-      return null;
     }
+    return out;
+  },
+  onSuccess: (out) => {
+    setResults(out);
+    setError(null);
+    setActiveFileIndex(0);
+    const first = out?.[0]?.data ?? null;
+    setData(first);
+    setActivePage(1);
 
-    const tcb = results.find((r) => isTcbName(r.fileName ?? ''));
-    if (!tcb) return null;
-    const rows = tcb?.data?.totalCountryBreakdown ?? [];
-    if (rows.length === 0) return null;
-    return { fileName: tcb.fileName ?? '', rows };
-  }, [data, results, activeFileIndex]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  const extractArticleNoColourLabel = (d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
-    const ff = d?.formFields ?? {};
+    if (out.length <= 1) {
+      hydrateDraftsFromData(first);
+    } else {
+      hydrateDraftsFromResultsMerged(out);
+    }
+  },
+  onError: (e: Error) => {
+    setError(e.message);
+    setData(null);
+    setResults([]);
+    setSalesOrderHeaderDraft({});
+    setBomDraftRows([]);
+    setSalesOrderDetailDraftRows([]);
+    setActivePage(1);
 
-    const pickKv = (keyAlts: string[]) => {
-      const kvs = d?.keyValuePairs ?? [];
-      for (const kv of kvs as any[]) {
-        const k = (kv?.key ?? '').toString().trim().toLowerCase();
-        if (!k) continue;
-        if (keyAlts.some((a) => a.toLowerCase() === k)) {
-          const v = (kv?.value ?? '').toString().trim();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  },
+});
+
+const isPending = analyzeMutation.isPending;
+
+const saveDraftMutation = useMutation({
+  mutationFn: async () => {
+    if (!data) throw new Error('No data.');
+    const payload = {
+      documentType: 'purchase-order',
+      source: 'presales-purchase-order',
+      analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
+      formFields: salesOrderHeaderDraft,
+      bomDraftRows,
+      salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
+      totalCountryBreakdown: countryBreakdownDraftRows,
+      section2cColourSizeBreakdown: section2cDraftRows,
+      section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
+      raw: data,
+    };
+    return salesOrderPrototypeApi.createOrMerge(payload);
+  },
+  onSuccess: (res) => {
+    const soId = (res as any)?.data?.id;
+    if (soId !== undefined && soId !== null) {
+      setSuccessMessage(`Successfully created draft id "${soId}"`);
+      setLastSavedId(Number(soId));
+    } else {
+      setSuccessMessage('Successfully created draft.');
+      setLastSavedId(null);
+    }
+    setSuccessOpen(true);
+  },
+  onError: (e: Error) => {
+    alert(`Failed to save draft: ${e.message}`);
+  },
+});
+
+const backendCountryBreakdown = useMemo(() => {
+  const isTcbName = (name: string) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('totalcountrybreakdown') || n.includes('total_country_breakdown') || (n.includes('total') && n.includes('country') && n.includes('breakdown'));
+  };
+
+  const curFile = results[activeFileIndex]?.fileName ?? '';
+  if (isTcbName(curFile)) {
+    const curRows = data?.totalCountryBreakdown ?? [];
+    if (curRows.length > 0) return { fileName: curFile, rows: curRows };
+    return null;
+  }
+
+  const tcb = results.find((r) => isTcbName(r.fileName ?? ''));
+  if (!tcb) return null;
+  const rows = tcb?.data?.totalCountryBreakdown ?? [];
+  if (rows.length === 0) return null;
+  return { fileName: tcb.fileName ?? '', rows };
+}, [data, results, activeFileIndex]);
+
+const extractArticleNoColourLabel = (d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
+  const ff = d?.formFields ?? {};
+
+  const pickKv = (keyAlts: string[]) => {
+    const kvs = d?.keyValuePairs ?? [];
+    for (const kv of kvs as any[]) {
+      const k = (kv?.key ?? '').toString().trim().toLowerCase();
+      if (!k) continue;
+      if (keyAlts.some((a) => a.toLowerCase() === k)) {
+        const v = (kv?.value ?? '').toString().trim();
+        if (v) return v;
+      }
+    }
+    return '';
+  };
+
+  const pickLine = (keyAlts: string[]) => {
+    const lines = d?.lines ?? [];
+    for (const ln of lines as any[]) {
+      const t = (ln?.text ?? '').toString().trim();
+      if (!t) continue;
+      for (const a of keyAlts) {
+        const re = new RegExp(`^\\s*${a.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\s*:\\s*(.+)\\s*$`, 'i');
+        const m = t.match(re);
+        if (m?.[1]) {
+          const v = m[1].trim();
           if (v) return v;
         }
       }
-      return '';
-    };
-
-    const pickLine = (keyAlts: string[]) => {
-      const lines = d?.lines ?? [];
-      for (const ln of lines as any[]) {
-        const t = (ln?.text ?? '').toString().trim();
-        if (!t) continue;
-        for (const a of keyAlts) {
-          const re = new RegExp(`^\\s*${a.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\s*:\\s*(.+)\\s*$`, 'i');
-          const m = t.match(re);
-          if (m?.[1]) {
-            const v = m[1].trim();
-            if (v) return v;
-          }
-        }
-      }
-      return '';
-    };
-
-    const articleNo =
-      (ff['Article No'] ?? ff['Article'] ?? '').toString().trim() ||
-      pickKv(['Article No', 'Article']) ||
-      pickLine(['Article No', 'Article']);
-
-    const hmColourCode =
-      (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim() ||
-      pickKv(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']) ||
-      pickLine(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']);
-
-    return [articleNo, hmColourCode].filter((v) => v.length > 0).join(' ').trim();
+    }
+    return '';
   };
 
-  const section2cArticleLabelFromTcb = useMemo(() => {
-    if (!backendCountryBreakdown?.fileName) return '';
-    const tcbRes = results.find((r) => (r?.fileName ?? '') === backendCountryBreakdown.fileName);
-    return extractArticleNoColourLabel(tcbRes?.data);
-  }, [backendCountryBreakdown?.fileName, results]);
+  const articleNo =
+    (ff['Article No'] ?? ff['Article'] ?? '').toString().trim() ||
+    pickKv(['Article No', 'Article']) ||
+    pickLine(['Article No', 'Article']);
 
-  const backendColourSizeBreakdown = useMemo(() => {
-    const isTcbName = (name: string) => {
-      const n = (name || '').toLowerCase();
-      return n.includes('totalcountrybreakdown') || n.includes('total_country_breakdown') || (n.includes('total') && n.includes('country') && n.includes('breakdown'));
-    };
+  const hmColourCode =
+    (ff['H&M Colour Code'] ?? ff['H&M Colour'] ?? ff['H&M Color Code'] ?? '').toString().trim() ||
+    pickKv(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']) ||
+    pickLine(['H&M Colour Code', 'H&M Colour', 'H&M Color Code']);
 
-    const curFile = results[activeFileIndex]?.fileName ?? '';
-    let source: { fileName: string; rows: Array<Record<string, string>> } | null = null;
-    if (isTcbName(curFile)) {
-      const rows = data?.colourSizeBreakdown ?? [];
-      if (rows.length > 0) source = { fileName: curFile, rows: rows as any };
+  return [articleNo, hmColourCode].filter((v) => v.length > 0).join(' ').trim();
+};
+
+const section2cArticleLabelFromTcb = useMemo(() => {
+  if (!backendCountryBreakdown?.fileName) return '';
+  const tcbRes = results.find((r) => (r?.fileName ?? '') === backendCountryBreakdown.fileName);
+  return extractArticleNoColourLabel(tcbRes?.data);
+}, [backendCountryBreakdown?.fileName, results]);
+
+const backendColourSizeBreakdown = useMemo(() => {
+  const isTcbName = (name: string) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('totalcountrybreakdown') || n.includes('total_country_breakdown') || (n.includes('total') && n.includes('country') && n.includes('breakdown'));
+  };
+
+  const curFile = results[activeFileIndex]?.fileName ?? '';
+  let source: { fileName: string; rows: Array<Record<string, string>> } | null = null;
+  if (isTcbName(curFile)) {
+    const rows = data?.colourSizeBreakdown ?? [];
+    if (rows.length > 0) source = { fileName: curFile, rows: rows as any };
+  }
+  if (!source) {
+    const tcb = results.find((r) => isTcbName(r.fileName ?? '') && ((r as any)?.data?.colourSizeBreakdown ?? []).length > 0);
+    if (tcb) source = { fileName: tcb.fileName ?? '', rows: ((tcb as any)?.data?.colourSizeBreakdown ?? []) as any };
+  }
+  if (!source || source.rows.length === 0) return null;
+
+  const META_KEYS = new Set(['article', 'total']);
+  const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
+  let grandTotal = 0;
+  let articleLabel = '';
+  for (const row of source.rows) {
+    const article = (row?.article ?? '').toString().trim();
+    if (!articleLabel && article) articleLabel = article;
+    for (const [key, val] of Object.entries(row ?? {})) {
+      if (META_KEYS.has(key.toLowerCase())) continue;
+      const qty = (val ?? '').toString().trim();
+      if (!qty) continue;
+      exploded.push({ article, size: key, qty, editable: true });
+      const n = Number(qty.replace(/[^0-9]/g, ''));
+      if (Number.isFinite(n)) grandTotal += n;
     }
-    if (!source) {
-      const tcb = results.find((r) => isTcbName(r.fileName ?? '') && ((r as any)?.data?.colourSizeBreakdown ?? []).length > 0);
-      if (tcb) source = { fileName: tcb.fileName ?? '', rows: ((tcb as any)?.data?.colourSizeBreakdown ?? []) as any };
-    }
-    if (!source || source.rows.length === 0) return null;
+  }
+  if (exploded.length === 0) return null;
+  return { fileName: source.fileName, rows: exploded, articleLabel, grandTotal };
+}, [data, results, activeFileIndex]);
 
-    const META_KEYS = new Set(['article', 'total']);
-    const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
-    let grandTotal = 0;
-    let articleLabel = '';
-    for (const row of source.rows) {
-      const article = (row?.article ?? '').toString().trim();
-      if (!articleLabel && article) articleLabel = article;
-      for (const [key, val] of Object.entries(row ?? {})) {
-        if (META_KEYS.has(key.toLowerCase())) continue;
-        const qty = (val ?? '').toString().trim();
-        if (!qty) continue;
-        exploded.push({ article, size: key, qty, editable: true });
-        const n = Number(qty.replace(/[^0-9]/g, ''));
-        if (Number.isFinite(n)) grandTotal += n;
-      }
-    }
-    if (exploded.length === 0) return null;
-    return { fileName: source.fileName, rows: exploded, articleLabel, grandTotal };
-  }, [data, results, activeFileIndex]);
+useEffect(() => {
+  if (!backendCountryBreakdown) {
+    setCountryBreakdownDraftRows([]);
+    return;
+  }
+  const keys = Object.keys((backendCountryBreakdown.rows as any)?.[0] ?? {});
+  const toVal = (m: Record<string, any>, k: string) => (m?.[k] ?? '').toString();
+  const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
+  const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
+  const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
+  const kTotal = findKey(['total', 'tot']) ?? 'total';
+  const rows = (backendCountryBreakdown.rows as any).map((m: any) => ({
+    country: toVal(m, kCountry),
+    countryOfDestination: '',
+    pmCode: toVal(m, kPm),
+    total: toVal(m, kTotal),
+    editable: true,
+  }));
+  setCountryBreakdownDraftRows(rows);
+}, [backendCountryBreakdown]);
 
-  useEffect(() => {
-    if (!backendCountryBreakdown) {
-      setCountryBreakdownDraftRows([]);
-      return;
-    }
-    const keys = Object.keys((backendCountryBreakdown.rows as any)?.[0] ?? {});
-    const toVal = (m: Record<string, any>, k: string) => (m?.[k] ?? '').toString();
-    const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
-    const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
-    const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
-    const kTotal = findKey(['total', 'tot']) ?? 'total';
-    const rows = (backendCountryBreakdown.rows as any).map((m: any) => ({
-      country: toVal(m, kCountry),
-      countryOfDestination: '',
-      pmCode: toVal(m, kPm),
-      total: toVal(m, kTotal),
-      editable: true,
-    }));
-    setCountryBreakdownDraftRows(rows);
-  }, [backendCountryBreakdown]);
+const section2cSizeSummary = useMemo(() => {
+  const draftRows = salesOrderDetailDraftRows ?? [];
+  if (!Array.isArray(draftRows) || draftRows.length === 0) return null;
 
-  const section2cSizeSummary = useMemo(() => {
-    const draftRows = salesOrderDetailDraftRows ?? [];
-    if (!Array.isArray(draftRows) || draftRows.length === 0) return null;
+  const hasTotalType = draftRows.some((r) => (r?.type ?? '').toString().toLowerCase() === 'total');
+  const rowsForSum = hasTotalType ? draftRows.filter((r) => (r?.type ?? '').toString().toLowerCase() !== 'total') : draftRows;
 
-    const hasTotalType = draftRows.some((r) => (r?.type ?? '').toString().toLowerCase() === 'total');
-    const rowsForSum = hasTotalType ? draftRows.filter((r) => (r?.type ?? '').toString().toLowerCase() !== 'total') : draftRows;
+  const sizesSet = new Set<string>();
+  for (const r of rowsForSum) {
+    const sz = normalizeSizeKey((r?.size ?? '').toString());
+    if (sz) sizesSet.add(sz);
+  }
+  if (sizesSet.size === 0) return null;
 
-    const sizesSet = new Set<string>();
-    for (const r of rowsForSum) {
-      const sz = normalizeSizeKey((r?.size ?? '').toString());
-      if (sz) sizesSet.add(sz);
-    }
-    if (sizesSet.size === 0) return null;
+  const preferredOrder = ['XS', 'S', 'M', 'L', 'XL', 'XS/P', 'S/P', 'M/P', 'L/P', 'XL/P'];
+  const normalizeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '');
+  const sizes = Array.from(sizesSet);
+  sizes.sort((a, b) => {
+    const na = normalizeKey(a);
+    const nb = normalizeKey(b);
+    const ia = preferredOrder.indexOf(na);
+    const ib = preferredOrder.indexOf(nb);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return na.localeCompare(nb);
+  });
 
-    const preferredOrder = ['XS', 'S', 'M', 'L', 'XL', 'XS/P', 'S/P', 'M/P', 'L/P', 'XL/P'];
-    const normalizeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '');
-    const sizes = Array.from(sizesSet);
-    sizes.sort((a, b) => {
-      const na = normalizeKey(a);
-      const nb = normalizeKey(b);
-      const ia = preferredOrder.indexOf(na);
-      const ib = preferredOrder.indexOf(nb);
-      if (ia >= 0 && ib >= 0) return ia - ib;
-      if (ia >= 0) return -1;
-      if (ib >= 0) return 1;
-      return na.localeCompare(nb);
-    });
+  const totalsBySize = new Map<string, number>();
+  for (const sz of sizes) totalsBySize.set(sz, 0);
 
-    const totalsBySize = new Map<string, number>();
-    for (const sz of sizes) totalsBySize.set(sz, 0);
+  for (const r of rowsForSum) {
+    const sz = normalizeSizeKey((r?.size ?? '').toString());
+    if (!sz) continue;
+    const qtyDigits = normalizeDigits((r?.qty ?? '').toString());
+    if (!qtyDigits) continue;
+    const cur = totalsBySize.get(sz) ?? 0;
+    totalsBySize.set(sz, cur + Number(qtyDigits));
+  }
 
-    for (const r of rowsForSum) {
-      const sz = normalizeSizeKey((r?.size ?? '').toString());
-      if (!sz) continue;
-      const qtyDigits = normalizeDigits((r?.qty ?? '').toString());
-      if (!qtyDigits) continue;
-      const cur = totalsBySize.get(sz) ?? 0;
-      totalsBySize.set(sz, cur + Number(qtyDigits));
-    }
+  const sizeTotals = sizes.map((k) => ({ key: k, total: totalsBySize.get(k) ?? 0 }));
+  const grandTotal = sizeTotals.reduce((acc, x) => acc + (Number.isFinite(x.total) ? x.total : 0), 0);
 
-    const sizeTotals = sizes.map((k) => ({ key: k, total: totalsBySize.get(k) ?? 0 }));
-    const grandTotal = sizeTotals.reduce((acc, x) => acc + (Number.isFinite(x.total) ? x.total : 0), 0);
+  const ff = data?.formFields ?? {};
+  const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
+  const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
+  const fromActive = extractArticleNoColourLabel(data);
+  const fallbackLabel = fromActive || [optionNo].filter((v) => v.length > 0).join(' ') || articleNo || '-';
+  const articleLabel = section2cArticleLabelFromTcb || fallbackLabel;
 
-    const ff = data?.formFields ?? {};
-    const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
-    const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
-    const fromActive = extractArticleNoColourLabel(data);
-    const fallbackLabel = fromActive || [optionNo].filter((v) => v.length > 0).join(' ') || articleNo || '-';
-    const articleLabel = section2cArticleLabelFromTcb || fallbackLabel;
+  return {
+    articleLabel,
+    sizeKeys: sizes,
+    sizeTotals,
+    grandTotal,
+  };
+}, [salesOrderDetailDraftRows, data, section2cArticleLabelFromTcb]);
 
-    return {
-      articleLabel,
-      sizeKeys: sizes,
-      sizeTotals,
-      grandTotal,
-    };
-  }, [salesOrderDetailDraftRows, data, section2cArticleLabelFromTcb]);
-
-  const section2cTotalFrom2b = useMemo(() => {
-    if (!backendCountryBreakdown) return null;
-    const keys = Object.keys((backendCountryBreakdown.rows as any)?.[0] ?? {});
-    const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
-    const kTotal = findKey(['total', 'tot']) ?? 'total';
-
-    let sum = 0;
-    for (const r of backendCountryBreakdown.rows as any[]) {
-      const d = normalizeDigits((r?.[kTotal] ?? '').toString());
-      if (d) sum += Number(d);
-    }
-    if (sum <= 0) return null;
-
-    const ff = data?.formFields ?? {};
-    const optionNo = (ff['Option No'] ?? ff['Option'] ?? '').toString().trim();
-    const articleNo = (ff['Article / Product No'] ?? ff['Article No'] ?? ff['Article'] ?? '').toString().trim();
-    const fromActive = extractArticleNoColourLabel(data);
-    const fallbackLabel = fromActive || [optionNo].filter((v) => v.length > 0).join(' ') || articleNo || '-';
-    const articleLabel = section2cArticleLabelFromTcb || fallbackLabel;
-
-    return { articleLabel, total: sum.toString() };
-  }, [backendCountryBreakdown, data, section2cArticleLabelFromTcb]);
-
-  useEffect(() => {
-    if (backendColourSizeBreakdown) {
-      const articleLabel = section2cArticleLabelFromTcb || backendColourSizeBreakdown.articleLabel;
-      setSection2cDraftRows(
-        backendColourSizeBreakdown.rows.map((r) => ({
-          article: articleLabel || r.article,
-          size: r.size,
-          qty: r.qty,
-          editable: true,
-        })),
-      );
-      return;
-    }
-
-    if (!section2cSizeSummary) {
-      setSection2cDraftRows([]);
-      return;
-    }
+useEffect(() => {
+  if (backendColourSizeBreakdown) {
+    const articleLabel = section2cArticleLabelFromTcb || backendColourSizeBreakdown.articleLabel;
     setSection2cDraftRows(
-      section2cSizeSummary.sizeTotals.map((x) => ({
-        article: section2cSizeSummary.articleLabel,
-        size: x.key,
-        qty: x.total.toString(),
+      backendColourSizeBreakdown.rows.map((r) => ({
+        article: articleLabel || r.article,
+        size: r.size,
+        qty: r.qty,
         editable: true,
       })),
     );
-  }, [backendColourSizeBreakdown, section2cSizeSummary, section2cArticleLabelFromTcb]);
+    return;
+  }
 
-  useEffect(() => {
-    if (!section2cTotalFrom2b) {
-      setSection2cTotalDraftRows([]);
-      setSection2cTotalDirty(false);
-      return;
-    }
-    if (section2cTotalDirty) return;
-    setSection2cTotalDraftRows([
-      {
-        article: section2cTotalFrom2b.articleLabel,
-        total: section2cTotalFrom2b.total,
-        editable: true,
-      },
-    ]);
-  }, [section2cTotalFrom2b, section2cTotalDirty]);
+  if (!section2cSizeSummary) {
+    setSection2cDraftRows([]);
+    return;
+  }
+  setSection2cDraftRows(
+    section2cSizeSummary.sizeTotals.map((x) => ({
+      article: section2cSizeSummary.articleLabel,
+      size: x.key,
+      qty: x.total.toString(),
+      editable: true,
+    })),
+  );
+}, [backendColourSizeBreakdown, section2cSizeSummary, section2cArticleLabelFromTcb]);
 
-  const section2NonTotalEntries = useMemo(() => {
-    return (salesOrderDetailDraftRows ?? [])
-      .map((row, idx) => ({ row, idx }))
-      .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
-  }, [salesOrderDetailDraftRows]);
+  const fileNameValue = results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '';
 
-  const section2TotalByCountryRows = useMemo(() => {
-    const totals = (salesOrderDetailDraftRows ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() === 'total');
-    if (totals.length === 0) return [];
+  const activePageTables = useMemo(() => {
+    return (data?.tables ?? []).filter((t) => Number(t?.page ?? 0) === activePage);
+  }, [data?.tables, activePage]);
 
-    const byCountry = new Map<string, number>();
-    const normKey = (v: string) => v.toString().trim();
+  const placeholderRowCount = useMemo(() => {
+    // Use detected table rowCount on the active page as a best-effort proxy for how many lines/rows exist in the PDF.
+    // Keep at least 1 row.
+    const maxRows = activePageTables.reduce((acc, t) => Math.max(acc, Math.max(0, Number(t?.rowCount ?? 0) - 1)), 0);
+    return Math.max(1, maxRows);
+  }, [activePageTables]);
 
-    for (const r of totals) {
-      const countryOfDestination = normKey((r?.countryOfDestination ?? '').toString());
-      const qty = Number(normalizeDigits((r?.qty ?? '').toString()) || '0');
-      byCountry.set(countryOfDestination, (byCountry.get(countryOfDestination) ?? 0) + qty);
-    }
+  const headerFormFields = useMemo(() => {
+    return [
+      { key: 'Order No', label: 'Order No' },
+      { key: 'PT Prod No', label: 'PT Prod No' },
+      { key: 'Order Date', label: 'Order Date' },
+      { key: 'Supplier Code', label: 'Supplier Code' },
+      { key: 'Option No', label: 'Option No' },
+      { key: 'Development No', label: 'Development No' },
+      { key: 'Product No', label: 'Product No' },
+      { key: 'Product Name', label: 'Product Name' },
+      { key: 'Product Desc', label: 'Product Desc' },
+      { key: 'Season', label: 'Season' },
+      { key: 'Customer Group', label: 'Customer Group' },
+      { key: 'Type of Construct', label: 'Type of Construct' },
+    ];
+  }, []);
 
-    return Array.from(byCountry.entries()).map(([countryOfDestination, total]) => ({ countryOfDestination, total }));
-  }, [salesOrderDetailDraftRows]);
-
-  const section2TotalCountryLookup = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of section2TotalByCountryRows ?? []) {
-      const c = (r?.countryOfDestination ?? '').toString().trim();
-      if (!c) continue;
-      m.set(c.toLowerCase(), c);
-
-      const allCodes = c.match(/\\b[A-Z]{2}\\b/g) ?? [];
-      for (const code of allCodes) {
-        const lc = code.toLowerCase();
-        if (!m.has(lc)) m.set(lc, c);
-      }
-
-      const pmMatch = c.match(/\\(([A-Z]{2}[A-Z0-9-]+)\\)?/);
-      if (pmMatch) {
-        const pmCode = pmMatch[1].toUpperCase();
-        m.set(pmCode.toLowerCase(), c);
-        const normalized = pmCode.replace(/^(OL|PM)(?!-)/, '$1-');
-        if (normalized !== pmCode) m.set(normalized.toLowerCase(), c);
-      }
-    }
-    return m;
-  }, [section2TotalByCountryRows]);
-
-  const exportSection2SizeBreakdownToExcel = () => {
-    const toNumOrNull = (v: unknown) => {
-      const d = normalizeDigits((v ?? '').toString());
-      if (!d) return null;
-      const n = Number(d);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    const rows = section2NonTotalEntries.map(({ row }) => ({
-      'Country of Destination': (row.countryOfDestination ?? '').toString(),
-      Type: (row.type ?? '').toString(),
-      Color: (row.color ?? '').toString(),
-      Size: (row.size ?? '').toString(),
-      Qty: toNumOrNull(row.qty),
-      Total: toNumOrNull(row.total),
-      'No of Asst': (row.noOfAsst ?? '').toString(),
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
-    XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
+  const poMetaFields = useMemo(() => {
+    return [
+      { key: 'Country of Production', label: 'Country of Production' },
+      { key: 'Country of Bakery', label: 'Country of Bakery' },
+      { key: 'Country of Origin', label: 'Country of Origin' },
+      { key: 'Term of Payment', label: 'Term of Payment' },
+      { key: 'No of Pieces', label: 'No of Pieces' },
+      { key: 'Sales Models', label: 'Sales Models' },
+    ];
+  }, []);
 
   return (
     <div className='space-y-6'>
@@ -701,6 +606,7 @@ export function PurchaseOrderScanPage() {
           </Button>
         </div>
       </Modal>
+
       <div className='bg-white rounded-2xl border border-gray-200 p-6'>
         <div className='flex items-start justify-between gap-4'>
           <div>
@@ -708,9 +614,9 @@ export function PurchaseOrderScanPage() {
           </div>
         </div>
 
-        <div className='mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-end'>
-          <div>
-            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF/Image</label>
+        <div className='mt-6 grid grid-cols-1 md:grid-cols-12 gap-4 items-end'>
+          <div className='md:col-span-4'>
+            <label className='block text-sm font-medium text-gray-700 mb-2'>File Upload</label>
             <Input
               type='file'
               accept='.pdf,image/png,image/jpeg,image/jpg'
@@ -722,14 +628,17 @@ export function PurchaseOrderScanPage() {
                 setData(null);
                 setResults([]);
                 setError(null);
-                setMultiFileLogs([]);
                 setSalesOrderHeaderDraft({});
                 setBomDraftRows([]);
                 setSalesOrderDetailDraftRows([]);
               }}
             />
           </div>
-          <div className='flex gap-3 justify-start md:justify-end'>
+          <div className='md:col-span-6'>
+            <label className='block text-sm font-medium text-gray-700 mb-2'>File Name</label>
+            <Input value={fileNameValue} readOnly />
+          </div>
+          <div className='md:col-span-2 flex justify-start md:justify-end'>
             <Button
               type='button'
               disabled={selectedFiles.length === 0 || isPending}
@@ -759,219 +668,273 @@ export function PurchaseOrderScanPage() {
             <div className='text-sm'>{error}</div>
           </div>
         )}
-
-        {results.length > 1 && (
-          <div className='mt-4 flex flex-wrap gap-2'>
-            {results.map((r) => (
-              <span key={r.fileName} className='px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'>
-                {r.fileName}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div>
-            <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
-          </div>
-          <div className='flex gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={!data || saveDraftMutation.isPending}
-              onClick={() => saveDraftMutation.mutate()}
-            >
-              Save Draft
-            </Button>
-          </div>
+          <div className='text-sm font-semibold text-gray-900'>Sales Order Header (Draft)</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data || saveDraftMutation.isPending}
+            onClick={() => saveDraftMutation.mutate()}
+          >
+            Save Draft
+          </Button>
         </div>
-        <div className='p-6'>
+        <div className='p-6 space-y-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : !hasHeaderDraft ? (
-            <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
           ) : (
+            <>
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
+                {headerFormFields.map((f) => (
+                  <div key={f.key} className='grid grid-cols-12 items-center gap-3'>
+                    <div className='col-span-4 text-sm text-gray-700'>{f.label}</div>
+                    <div className='col-span-8'>
+                      <Input
+                        value={salesOrderHeaderDraft[f.key] ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSalesOrderHeaderDraft((prev) => ({ ...prev, [f.key]: v }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
+                {poMetaFields.map((f) => (
+                  <div key={f.key} className='grid grid-cols-12 items-center gap-3'>
+                    <div className='col-span-4 text-sm text-gray-700'>{f.label}</div>
+                    <div className='col-span-8'>
+                      <Input
+                        value={salesOrderHeaderDraft[f.key] ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSalesOrderHeaderDraft((prev) => ({ ...prev, [f.key]: v }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-3 border-b border-gray-200 flex gap-2 overflow-auto'>
+          {Array.from({ length: pageCount }).map((_, idx) => {
+            const p = idx + 1;
+            const label = `Page-${p}`;
+            return (
+            <button
+              key={label}
+              type='button'
+              className={
+                p === activePage
+                  ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white'
+                  : 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }
+              onClick={() => setActivePage(p)}
+            >
+              {label}
+            </button>
+            );
+          })}
+        </div>
+        <div className='p-6 space-y-6 bg-gray-50'>
+          <div className='bg-white rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+            <textarea
+              className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+              value={salesOrderHeaderDraft['Terms of Delivery'] ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSalesOrderHeaderDraft((prev) => ({ ...prev, ['Terms of Delivery']: v }));
+              }}
+            />
+          </div>
+
+          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
             <div className='overflow-auto'>
-              <table className='min-w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[900px] w-full'>
                 <thead className='bg-gray-50'>
                   <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
                   </tr>
                 </thead>
-                <tbody className='bg-white'>
-                  {SALES_ORDER_HEADER_FIELDS.map((field) => (
-                    <tr key={field} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-900 align-top whitespace-nowrap'>{field}</td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top w-full'>
-                        <Input
-                          value={salesOrderHeaderDraft[field] ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
-                          }}
-                        />
+                <tbody>
+                  {timeOfDeliveryRows.length > 0 ? (
+                    timeOfDeliveryRows.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.quantity ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        No data
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      </div>
-
-      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
-          <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={!data}
-              onClick={() => {
-                setSalesOrderDetailDraftRows((prev) => [
-                  ...prev,
-                  { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-                ]);
-              }}
-            >
-              Add row
-            </Button>
-            <Button type='button' disabled={section2NonTotalEntries.length === 0} onClick={exportSection2SizeBreakdownToExcel}>
-              Export Excel
-            </Button>
           </div>
-        </div>
-        <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2NonTotalEntries.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
-          ) : (
-            <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50 sticky top-0 z-10'>
+
+          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
+            <div className='overflow-auto'>
+              <table className='min-w-[900px] w-full'>
+                <thead className='bg-gray-50'>
                   <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                   </tr>
                 </thead>
-                <tbody className='bg-white'>
-                  {section2NonTotalEntries.map(({ row, idx }) => (
-                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.countryOfDestination}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)),
-                            );
-                          }}
-                        />
+                <tbody>
+                  {quantityPerArticleRows.length > 0 ? (
+                    quantityPerArticleRows.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.colour ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.optionNo ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.cost ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        No data
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.type}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
-                          }}
-                        />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+            <div className='overflow-auto'>
+              <table className='min-w-full w-full'>
+                <thead className='bg-gray-50'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceAvgPriceRows.length > 0 ? (
+                    invoiceAvgPriceRows.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.country ?? ''} onChange={() => {}} />
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        No data
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.color}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <SizeAutocompleteInput
-                          value={row.size}
-                          onChange={(v) => {
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.qty}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.total}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.noOfAsst ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
-                          }}
-                        />
-                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 text-sm font-semibold text-gray-900'>Sales Sample</div>
+        <div className='p-6 space-y-4'>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+            <Input value='' onChange={() => {}} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Destination Studio Address</div>
+            <Input value='' onChange={() => {}} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Time Of Delivery</div>
+            <Input value='' onChange={() => {}} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 overflow-hidden'>
+            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Articles</div>
+            <div className='overflow-auto'>
+              <table className='min-w-[900px] w-full'>
+                <thead className='bg-white'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: placeholderRowCount }).map((_, rIdx) => (
+                    <tr key={rIdx}>
+                      {Array.from({ length: 7 }).map((_, cIdx) => (
+                        <td key={cIdx} className='px-3 py-2 border-b border-gray-100'>
+                          <Input value='' onChange={() => {}} />
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      </div>
-
-      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
-        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>DEBUG LOG</div>
-          <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={multiFileLogs.length === 0}
-              onClick={() => {
-                const blob = new Blob([multiFileLogs.join('\n')], { type: 'text/plain;charset=utf-8' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `presales_purchase_order_debug_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              Download Log
-            </Button>
           </div>
-        </div>
-        <div className='p-6'>
-          {multiFileLogs.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No logs.</div>
-          ) : (
-            <pre className='text-xs whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-[40vh] overflow-auto'>
-              {multiFileLogs.join('\n')}
-            </pre>
-          )}
         </div>
       </div>
 

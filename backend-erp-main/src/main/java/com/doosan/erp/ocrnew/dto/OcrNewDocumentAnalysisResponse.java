@@ -38,4 +38,22 @@ public class OcrNewDocumentAnalysisResponse {
     private Float averageConfidence;
 
     private Integer pageCount;
+
+    /**
+     * Purchase Order: Time of Delivery table
+     * Columns: timeOfDelivery, planningMarkets, quantity, percentTotalQty
+     */
+    private List<Map<String, String>> purchaseOrderTimeOfDelivery;
+
+    /**
+     * Purchase Order: Quantity per Article table
+     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle
+     */
+    private List<Map<String, String>> purchaseOrderQuantityPerArticle;
+
+    /**
+     * Purchase Order: Invoice Average Price table
+     * Columns: invoiceAveragePrice, country
+     */
+    private List<Map<String, String>> purchaseOrderInvoiceAvgPrice;
 }
