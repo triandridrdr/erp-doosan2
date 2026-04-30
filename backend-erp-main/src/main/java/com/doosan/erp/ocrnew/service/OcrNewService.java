@@ -2508,48 +2508,49 @@ public class OcrNewService {
      * looking for "Transport by..." or "FOB" or "FCA" or similar Incoterms text.
      */
     private static String extractTermsOfDelivery(List<String> texts) {
-        int headerIdx = -1;
-        for (int i = 0; i < texts.size(); i++) {
-            String low = texts.get(i).toLowerCase(Locale.ROOT);
-            if (low.contains("terms of delivery")) {
-                headerIdx = i;
-                break;
-            }
-        }
-        if (headerIdx < 0) return null;
-
-        // Collect lines after header until next section (Time of Delivery, Quantity per Article, etc.)
-        StringBuilder sb = new StringBuilder();
-        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 15); i++) {
-            String line = texts.get(i).trim();
-            String low = line.toLowerCase(Locale.ROOT);
-            // Stop at next section header
-            if (low.contains("time of delivery") || low.contains("quantity per artic")
-                    || low.contains("planning market") || low.contains("% total")) break;
-            if (line.isBlank()) continue;
-            if (sb.length() > 0) sb.append(' ');
-            sb.append(line);
-        }
-
-        String block = sb.toString().trim();
-        if (block.isEmpty()) return null;
-
-        // Try to extract the key transport term: "Transport by Sea/Air/..."
         Pattern transportPat = Pattern.compile("(?i)(Transport\\s+by\\s+\\S+(?:\\s*,\\s*[^.]+)?)");
-        Matcher m = transportPat.matcher(block);
-        if (m.find()) {
-            return m.group(1).trim();
-        }
-
-        // Fallback: look for Incoterms (FOB, FCA, CIF, etc.)
         Pattern incoPat = Pattern.compile("(?i)\\b(FOB|FCA|CIF|CFR|EXW|DAP|DDP)\\b.*");
-        Matcher im = incoPat.matcher(block);
-        if (im.find()) {
-            return im.group(0).trim();
+
+        String best = null;
+        for (int headerIdx = 0; headerIdx < texts.size(); headerIdx++) {
+            String low = texts.get(headerIdx).toLowerCase(Locale.ROOT);
+            if (!low.contains("terms of delivery")) continue;
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 30); i++) {
+                String line = texts.get(i).trim();
+                if (line.isBlank()) continue;
+                String l2 = line.toLowerCase(Locale.ROOT);
+                if (l2.contains("time of delivery") || l2.contains("quantity per artic")
+                        || l2.contains("planning market") || l2.contains("% total")) {
+                    break;
+                }
+                if (l2.startsWith("by accepting") || l2.startsWith("(i)") || l2.startsWith("(ii)") || l2.startsWith("(iii)")) {
+                    break;
+                }
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(line);
+            }
+
+            String block = sb.toString().trim();
+            if (block.isBlank()) continue;
+
+            Matcher m = transportPat.matcher(block);
+            if (m.find()) {
+                String s = block.substring(m.start()).trim();
+                return s.length() > 2000 ? s.substring(0, 2000) : s;
+            }
+            Matcher im = incoPat.matcher(block);
+            if (im.find()) {
+                String s = im.group(0).trim();
+                return s.length() > 2000 ? s.substring(0, 2000) : s;
+            }
+
+            if (best == null) best = block;
         }
 
-        // Last fallback: return the whole block (trimmed)
-        return block.length() > 200 ? block.substring(0, 200) : block;
+        if (best == null || best.isBlank()) return null;
+        return best.length() > 2000 ? best.substring(0, 2000) : best;
     }
 
     /**
@@ -2609,27 +2610,31 @@ public class OcrNewService {
      */
     private static List<Map<String, String>> extractPurchaseOrderTimeOfDelivery(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
-        if (allLines == null || allLines.isEmpty()) {
-            log.debug("[PO-TIME-DELIVERY] allLines is null or empty");
-            return out;
-        }
+        if (allLines == null || allLines.isEmpty()) return out;
 
-        List<String> texts = new ArrayList<>();
+        List<OcrNewLine> lines = new ArrayList<>();
         for (OcrNewLine l : allLines) {
-            if (l != null && l.getText() != null) {
-                texts.add(oneLine(l.getText()).trim());
-            }
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            lines.add(OcrNewLine.builder()
+                    .page(l.getPage())
+                    .text(t)
+                    .left(l.getLeft())
+                    .top(l.getTop())
+                    .right(l.getRight())
+                    .bottom(l.getBottom())
+                    .confidence(l.getConfidence())
+                    .words(l.getWords())
+                    .build());
         }
 
-        log.info("[PO-TIME-DELIVERY] Searching in {} text lines", texts.size());
-
-        // Find "Time of Delivery" header
         int headerIdx = -1;
-        for (int i = 0; i < texts.size(); i++) {
-            String low = texts.get(i).toLowerCase(Locale.ROOT);
+        for (int i = 0; i < lines.size(); i++) {
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
             if (low.contains("time of delivery")) {
                 headerIdx = i;
-                log.info("[PO-TIME-DELIVERY] Found header at line {}: {}", i, texts.get(i));
+                log.info("[PO-TIME-DELIVERY] Found header at line {}: {}", i, lines.get(i).getText());
                 break;
             }
         }
@@ -2638,12 +2643,26 @@ public class OcrNewService {
             return out;
         }
 
+        int headerPage = lines.get(headerIdx).getPage();
+        int planningLeft = 450;
+        int qtyLeft = 1800;
+        for (int i = headerIdx; i < Math.min(lines.size(), headerIdx + 10); i++) {
+            if (lines.get(i).getPage() != headerPage) break;
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
+            if (low.contains("planning markets")) {
+                planningLeft = Math.max(0, lines.get(i).getLeft() - 50);
+            }
+            if (low.equals("quantity") || low.contains("quantity %")) {
+                qtyLeft = Math.max(planningLeft + 200, lines.get(i).getLeft() - 50);
+            }
+        }
+
         Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+        Pattern planningTokenPat = Pattern.compile("\\b[A-Z]{2}\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)\\b");
 
-        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 60); i++) {
-            String line = texts.get(i).trim();
-            if (line.isBlank()) continue;
-
+        for (int i = headerIdx + 1; i < Math.min(lines.size(), headerIdx + 120); i++) {
+            OcrNewLine lineObj = lines.get(i);
+            String line = lineObj.getText();
             String low = line.toLowerCase(Locale.ROOT);
             if (low.contains("quantity per artic") || low.contains("article no")
                     || low.contains("total quantity") || low.startsWith("total:")) {
@@ -2651,51 +2670,103 @@ public class OcrNewService {
             }
 
             Matcher dm = DATE_PATTERN.matcher(line);
-            if (!dm.find()) {
-                continue;
-            }
+            if (!dm.find()) continue;
 
             String timeOfDelivery = dm.group(0).trim();
-            String remainder = line.substring(dm.end()).trim();
 
-            StringBuilder planningMarketsBuf = new StringBuilder();
+            int page = lineObj.getPage();
+            int rowTop = lineObj.getTop();
+            int rowTopMin = Math.max(0, rowTop - 10);
+            int rowBottomMax = rowTop + 140;
+
+            for (int j = i + 1; j < Math.min(lines.size(), headerIdx + 200); j++) {
+                OcrNewLine next = lines.get(j);
+                if (next.getPage() != page) {
+                    if (next.getPage() > page) break;
+                    continue;
+                }
+                String t = next.getText();
+                String tLow = t.toLowerCase(Locale.ROOT);
+                if (tLow.contains("quantity per artic") || tLow.contains("article no")
+                        || tLow.contains("total quantity") || tLow.startsWith("total:")) {
+                    break;
+                }
+                Matcher dm2 = DATE_PATTERN.matcher(t);
+                if (dm2.find()) {
+                    rowBottomMax = Math.max(rowTop + 20, next.getTop() - 5);
+                    break;
+                }
+            }
+
+            String planningMarkets = "";
             String quantity = "";
             String percentTotalQty = "";
 
-            for (int j = i; j < Math.min(texts.size(), i + 6); j++) {
-                String seg = texts.get(j).trim();
-                if (seg.isBlank()) continue;
-                String segLow = seg.toLowerCase(Locale.ROOT);
-                if (j > i) {
-                    Matcher dm2 = DATE_PATTERN.matcher(seg);
-                    if (dm2.find()) break;
-                    if (segLow.contains("quantity per artic") || segLow.contains("article no")
-                            || segLow.contains("total quantity") || segLow.startsWith("total:")) {
-                        break;
+            List<OcrNewLine> rowLines = new ArrayList<>();
+            for (int k = headerIdx + 1; k < Math.min(lines.size(), headerIdx + 200); k++) {
+                OcrNewLine cand = lines.get(k);
+                if (cand.getPage() != page) {
+                    if (cand.getPage() > page) break;
+                    continue;
+                }
+                if (cand.getBottom() < rowTopMin) continue;
+                if (cand.getTop() > rowBottomMax) continue;
+
+                rowLines.add(cand);
+            }
+
+            rowLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            StringBuilder planBuf = new StringBuilder();
+            for (OcrNewLine rl : rowLines) {
+                if (rl.getLeft() >= planningLeft && rl.getLeft() < qtyLeft && rl.getRight() < qtyLeft + 200) {
+                    String candidate = rl.getText();
+                    if (candidate.equalsIgnoreCase("planning markets")) continue;
+                    if (candidate.equalsIgnoreCase("total") || candidate.toLowerCase(Locale.ROOT).startsWith("total:")) continue;
+                    if (DATE_PATTERN.matcher(candidate).find()) continue;
+
+                    List<String> tokens = new ArrayList<>();
+                    Matcher tokM = planningTokenPat.matcher(candidate);
+                    while (tokM.find()) {
+                        tokens.add(tokM.group().replaceAll("\\s+", " ").trim());
+                    }
+                    if (tokens.isEmpty()) {
+                        Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(candidate);
+                        while (pmMatcher.find()) {
+                            tokens.add(pmMatcher.group().trim());
+                        }
+                    }
+                    if (tokens.isEmpty()) {
+                        Matcher pm2 = DEST_COUNTRY_CODE_PAT.matcher(candidate);
+                        while (pm2.find()) {
+                            tokens.add(pm2.group().replaceAll("\\s+", "").toUpperCase(Locale.ROOT));
+                        }
+                    }
+
+                    if (!tokens.isEmpty()) {
+                        if (planBuf.length() > 0) planBuf.append(", ");
+                        planBuf.append(String.join(", ", tokens));
+                    } else {
+                        String cleaned = candidate.replaceAll("\\s+", " ").trim();
+                        if (!cleaned.isBlank()) {
+                            if (planBuf.length() > 0) planBuf.append(", ");
+                            planBuf.append(cleaned);
+                        }
                     }
                 }
 
-                String candidate = (j == i) ? remainder : seg;
-
-                Matcher qpMatcher = qtyPercentPat.matcher(candidate);
-                if (qpMatcher.find()) {
-                    quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
-                    percentTotalQty = qpMatcher.group(2).trim();
-                    candidate = candidate.substring(0, qpMatcher.start()).trim();
-                }
-
-                Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(candidate);
-                List<String> pmCodes = new ArrayList<>();
-                while (pmMatcher.find()) {
-                    pmCodes.add(pmMatcher.group().trim());
-                }
-                if (!pmCodes.isEmpty()) {
-                    if (planningMarketsBuf.length() > 0) planningMarketsBuf.append(", ");
-                    planningMarketsBuf.append(String.join(", ", pmCodes));
+                if (rl.getLeft() >= qtyLeft) {
+                    Matcher qpMatcher = qtyPercentPat.matcher(rl.getText());
+                    if (qpMatcher.find()) {
+                        quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
+                        percentTotalQty = qpMatcher.group(2).trim();
+                    }
                 }
             }
+            planningMarkets = planBuf.toString().trim();
 
-            String planningMarkets = planningMarketsBuf.toString().trim();
             Map<String, String> row = new LinkedHashMap<>();
             row.put("timeOfDelivery", timeOfDelivery);
             row.put("planningMarkets", planningMarkets);
