@@ -1135,10 +1135,94 @@ public class OcrNewService {
                 out.add(currentRow[0]);
             }
 
+            // IMPORTANT: reconcile Solid FIRST, so fillMissingAssortmentValues
+            // gets correct Solid values when deriving Assortment.
+            reconcileSolidWithTotal(out, pageOutStart);
             fillMissingAssortmentValues(out, pageOutStart, texts);
         }
 
         return out;
+    }
+
+    /**
+     * Reconcile the Solid row for a page using the Total row as a trusted reference.
+     *
+     * The parser sometimes under-counts Solid sizes due to OCR errors:
+     *   - a size value misread as a single digit (e.g. "41" -> "4"),
+     *   - a size line skipped entirely (so the size stays 0).
+     *
+     * When the Total row is internally consistent (its per-size values sum to
+     * its "total" field) we trust it and set
+     *   Solid[size] = Total[size] - Assortment[size]
+     * for every size. This cleanly fixes both under-count scenarios without
+     * guessing which size was wrong.
+     *
+     * Must run BEFORE {@link #fillMissingAssortmentValues} because that method
+     * derives Assortment from {@code Total - Solid}; a wrong Solid corrupts it.
+     */
+    private static void reconcileSolidWithTotal(List<Map<String, String>> rows, int startIdx) {
+        if (rows == null || startIdx >= rows.size()) return;
+
+        Map<String, String> assortment = null, solid = null, total = null;
+        for (int i = startIdx; i < rows.size(); i++) {
+            String type = rows.get(i).getOrDefault("type", "");
+            if ("Assortment".equals(type) && assortment == null) assortment = rows.get(i);
+            else if ("Solid".equals(type) && solid == null) solid = rows.get(i);
+            else if ("Total".equals(type) && total == null) total = rows.get(i);
+        }
+
+        if (solid == null || total == null) return;
+
+        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
+
+        // Only trust Total if its per-size values sum equals its "total" field.
+        int totalExpected;
+        try {
+            totalExpected = Integer.parseInt(total.getOrDefault("total", "0").replaceAll("\\s+", ""));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        if (totalExpected <= 0) return;
+
+        int totalSum = 0;
+        for (String sz : sizes) {
+            try {
+                totalSum += Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (totalSum != totalExpected) return; // Total row not self-consistent, don't trust it
+
+        // Reconcile Solid: Solid[size] = Total[size] - Assortment[size]
+        boolean changed = false;
+        int newSolidSum = 0;
+        for (String sz : sizes) {
+            int totVal = 0, assortVal = 0, solidVal = 0;
+            try {
+                totVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+            try {
+                if (assortment != null) {
+                    assortVal = Integer.parseInt(assortment.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                }
+            } catch (NumberFormatException ignored) {}
+            try {
+                solidVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+
+            int expectedSolid = Math.max(0, totVal - assortVal);
+            if (solidVal != expectedSolid) {
+                log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}) country={}",
+                        sz, solidVal, expectedSolid, totVal, assortVal,
+                        solid.getOrDefault("destinationCountry", ""));
+                solid.put(sz, String.valueOf(expectedSolid));
+                changed = true;
+            }
+            newSolidSum += expectedSolid;
+        }
+
+        if (changed) {
+            solid.put("total", String.valueOf(newSolidSum));
+        }
     }
 
     private static void fillMissingAssortmentValues(
@@ -1280,43 +1364,16 @@ public class OcrNewService {
             } catch (NumberFormatException ignored) {}
         }
         
-        // If total is known, verify sizes sum matches total
-        // If not, try to find and correct a single suspicious size value
+        // NOTE: Previously there was "verification" logic here that tried to correct
+        // a size value when sum != total by adding the entire diff to the first size
+        // with value < 10. This was removed because it caused incorrect results when
+        // multiple sizes had OCR errors (e.g., Malaysia page: XS misread as 4 AND M
+        // line missed entirely -> XS incorrectly corrected to 82 instead of 41).
+        //
+        // Correction is now handled by reconcileSolidWithTotal() which uses the Total
+        // row as a trusted reference: Solid[size] = Total[size] - Assortment[size].
+
         String tot = row.get("total");
-        if (tot != null && !tot.isBlank()) {
-            try {
-                int expectedTotal = Integer.parseInt(tot.replaceAll("\\s+", ""));
-                if (expectedTotal > 0 && sum != expectedTotal) {
-                    // Find a size that looks suspicious (single digit when others are larger, or very small compared to difference)
-                    int diff = expectedTotal - sum;
-                    if (diff > 0) {
-                        // Look for a size that could be corrected
-                        // Common OCR error: "41" read as "A" converted to "4", diff would be 37
-                        for (String sz : sizes) {
-                            String v = row.get(sz);
-                            if (v == null) continue;
-                            try {
-                                int val = Integer.parseInt(v.replaceAll("\\s+", ""));
-                                // If this size is small (single digit or <10) and adding diff makes sense
-                                // e.g., val=4, diff=37 => corrected=41
-                                if (val < 10 && val > 0) {
-                                    int corrected = val + diff;
-                                    // Sanity check: corrected value should be reasonable (not too large)
-                                    if (corrected > 0 && corrected < 1000) {
-                                        log.info("[SIZE-VERIFY] Correcting {} from {} to {} (total={}, sum was {})", 
-                                                sz, val, corrected, expectedTotal, sum);
-                                        row.put(sz, String.valueOf(corrected));
-                                        sum = expectedTotal; // Update sum
-                                        break;
-                                    }
-                                }
-                            } catch (NumberFormatException ignored) {}
-                        }
-                    }
-                }
-            } catch (NumberFormatException ignored) {}
-        }
-        
         // If total missing or blank: set computed sum if we had any numeric values; otherwise default to 0
         if (tot == null || tot.isBlank()) {
             row.put("total", String.valueOf(anyNumeric ? sum : 0));
