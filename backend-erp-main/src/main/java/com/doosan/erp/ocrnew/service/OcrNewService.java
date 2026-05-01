@@ -218,6 +218,95 @@ public class OcrNewService {
         return out;
     }
 
+    private static void fillMissingPurchaseOrderInvoiceAvgPriceCountries(
+            List<Map<String, String>> poInvoiceAvgPrice,
+            List<OcrNewLine> allLines,
+            String termsWithCountries
+    ) {
+        if (poInvoiceAvgPrice == null) return;
+        if (allLines == null || allLines.isEmpty()) return;
+
+        String fallbackCountryList = null;
+        if (termsWithCountries != null && !termsWithCountries.isBlank()) {
+            String firstLine = termsWithCountries.split("\\R", 2)[0].trim();
+
+            // Strict comma-separated list: "SE, DE, ..."
+            Pattern countryListPat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)+[A-Z]{2}$");
+            if (countryListPat.matcher(firstLine).matches()) {
+                fallbackCountryList = firstLine;
+            } else {
+                // Robust mode: extract 2-letter country codes from the line even if it's
+                // mixed with PM codes or parentheses: "SE (PMSCA), US (PM-US)"
+                Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(firstLine);
+                LinkedHashSet<String> codes = new LinkedHashSet<>();
+                while (m.find()) {
+                    String code = m.group(1);
+                    if (code != null && !code.isBlank()) codes.add(code.trim());
+                }
+                if (!codes.isEmpty()) {
+                    fallbackCountryList = String.join(", ", codes);
+                }
+            }
+        }
+        if (fallbackCountryList == null || fallbackCountryList.isBlank()) return;
+
+        // If we already have a multi-country row, do nothing.
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            String c = r == null ? null : r.get("country");
+            if (c != null && c.contains(",")) return;
+        }
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l != null && l.getText() != null) {
+                texts.add(oneLine(l.getText()).trim());
+            }
+        }
+
+        int headerIdx = -1;
+        for (int i = 0; i < texts.size(); i++) {
+            if (texts.get(i).toLowerCase(Locale.ROOT).contains("invoice average price")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return;
+
+        Pattern priceOnlyPat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})$");
+        Set<String> detectedPrices = new LinkedHashSet<>();
+        for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 40); i++) {
+            String line = texts.get(i);
+            if (line == null) continue;
+            String s = line.trim();
+            if (s.isBlank()) continue;
+            String low = s.toLowerCase(Locale.ROOT);
+            if (low.contains("sales sample") || low.contains("terms of delivery")
+                    || low.contains("time of delivery") || low.contains("quantity per artic")) {
+                break;
+            }
+            if (priceOnlyPat.matcher(s).matches()) {
+                detectedPrices.add(s);
+            }
+        }
+        if (detectedPrices.isEmpty()) return;
+
+        Set<String> existingPrices = new HashSet<>();
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            String p = r == null ? null : r.get("invoiceAveragePrice");
+            if (p != null && !p.isBlank()) existingPrices.add(p.trim());
+        }
+
+        for (String price : detectedPrices) {
+            if (existingPrices.contains(price)) continue;
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("invoiceAveragePrice", price);
+            row.put("country", fallbackCountryList);
+            poInvoiceAvgPrice.add(1, row);
+            log.info("[PO-INVOICE-PRICE] Filled missing row from Terms of Delivery: {} | {}", price, fallbackCountryList);
+            break;
+        }
+    }
+
     private static void fillMissingPurchaseOrderQuantityPerArticleColour(List<Map<String, String>> rows, List<OcrNewLine> allLines) {
         if (rows == null || rows.isEmpty() || allLines == null || allLines.isEmpty()) return;
 
@@ -2169,6 +2258,12 @@ public class OcrNewService {
                 formFields.put("Terms of Delivery", termsWithCountries);
             }
 
+            String termsForInvoiceFallback = termsWithCountries;
+            if (termsForInvoiceFallback == null || termsForInvoiceFallback.isBlank()) {
+                termsForInvoiceFallback = formFields.get("Terms of Delivery");
+            }
+            fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -3713,6 +3808,7 @@ public class OcrNewService {
         // - one line:  "6.85 USD IN"
         Pattern priceOnlyPat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})$");
         Pattern countryOnlyPat = Pattern.compile("^([A-Z]{2})$");
+        Pattern countryListPat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)+[A-Z]{2}$");
         Pattern priceCountrySameLinePat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})\\s+([A-Z]{2})$");
 
         String lastPrice = "";
@@ -3744,12 +3840,14 @@ public class OcrNewService {
                 continue;
             }
 
-            if (countryOnly.find() && !lastPrice.isEmpty()) {
+            String cleanedCountryLine = line.replaceAll("\\s+", " ").replaceAll(",\\s*$", "").trim();
+            boolean isCountry = countryOnlyPat.matcher(cleanedCountryLine).find() || countryListPat.matcher(cleanedCountryLine).find();
+            if (isCountry && !lastPrice.isEmpty()) {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("invoiceAveragePrice", lastPrice);
-                row.put("country", line);
+                row.put("country", cleanedCountryLine);
                 out.add(row);
-                log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", lastPrice, line);
+                log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", lastPrice, cleanedCountryLine);
                 lastPrice = "";
             }
         }
