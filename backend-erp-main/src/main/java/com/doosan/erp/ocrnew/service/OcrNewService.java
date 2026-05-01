@@ -72,6 +72,14 @@ public class OcrNewService {
     private static final Pattern DEST_COUNTRY_CODE_PAT =
             Pattern.compile("\\bPM[- ]?[A-Z0-9]{2,}\\b", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern COUNTRY_CODE_TOKEN_PAT =
+            Pattern.compile("(?<![A-Z0-9])[A-Z]{2}(?![A-Z0-9])");
+
+    private static final Set<String> PO_DELIVERY_COUNTRY_CODES = Set.of(
+            "SE", "GB", "DE", "BE", "US", "PL", "JP", "KR", "CH", "CA", "TR", "MX", "MY", "ME", "IX",
+            "TH", "RS", "ID", "PH", "IN", "CO", "VN", "PA", "EC"
+    );
+
     private final PdfToImageRenderer pdfToImageRenderer = new PdfToImageRenderer();
     private final KeyValueParser keyValueParser = new KeyValueParser();
     private final TableParser tableParser = new TableParser();
@@ -832,24 +840,79 @@ public class OcrNewService {
     private static String inferTwoLetterCountryFromPageText(List<OcrNewLine> allLines, int page) {
         if (allLines == null || allLines.isEmpty()) return "";
         if (page <= 0) return "";
+
+        List<String> pageTexts = new ArrayList<>();
+        LinkedHashSet<String> tokenCandidates = new LinkedHashSet<>();
         boolean hasJapan = false;
         boolean hasKorea = false;
+        boolean hasPhilippines = false;
         boolean hasKawasaki = false;
         boolean hasTokyo = false;
         boolean hasSeoul = false;
+        boolean hasMakati = false;
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             if (l.getPage() != page) continue;
-            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+            String text = oneLine(l.getText());
+            pageTexts.add(text);
+
+            Matcher m = COUNTRY_CODE_TOKEN_PAT.matcher(text);
+            while (m.find()) {
+                String code = m.group();
+                if (PO_DELIVERY_COUNTRY_CODES.contains(code)) {
+                    tokenCandidates.add(code);
+                }
+            }
+
+            String low = text.toLowerCase(Locale.ROOT);
             if (low.contains("japan")) hasJapan = true;
             if (low.contains("korea")) hasKorea = true;
+            if (low.contains("philippines")) hasPhilippines = true;
             if (low.contains("kawasaki")) hasKawasaki = true;
             if (low.contains("tokyo")) hasTokyo = true;
             if (low.contains("seoul")) hasSeoul = true;
+            if (low.contains("makati")) hasMakati = true;
+        }
+
+        int termsHeaderIdx = -1;
+        for (int i = 0; i < pageTexts.size(); i++) {
+            String low = pageTexts.get(i).toLowerCase(Locale.ROOT);
+            if (low.contains("terms of delivery")) {
+                termsHeaderIdx = i;
+                break;
+            }
+        }
+
+        if (termsHeaderIdx >= 0) {
+            int end = Math.min(pageTexts.size(), termsHeaderIdx + 12);
+            for (int i = termsHeaderIdx + 1; i < end; i++) {
+                String trimmed = pageTexts.get(i).trim();
+                if (trimmed.length() == 2) {
+                    String code = trimmed.toUpperCase(Locale.ROOT);
+                    if (PO_DELIVERY_COUNTRY_CODES.contains(code)) {
+                        return code;
+                    }
+                }
+            }
+        }
+
+        for (String t : pageTexts) {
+            String trimmed = t.trim();
+            if (trimmed.length() == 2) {
+                String code = trimmed.toUpperCase(Locale.ROOT);
+                if (PO_DELIVERY_COUNTRY_CODES.contains(code)) {
+                    return code;
+                }
+            }
+        }
+
+        if (!tokenCandidates.isEmpty()) {
+            return tokenCandidates.iterator().next();
         }
 
         if (hasJapan || hasKawasaki || hasTokyo) return "JP";
         if (hasKorea || hasSeoul) return "KR";
+        if (hasPhilippines || hasMakati) return "PH";
         return "";
     }
 
