@@ -685,7 +685,8 @@ public class OcrNewService {
             List<BufferedImage> pageImages,
             TesseractOcrEngine ocrEngine,
             String fileName,
-            boolean effectiveDebug
+            boolean effectiveDebug,
+            Set<String> allowedCountryCodes
     ) {
         if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
         if (allLines == null || allLines.isEmpty()) return;
@@ -769,7 +770,8 @@ public class OcrNewService {
             if (twoLetterCountryPat.matcher(firstLine).matches()) continue;
 
             String inferred = inferTwoLetterCountryFromPageText(allLines, page);
-            if (twoLetterCountryPat.matcher(inferred).matches()) {
+            if (twoLetterCountryPat.matcher(inferred).matches()
+                    && (allowedCountryCodes == null || allowedCountryCodes.isEmpty() || allowedCountryCodes.contains(inferred))) {
                 row.put("termsOfDelivery", inferred + "\n" + existing);
                 filled++;
                 log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} filledCountry='{}' via=inferFromPageText", fileName, page, inferred);
@@ -959,6 +961,13 @@ public class OcrNewService {
                 continue;
             }
 
+            if (allowedCountryCodes != null && !allowedCountryCodes.isEmpty() && !allowedCountryCodes.contains(regionText)) {
+                if (effectiveDebug) {
+                    log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} rejectedCountry='{}' reason=notInAllowedSet", fileName, page, regionText);
+                }
+                continue;
+            }
+
             row.put("termsOfDelivery", regionText + "\n" + existing);
             filled++;
             log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} filledCountry='{}' regionBBox=[{},{}-{},{}]", fileName, page, regionText, resolvedLeft, resolvedTop, resolvedRight, resolvedBottom);
@@ -1033,6 +1042,23 @@ public class OcrNewService {
         if (hasKorea || hasSeoul) return "KR";
         if (hasPhilippines || hasMakati) return "PH";
         return "";
+    }
+
+    private static Set<String> extractTwoLetterCountryCodesFromTermsFirstLine(String terms) {
+        if (terms == null || terms.isBlank()) return Set.of();
+        String t = terms.trim();
+        String firstLine = t.split("\\R", 2)[0].trim();
+        if (firstLine.isBlank()) return Set.of();
+
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(firstLine);
+        while (m.find()) {
+            String code = m.group(1);
+            if (code != null && !code.isBlank() && PO_DELIVERY_COUNTRY_CODES.contains(code)) {
+                out.add(code);
+            }
+        }
+        return out;
     }
 
     private static BufferedImage scaleUp(BufferedImage src, int scale) {
@@ -2785,7 +2811,8 @@ public class OcrNewService {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
             List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
-            fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug);
+            Set<String> allowedTermsCountries = extractTwoLetterCountryCodesFromTermsFirstLine(formFields.get("Terms of Delivery"));
+            fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug, allowedTermsCountries);
 
             List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleByPage(allLines);
             if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
