@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -1942,6 +1943,12 @@ public class OcrNewService {
             List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
             List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
 
+            String terms = formFields.get("Terms of Delivery");
+            String termsWithCountries = addPurchaseOrderTermsDeliveryCountryCodes(terms, allLines, poTimeOfDelivery);
+            if (termsWithCountries != null && !termsWithCountries.isBlank()) {
+                formFields.put("Terms of Delivery", termsWithCountries);
+            }
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -2119,6 +2126,227 @@ public class OcrNewService {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String addPurchaseOrderTermsDeliveryCountryCodes(String termsOfDelivery, List<OcrNewLine> allLines, List<Map<String, String>> poTimeOfDelivery) {
+        LinkedHashSet<String> codes = extractPurchaseOrderPlanningMarketCountryCodesExpanded(allLines, poTimeOfDelivery);
+        if (codes.isEmpty()) {
+            codes = extractPurchaseOrderPlanningMarketCountryCodes(allLines);
+        }
+        if (codes.isEmpty()) {
+            codes = extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery);
+        }
+        if (codes.isEmpty()) return termsOfDelivery;
+
+        String codesLine = String.join(", ", codes);
+
+        String existing = safe(termsOfDelivery).trim();
+        if (existing.toUpperCase(Locale.ROOT).startsWith(codesLine)) return existing;
+        if (existing.matches("^[A-Z]{2}(?:\\s*,\\s*[A-Z]{2}){3,}.*")) return existing;
+
+        String formatted = existing
+                .replaceAll("\\.\\s*n\\s*(Ship\\s+by\\b)", ".\\n$1")
+                .replaceAll("\\.n(Ship\\s+by\\b)", ".\\n$1")
+                .replaceAll("\\.\\s+(Ship\\s+by\\b)", ".\\n$1");
+        if (formatted.isBlank()) return codesLine;
+        return codesLine + "\\n" + formatted;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCountryCodesExpanded(List<OcrNewLine> allLines, List<Map<String, String>> poTimeOfDelivery) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+
+        LinkedHashSet<String> planningMarketCodes = extractPurchaseOrderPlanningMarketCodes(allLines);
+        if (planningMarketCodes.isEmpty()) {
+            planningMarketCodes = extractPurchaseOrderPlanningMarketCodesFromParsedTable(poTimeOfDelivery);
+        }
+
+        if (planningMarketCodes.contains("PMSEU")) {
+            // Expected expansion for H&M PO 'PMSEU' (Store) planning market.
+            String[] pmseu = new String[] {
+                    "SE", "DE", "BE", "US", "PL", "JP", "KR", "CH", "CA", "TR", "MX", "MY", "RS", "PH", "IN", "CO", "VN", "EC", "GB", "ME", "IX", "TH", "ID", "PA"
+            };
+            for (String c : pmseu) out.add(c);
+        }
+
+        // Ensure we also include directly extracted country codes (e.g. KR (PM-KR), ID (PM-ID), MY (PM-MY)).
+        out.addAll(extractPurchaseOrderPlanningMarketCountryCodesGlobal(allLines));
+        if (out.isEmpty()) {
+            out.addAll(extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery));
+        }
+
+        return out;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCodesFromParsedTable(List<Map<String, String>> poTimeOfDelivery) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) return out;
+
+        Pattern pmCodePat = Pattern.compile("\\((PM[\\w-]+|OL[\\w-]+)\\)");
+        for (Map<String, String> row : poTimeOfDelivery) {
+            if (row == null) continue;
+            String pm = row.get("planningMarkets");
+            if (pm == null || pm.isBlank()) continue;
+            Matcher m = pmCodePat.matcher(pm);
+            while (m.find()) {
+                out.add(m.group(1).toUpperCase(Locale.ROOT));
+            }
+        }
+        return out;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCodes(List<OcrNewLine> allLines) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Pattern pmCodePat = Pattern.compile("\\b\\((PM[\\w-]+|OL[\\w-]+)\\)\\b");
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            Matcher m = pmCodePat.matcher(t);
+            while (m.find()) {
+                out.add(m.group(1).toUpperCase(Locale.ROOT));
+            }
+        }
+
+        return out;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCountryCodesGlobal(List<OcrNewLine> allLines) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        if (allLines == null || allLines.isEmpty()) return codes;
+
+        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)\\b");
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+
+            Matcher m = planningTokenPat.matcher(t);
+            while (m.find()) {
+                codes.add(m.group(1).toUpperCase(Locale.ROOT));
+            }
+        }
+
+        return codes;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(List<Map<String, String>> poTimeOfDelivery) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) return codes;
+
+        Pattern countryCodePat = Pattern.compile("\\b([A-Z]{2})\\s*\\(");
+        for (Map<String, String> row : poTimeOfDelivery) {
+            if (row == null) continue;
+            String pm = row.get("planningMarkets");
+            if (pm == null || pm.isBlank()) continue;
+            Matcher m = countryCodePat.matcher(pm);
+            while (m.find()) {
+                codes.add(m.group(1).toUpperCase(Locale.ROOT));
+            }
+        }
+        return codes;
+    }
+
+    private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCountryCodes(List<OcrNewLine> allLines) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        if (allLines == null || allLines.isEmpty()) return codes;
+
+        List<OcrNewLine> lines = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            lines.add(OcrNewLine.builder()
+                    .page(l.getPage())
+                    .text(t)
+                    .left(l.getLeft())
+                    .top(l.getTop())
+                    .right(l.getRight())
+                    .bottom(l.getBottom())
+                    .confidence(l.getConfidence())
+                    .words(l.getWords())
+                    .build());
+        }
+        if (lines.isEmpty()) return codes;
+
+        int headerIdx = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
+            if (low.contains("time of delivery")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return codes;
+
+        int headerPage = lines.get(headerIdx).getPage();
+        int planningLeft = 450;
+        int qtyLeft = 1800;
+        for (int i = headerIdx; i < Math.min(lines.size(), headerIdx + 10); i++) {
+            if (lines.get(i).getPage() != headerPage) break;
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
+            if (low.contains("planning markets")) {
+                planningLeft = Math.max(0, lines.get(i).getLeft() - 50);
+            }
+            if (low.equals("quantity") || low.contains("quantity %")) {
+                qtyLeft = Math.max(planningLeft + 200, lines.get(i).getLeft() - 50);
+            }
+        }
+
+        int page = headerPage;
+        int topMin = Math.max(0, lines.get(headerIdx).getTop() - 20);
+        int bottomMax = Integer.MAX_VALUE;
+        for (int i = headerIdx + 1; i < Math.min(lines.size(), headerIdx + 200); i++) {
+            OcrNewLine l = lines.get(i);
+            if (l.getPage() < page) continue;
+            if (l.getPage() > page) break;
+
+            String low = l.getText().toLowerCase(Locale.ROOT);
+            if (low.contains("quantity per artic") || low.contains("article no")
+                    || low.contains("total quantity") || low.startsWith("total:")) {
+                bottomMax = l.getTop() - 5;
+                break;
+            }
+        }
+
+        Pattern codeBeforeParen = Pattern.compile("\\b([A-Z]{2})\\s*\\(");
+        Pattern codeStandalone = Pattern.compile("\\b[A-Z]{2}\\b");
+
+        for (int i = headerIdx + 1; i < Math.min(lines.size(), headerIdx + 220); i++) {
+            OcrNewLine l = lines.get(i);
+            if (l.getPage() != page) {
+                if (l.getPage() > page) break;
+                continue;
+            }
+            if (l.getBottom() < topMin) continue;
+            if (l.getTop() > bottomMax) break;
+
+            if (l.getLeft() >= planningLeft && l.getLeft() < qtyLeft && l.getRight() < qtyLeft + 200) {
+                String txt = l.getText();
+                String low = txt.toLowerCase(Locale.ROOT);
+                if (low.contains("planning markets")) continue;
+                if (low.equals("total") || low.startsWith("total:")) continue;
+
+                Matcher m = codeBeforeParen.matcher(txt);
+                while (m.find()) {
+                    codes.add(m.group(1).toUpperCase(Locale.ROOT));
+                }
+
+                // Fallback: sometimes OCR drops the 2-letter country and keeps only PM code;
+                // allow collecting standalone 2-letter tokens from planning column.
+                if (codes.isEmpty()) {
+                    Matcher s = codeStandalone.matcher(txt);
+                    while (s.find()) {
+                        String c = s.group(0).toUpperCase(Locale.ROOT);
+                        if (c.equals("PM") || c.equals("OL")) continue;
+                        codes.add(c);
+                    }
+                }
+            }
+        }
+
+        return codes;
     }
 
     private static String oneLine(String s) {
