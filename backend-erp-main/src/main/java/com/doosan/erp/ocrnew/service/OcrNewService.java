@@ -252,6 +252,133 @@ public class OcrNewService {
         }
     }
 
+    private static void normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(
+            List<Map<String, String>> poTermsOfDeliveryByPage,
+            String globalTerms
+    ) {
+        if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
+        if (globalTerms == null || globalTerms.isBlank()) return;
+
+        String globalBody = cleanPurchaseOrderTermsOfDeliveryText(stripLeadingCountryLine(globalTerms.trim()));
+        if (globalBody.isBlank()) return;
+
+        Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+
+        for (Map<String, String> row : poTermsOfDeliveryByPage) {
+            if (row == null) continue;
+            String page = row.get("page");
+            if (page != null && page.trim().equals("1")) continue;
+
+            String existing = row.get("termsOfDelivery");
+            if (existing == null || existing.isBlank()) continue;
+
+            String normalizedExisting = existing.trim();
+            String[] parts = normalizedExisting.split("\\R", 2);
+            String firstLine = parts.length > 0 ? parts[0].trim() : "";
+            String body = parts.length > 1 ? parts[1].trim() : "";
+
+            boolean bodyLooksValid = false;
+            String low = normalizedExisting.toLowerCase(Locale.ROOT);
+            if (low.contains("transport by") || low.contains("incoterms") || low.contains("ship by")) {
+                bodyLooksValid = true;
+            }
+            if (bodyLooksValid) continue;
+
+            String countryPrefix = "";
+            if (countryLinePat.matcher(firstLine).matches()) {
+                countryPrefix = firstLine;
+            }
+
+            if (!countryPrefix.isBlank()) {
+                row.put("termsOfDelivery", countryPrefix + "\n" + globalBody);
+            } else {
+                row.put("termsOfDelivery", globalBody);
+            }
+        }
+
+        // Always clean trailing noise even when the body looks valid (e.g. article code lines)
+        for (Map<String, String> row : poTermsOfDeliveryByPage) {
+            if (row == null) continue;
+            String existing = row.get("termsOfDelivery");
+            if (existing == null || existing.isBlank()) continue;
+
+            String normalizedExisting = existing.trim();
+            String[] parts = normalizedExisting.split("\\R", 2);
+            String firstLine = parts.length > 0 ? parts[0].trim() : "";
+            String body = parts.length > 1 ? parts[1].trim() : "";
+
+            Pattern countryLinePat2 = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+            if (countryLinePat2.matcher(firstLine).matches()) {
+                String cleanedBody = cleanPurchaseOrderTermsOfDeliveryText(body);
+                if (!cleanedBody.isBlank()) {
+                    row.put("termsOfDelivery", firstLine + "\n" + cleanedBody);
+                }
+            } else {
+                String cleaned = cleanPurchaseOrderTermsOfDeliveryText(normalizedExisting);
+                if (!cleaned.isBlank()) {
+                    row.put("termsOfDelivery", cleaned);
+                }
+            }
+        }
+    }
+
+    private static String stripLeadingCountryLine(String terms) {
+        if (terms == null) return "";
+        String t = terms.trim();
+        if (t.isBlank()) return "";
+        int nl = t.indexOf('\n');
+        if (nl < 0) return t;
+        String first = t.substring(0, nl).trim();
+        Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+        if (countryLinePat.matcher(first).matches()) {
+            return t.substring(nl + 1).trim();
+        }
+        return t;
+    }
+
+    private static String cleanPurchaseOrderTermsOfDeliveryText(String text) {
+        if (text == null) return "";
+        String t = text.trim();
+        if (t.isBlank()) return "";
+
+        String[] lines = t.split("\\R+");
+        List<String> out = new ArrayList<>();
+
+        int lastRelevantIdx = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String line = oneLine(lines[i]).trim();
+            if (line.isBlank()) continue;
+            out.add(line);
+
+            String low = line.toLowerCase(Locale.ROOT);
+            if (low.contains("transport by") || low.contains("incoterms") || low.contains("ship by") || low.contains("origin delivery information")) {
+                lastRelevantIdx = out.size() - 1;
+            }
+        }
+
+        // If we have a clear end marker like "Ship by ..." or "Origin Delivery Information", trim anything after it.
+        if (lastRelevantIdx >= 0 && lastRelevantIdx < out.size() - 1) {
+            out = new ArrayList<>(out.subList(0, lastRelevantIdx + 1));
+        }
+
+        // If still no marker, drop trailing numeric/article-like lines (common OCR spillover)
+        while (!out.isEmpty()) {
+            String last = out.get(out.size() - 1);
+            String low = last.toLowerCase(Locale.ROOT);
+
+            boolean looksLikeDelivery = low.contains("transport by") || low.contains("incoterms") || low.contains("ship by") || low.contains("origin delivery information");
+            boolean looksLikeArticle = last.matches("^\\d{2,}.*") || low.contains("usd") || low.contains("gpoo");
+
+            if (!looksLikeDelivery && looksLikeArticle) {
+                out.remove(out.size() - 1);
+                continue;
+            }
+            break;
+        }
+
+        return String.join("\n", out).trim();
+    }
+
     private static void fillMissingPurchaseOrderInvoiceAvgPriceCountries(
             List<Map<String, String>> poInvoiceAvgPrice,
             List<OcrNewLine> allLines,
@@ -2700,6 +2827,8 @@ public class OcrNewService {
             // use the proven-valid global extractor result (formFields) instead of accidentally
             // capturing nearby section/table headers.
             upsertPurchaseOrderTermsOfDeliveryPage1(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
+
+            normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
 
             String termsForInvoiceFallback = termsWithCountries;
             if (termsForInvoiceFallback == null || termsForInvoiceFallback.isBlank()) {
