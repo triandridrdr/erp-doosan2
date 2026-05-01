@@ -47,6 +47,34 @@ public class TesseractOcrEngine {
         }
     }
 
+    public String extractTextFromRegion(BufferedImage image, Rectangle region, int pageSegMode, String charWhitelist) {
+        try {
+            if (image == null) return "";
+            Rectangle r = region;
+            if (r == null) {
+                r = new Rectangle(0, 0, image.getWidth(), image.getHeight());
+            }
+
+            Tesseract tesseract = new Tesseract();
+            String lang = (language == null || language.isBlank()) ? "eng" : language;
+            configureDatapath(tesseract, lang);
+            tesseract.setLanguage(lang);
+            if (pageSegMode > 0) {
+                tesseract.setPageSegMode(pageSegMode);
+            }
+            tesseract.setTessVariable("preserve_interword_spaces", "1");
+            if (charWhitelist != null && !charWhitelist.isBlank()) {
+                tesseract.setTessVariable("tessedit_char_whitelist", charWhitelist);
+            }
+
+            String txt = tesseract.doOCR(image, r);
+            return txt == null ? "" : txt.replace('\u00A0', ' ').trim();
+        } catch (Throwable e) {
+            log.error("OCR-NEW Tesseract region OCR failed: {}", e.getMessage());
+            throw new BusinessException(ErrorCode.OCR_PROCESSING_FAILED, e);
+        }
+    }
+
     private void configureDatapath(Tesseract tesseract, String lang) {
         if (tessDataPath != null && !tessDataPath.isBlank()) {
             // User supplied a datapath; keep behavior but validate quickly to avoid native crash.

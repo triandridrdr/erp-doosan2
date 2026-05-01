@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -215,6 +216,148 @@ public class OcrNewService {
             log.debug("[TCB-LINES][SUMMARY] rowsParsed={}", out.size());
         }
         return out;
+    }
+
+    private static void fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromRegionOcr(
+            List<Map<String, String>> poTimeOfDelivery,
+            List<OcrNewLine> allLines,
+            BufferedImage page1Image,
+            TesseractOcrEngine ocrEngine,
+            String fileName
+    ) {
+        if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) return;
+        if (allLines == null || allLines.isEmpty()) return;
+        if (page1Image == null) return;
+        if (ocrEngine == null) return;
+
+        List<OcrNewLine> lines = new ArrayList<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            if (l.getPage() != 1) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            lines.add(OcrNewLine.builder()
+                    .page(l.getPage())
+                    .text(t)
+                    .left(l.getLeft())
+                    .top(l.getTop())
+                    .right(l.getRight())
+                    .bottom(l.getBottom())
+                    .confidence(l.getConfidence())
+                    .words(l.getWords())
+                    .build());
+        }
+        if (lines.isEmpty()) return;
+
+        int headerIdx = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
+            if (low.contains("time of delivery")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return;
+
+        int planningLeft = 450;
+        int qtyLeft = 1800;
+        for (int i = headerIdx; i < Math.min(lines.size(), headerIdx + 10); i++) {
+            String low = lines.get(i).getText().toLowerCase(Locale.ROOT);
+            if (low.contains("planning markets")) {
+                planningLeft = Math.max(0, lines.get(i).getLeft() - 50);
+            }
+            if (low.equals("quantity") || low.contains("quantity %")) {
+                qtyLeft = Math.max(planningLeft + 200, lines.get(i).getLeft() - 50);
+            }
+        }
+
+        Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*((?:PM|OL)[- ]?[A-Z0-9]{2,})\\s*\\)?");
+
+        int filled = 0;
+        for (Map<String, String> row : poTimeOfDelivery) {
+            if (row == null) continue;
+            String tod = row.get("timeOfDelivery");
+            if (tod == null || tod.isBlank()) continue;
+            String existing = row.get("planningMarkets");
+            if (existing != null && !existing.isBlank()) continue;
+
+            OcrNewLine dateLine = null;
+            for (int i = headerIdx + 1; i < Math.min(lines.size(), headerIdx + 200); i++) {
+                OcrNewLine cand = lines.get(i);
+                if (cand == null) continue;
+                if (!tod.trim().equalsIgnoreCase(cand.getText().trim())) continue;
+                dateLine = cand;
+                break;
+            }
+            if (dateLine == null) continue;
+
+            int rowTop = dateLine.getTop();
+            int rowTopMin = Math.max(0, rowTop - 35);
+            int rowBottomMax = rowTop + 140;
+
+            for (int j = headerIdx + 1; j < Math.min(lines.size(), headerIdx + 220); j++) {
+                OcrNewLine next = lines.get(j);
+                if (next.getTop() <= rowTop) continue;
+                String t = next.getText();
+                String tLow = t.toLowerCase(Locale.ROOT);
+                if (tLow.contains("quantity per artic") || tLow.contains("article no")
+                        || tLow.contains("total quantity") || tLow.startsWith("total:")) {
+                    break;
+                }
+                Matcher dm2 = DATE_PATTERN.matcher(t);
+                if (dm2.find()) {
+                    rowBottomMax = Math.max(rowTop + 20, Math.min(rowTop + 180, next.getTop() - 2));
+                    break;
+                }
+            }
+
+            int left = Math.max(0, planningLeft - 5);
+            int right = Math.min(page1Image.getWidth(), qtyLeft - 5);
+            int top = Math.max(0, rowTopMin);
+            int bottom = Math.min(page1Image.getHeight(), rowBottomMax);
+            int width = Math.max(0, right - left);
+            int height = Math.max(0, bottom - top);
+            if (width <= 5 || height <= 5) continue;
+
+            String whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789()-,% <";
+            String regionText = ocrEngine.extractTextFromRegion(page1Image, new Rectangle(left, top, width, height), 6, whitelist);
+            regionText = oneLine(regionText).trim();
+            if (regionText.isBlank()) continue;
+
+            List<String> tokens = new ArrayList<>();
+            Matcher tokM = planningTokenPat.matcher(regionText);
+            while (tokM.find()) {
+                String cc = tokM.group(1);
+                String code = tokM.group(2);
+                if (cc == null || code == null) continue;
+                cc = cc.trim().toUpperCase(Locale.ROOT);
+                code = code.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+                tokens.add(cc + " (" + code + ")");
+            }
+
+            String planning;
+            if (!tokens.isEmpty()) {
+                planning = String.join(", ", tokens);
+            } else {
+                String cleaned = regionText
+                        .replaceAll("\\s+", " ")
+                        .replaceAll("\\s*,\\s*", ", ")
+                        .trim();
+                if (cleaned.isBlank()) continue;
+                if (DATE_PATTERN.matcher(cleaned).find()) continue;
+                if (qtyPercentPat.matcher(cleaned).find()) continue;
+                planning = cleaned;
+            }
+
+            row.put("planningMarkets", planning);
+            filled++;
+            log.info("[PO-TIME-DELIVERY][REGION-OCR] file={} row={} filledPlanningMarkets='{}' regionBBox=[{},{}-{},{}]", fileName, tod.trim(), truncate(planning, 200), left, top, right, bottom);
+        }
+
+        if (filled > 0) {
+            log.info("[PO-TIME-DELIVERY][REGION-OCR] file={} filledPlanningMarketsRows={}", fileName, filled);
+        }
     }
 
     /**
@@ -1940,6 +2083,12 @@ public class OcrNewService {
 
             // ── Purchase Order specific extractions ────────────────────────────
             List<Map<String, String>> poTimeOfDelivery = extractPurchaseOrderTimeOfDelivery(allLines);
+            if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty() && pageImages != null && !pageImages.isEmpty()) {
+                fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromRegionOcr(poTimeOfDelivery, allLines, pageImages.get(0), ocrEngine, fname);
+            }
+            if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
+                fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
+            }
             List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
             List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
 
@@ -2145,9 +2294,9 @@ public class OcrNewService {
         if (existing.matches("^[A-Z]{2}(?:\\s*,\\s*[A-Z]{2}){3,}.*")) return existing;
 
         String formatted = existing
-                .replaceAll("\\.\\s*n\\s*(Ship\\s+by\\b)", ".\\n$1")
-                .replaceAll("\\.n(Ship\\s+by\\b)", ".\\n$1")
-                .replaceAll("\\.\\s+(Ship\\s+by\\b)", ".\\n$1");
+                .replaceAll("(?i)\\.\\s*n\\s*(ship\\s+by\\b)", ".\\n$1")
+                .replaceAll("(?i)\\.n(ship\\s+by\\b)", ".\\n$1")
+                .replaceAll("(?i)\\.\\s+(ship\\s+by\\b)", ".\\n$1");
         if (formatted.isBlank()) return codesLine;
         return codesLine + "\\n" + formatted;
     }
@@ -2198,7 +2347,7 @@ public class OcrNewService {
         LinkedHashSet<String> out = new LinkedHashSet<>();
         if (allLines == null || allLines.isEmpty()) return out;
 
-        Pattern pmCodePat = Pattern.compile("\\b\\((PM[\\w-]+|OL[\\w-]+)\\)\\b");
+        Pattern pmCodePat = Pattern.compile("\\((PM[\\w-]+|OL[\\w-]+)\\)");
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             String t = oneLine(l.getText()).trim();
@@ -2216,7 +2365,7 @@ public class OcrNewService {
         LinkedHashSet<String> codes = new LinkedHashSet<>();
         if (allLines == null || allLines.isEmpty()) return codes;
 
-        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)\\b");
+        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)");
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             String t = oneLine(l.getText()).trim();
@@ -2292,6 +2441,11 @@ public class OcrNewService {
             if (low.equals("quantity") || low.contains("quantity %")) {
                 qtyLeft = Math.max(planningLeft + 200, lines.get(i).getLeft() - 50);
             }
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[PO-TIME-DELIVERY][DIAG] headerPage={} headerTop={} planningLeft={} qtyLeft={}",
+                    headerPage, lines.get(headerIdx).getTop(), planningLeft, qtyLeft);
         }
 
         int page = headerPage;
@@ -2886,7 +3040,38 @@ public class OcrNewService {
         }
 
         Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
-        Pattern planningTokenPat = Pattern.compile("\\b[A-Z]{2}\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)\\b");
+        // Capture country prefix + planning market code; closing ')' is optional because OCR sometimes drops it.
+        // We will normalize the output to always include the closing ')'.
+        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*((?:PM|OL)[- ]?[A-Z0-9]{2,})\\s*\\)?");
+
+        java.util.function.Function<String, List<String>> extractPlanningTokens = (String candidate) -> {
+            List<String> tokens = new ArrayList<>();
+            if (candidate == null) return tokens;
+
+            Matcher tokM = planningTokenPat.matcher(candidate);
+            while (tokM.find()) {
+                String cc = tokM.group(1);
+                String code = tokM.group(2);
+                if (cc == null || code == null) continue;
+                cc = cc.trim().toUpperCase(Locale.ROOT);
+                code = code.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+                tokens.add(cc + " (" + code + ")");
+            }
+            if (tokens.isEmpty()) {
+                Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(candidate);
+                while (pmMatcher.find()) {
+                    tokens.add(pmMatcher.group().trim());
+                }
+            }
+            if (tokens.isEmpty()) {
+                Matcher pm2 = DEST_COUNTRY_CODE_PAT.matcher(candidate);
+                while (pm2.find()) {
+                    tokens.add(pm2.group().replaceAll("\\s+", "").toUpperCase(Locale.ROOT));
+                }
+            }
+
+            return tokens;
+        };
 
         for (int i = headerIdx + 1; i < Math.min(lines.size(), headerIdx + 120); i++) {
             OcrNewLine lineObj = lines.get(i);
@@ -2904,7 +3089,9 @@ public class OcrNewService {
 
             int page = lineObj.getPage();
             int rowTop = lineObj.getTop();
-            int rowTopMin = Math.max(0, rowTop - 10);
+            // Planning Markets text sometimes starts slightly above the date baseline (OCR bbox drift)
+            // so we need a wider capture window upward.
+            int rowTopMin = Math.max(0, rowTop - 35);
             int rowBottomMax = rowTop + 140;
 
             for (int j = i + 1; j < Math.min(lines.size(), headerIdx + 200); j++) {
@@ -2921,7 +3108,9 @@ public class OcrNewService {
                 }
                 Matcher dm2 = DATE_PATTERN.matcher(t);
                 if (dm2.find()) {
-                    rowBottomMax = Math.max(rowTop + 20, next.getTop() - 5);
+                    // The Planning Markets cell can be multi-line and may slightly overlap the next date line.
+                    // Stop just above the next date row to avoid stealing the next row's planning-market line.
+                    rowBottomMax = Math.max(rowTop + 20, Math.min(rowTop + 180, next.getTop() - 2));
                     break;
                 }
             }
@@ -2947,31 +3136,29 @@ public class OcrNewService {
                     .comparingInt(OcrNewLine::getTop)
                     .thenComparingInt(OcrNewLine::getLeft));
 
+            if (log.isDebugEnabled()) {
+                final int pl = planningLeft;
+                final int ql = qtyLeft;
+                String rlDump = rowLines.stream()
+                        .map(rl -> {
+                            String bucket = (rl.getLeft() >= pl && rl.getLeft() < ql) ? "PLAN"
+                                    : (rl.getLeft() >= ql ? "QTY" : "OTHER");
+                            return bucket + "[" + rl.getLeft() + "," + rl.getTop() + "-" + rl.getRight() + "," + rl.getBottom() + "]'" + rl.getText() + "'";
+                        })
+                        .reduce("", (a, b) -> a.isEmpty() ? b : (a + " | " + b));
+                log.debug("[PO-TIME-DELIVERY][DIAG] row={} page={} windowTopBottom=[{}..{}] lines={}",
+                        timeOfDelivery, page, rowTopMin, rowBottomMax, rlDump);
+            }
+
             StringBuilder planBuf = new StringBuilder();
             for (OcrNewLine rl : rowLines) {
-                if (rl.getLeft() >= planningLeft && rl.getLeft() < qtyLeft && rl.getRight() < qtyLeft + 200) {
+                if (rl.getLeft() >= planningLeft && rl.getLeft() < qtyLeft) {
                     String candidate = rl.getText();
                     if (candidate.equalsIgnoreCase("planning markets")) continue;
                     if (candidate.equalsIgnoreCase("total") || candidate.toLowerCase(Locale.ROOT).startsWith("total:")) continue;
                     if (DATE_PATTERN.matcher(candidate).find()) continue;
 
-                    List<String> tokens = new ArrayList<>();
-                    Matcher tokM = planningTokenPat.matcher(candidate);
-                    while (tokM.find()) {
-                        tokens.add(tokM.group().replaceAll("\\s+", " ").trim());
-                    }
-                    if (tokens.isEmpty()) {
-                        Matcher pmMatcher = DEST_COUNTRY_PAT.matcher(candidate);
-                        while (pmMatcher.find()) {
-                            tokens.add(pmMatcher.group().trim());
-                        }
-                    }
-                    if (tokens.isEmpty()) {
-                        Matcher pm2 = DEST_COUNTRY_CODE_PAT.matcher(candidate);
-                        while (pm2.find()) {
-                            tokens.add(pm2.group().replaceAll("\\s+", "").toUpperCase(Locale.ROOT));
-                        }
-                    }
+                    List<String> tokens = extractPlanningTokens.apply(candidate);
 
                     if (!tokens.isEmpty()) {
                         if (planBuf.length() > 0) planBuf.append(", ");
@@ -2993,7 +3180,36 @@ public class OcrNewService {
                     }
                 }
             }
+
+            // Fallback: if bbox alignment is off and we missed the planning column, scan any row lines
+            // for planning-market tokens, while excluding date/quantity patterns.
+            if (planBuf.length() == 0) {
+                for (OcrNewLine rl : rowLines) {
+                    String candidate = rl.getText();
+                    if (candidate == null || candidate.isBlank()) continue;
+                    if (candidate.equalsIgnoreCase("planning markets")) continue;
+                    if (candidate.equalsIgnoreCase("total") || candidate.toLowerCase(Locale.ROOT).startsWith("total:")) continue;
+                    if (DATE_PATTERN.matcher(candidate).find()) continue;
+                    if (qtyPercentPat.matcher(candidate).find()) continue;
+
+                    List<String> tokens = extractPlanningTokens.apply(candidate);
+                    if (!tokens.isEmpty()) {
+                        if (planBuf.length() > 0) planBuf.append(", ");
+                        planBuf.append(String.join(", ", tokens));
+                    }
+                }
+            }
+
             planningMarkets = planBuf.toString().trim();
+
+            if (planningMarkets.isBlank() && log.isDebugEnabled()) {
+                String sample = rowLines.stream()
+                        .limit(12)
+                        .map(x -> "[" + x.getLeft() + "," + x.getTop() + "-" + x.getRight() + "," + x.getBottom() + "] '" + x.getText() + "'")
+                        .reduce("", (a, b) -> a.isEmpty() ? b : (a + " | " + b));
+                log.debug("[PO-TIME-DELIVERY][DIAG] blank planningMarkets row={} page={} window=[{}..{}] sampleLines={}",
+                        timeOfDelivery, page, rowTopMin, rowBottomMax, sample);
+            }
 
             Map<String, String> row = new LinkedHashMap<>();
             row.put("timeOfDelivery", timeOfDelivery);
@@ -3005,6 +3221,130 @@ public class OcrNewService {
         }
 
         log.info("[PO-TIME-DELIVERY] Total rows extracted: {}", out.size());
+        return out;
+    }
+
+    private static void fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(
+            List<Map<String, String>> poTimeOfDelivery,
+            byte[] pdfBytes,
+            String fileName
+    ) {
+        if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) return;
+        if (pdfBytes == null || pdfBytes.length == 0) return;
+
+        Map<String, String> dateToPlanning = extractPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(pdfBytes, fileName);
+        if (dateToPlanning.isEmpty()) return;
+
+        int filled = 0;
+        for (Map<String, String> row : poTimeOfDelivery) {
+            if (row == null) continue;
+            String tod = row.get("timeOfDelivery");
+            if (tod == null || tod.isBlank()) continue;
+
+            String existing = row.get("planningMarkets");
+            if (existing != null && !existing.isBlank()) continue;
+
+            String fromPdf = dateToPlanning.get(tod.trim());
+            if (fromPdf == null || fromPdf.isBlank()) continue;
+            row.put("planningMarkets", fromPdf);
+            filled++;
+        }
+
+        if (filled > 0) {
+            log.info("[PO-TIME-DELIVERY][PDFBOX-FALLBACK] file={} filledPlanningMarketsRows={}", fileName, filled);
+        }
+    }
+
+    private static Map<String, String> extractPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(byte[] pdfBytes, String fileName) {
+        Map<String, String> out = new LinkedHashMap<>();
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            if (doc.getNumberOfPages() <= 0) return out;
+
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            stripper.setStartPage(1);
+            stripper.setEndPage(1);
+            String pageText = stripper.getText(doc);
+            if (pageText == null || pageText.isBlank()) return out;
+
+            String[] lines = pageText.split("\\r?\\n");
+            boolean inTod = false;
+
+            // We'll build per-date planning text until we see qty+percent or next date.
+            Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+            String currentDate = null;
+            StringBuilder planBuf = new StringBuilder();
+
+            for (String raw : lines) {
+                if (raw == null) continue;
+                String s = raw.trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+
+                if (!inTod) {
+                    if (low.contains("time of delivery")) {
+                        inTod = true;
+                    }
+                    continue;
+                }
+
+                if (low.contains("quantity per artic") || low.contains("article no") || low.contains("total quantity") || low.startsWith("total:")) {
+                    break;
+                }
+
+                Matcher dm = DATE_PATTERN.matcher(s);
+                if (dm.find()) {
+                    String foundDate = dm.group(0).trim();
+
+                    if (currentDate != null) {
+                        String planning = planBuf.toString().replaceAll("\\s+", " ").trim();
+                        if (!planning.isBlank()) {
+                            out.put(currentDate, planning);
+                        }
+                    }
+
+                    currentDate = foundDate;
+                    planBuf.setLength(0);
+
+                    // if date line also includes planning text, keep the tail.
+                    String tail = s.substring(dm.end()).trim();
+                    if (!tail.isBlank() && !qtyPercentPat.matcher(tail).find()) {
+                        planBuf.append(tail);
+                    }
+                    continue;
+                }
+
+                if (currentDate == null) continue;
+                if (qtyPercentPat.matcher(s).find()) {
+                    // End of this date row.
+                    String planning = planBuf.toString().replaceAll("\\s+", " ").trim();
+                    if (!planning.isBlank()) {
+                        out.putIfAbsent(currentDate, planning);
+                    }
+                    currentDate = null;
+                    planBuf.setLength(0);
+                    continue;
+                }
+
+                if (low.contains("planning markets") || low.contains("quantity") || low.contains("% total")) continue;
+                if (planBuf.length() > 0) planBuf.append(" ");
+                planBuf.append(s);
+            }
+
+            if (currentDate != null) {
+                String planning = planBuf.toString().replaceAll("\\s+", " ").trim();
+                if (!planning.isBlank()) {
+                    out.putIfAbsent(currentDate, planning);
+                }
+            }
+
+            if (!out.isEmpty()) {
+                log.info("[PO-TIME-DELIVERY][PDFBOX-FALLBACK] file={} extractedPlanningMarketsDates={}", fileName, out.keySet());
+            }
+
+        } catch (Exception ex) {
+            log.warn("[PO-TIME-DELIVERY][PDFBOX-FALLBACK] file={} failed: {}", fileName, ex.getMessage());
+        }
         return out;
     }
 
