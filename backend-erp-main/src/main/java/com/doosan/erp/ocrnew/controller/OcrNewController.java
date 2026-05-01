@@ -2,6 +2,8 @@ package com.doosan.erp.ocrnew.controller;
 
 import com.doosan.erp.common.dto.ApiResponse;
 import com.doosan.erp.ocrnew.dto.OcrNewDocumentAnalysisResponse;
+import com.doosan.erp.ocrnew.dto.OcrNewJobStatusResponse;
+import com.doosan.erp.ocrnew.service.OcrNewJobService;
 import com.doosan.erp.ocrnew.service.OcrNewService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -10,6 +12,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class OcrNewController {
 
     private final OcrNewService ocrNewService;
+    private final OcrNewJobService ocrNewJobService;
 
     @Operation(
             summary = "Document analysis (PDF/Image) - OCR-NEW",
@@ -49,6 +54,33 @@ public class OcrNewController {
                 Boolean.TRUE.equals(compareModes)
         );
         return ResponseEntity.ok(ApiResponse.success(response, "OCR-NEW analysis completed"));
+    }
+
+    @Operation(
+            summary = "Document analysis async job submit (PDF/Image) - OCR-NEW",
+            description = "Uploads a PDF/image and immediately returns a jobId. The OCR/parsing runs asynchronously. Poll /jobs/{jobId} for status and result."
+    )
+    @PostMapping(value = "/jobs", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<String>> submitJob(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "debug", required = false) Boolean debug,
+            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr,
+            @RequestParam(value = "compareModes", required = false, defaultValue = "false") Boolean compareModes
+    ) {
+        String jobId = ocrNewJobService.submitJob(file, debug, useHocr, compareModes);
+        return ResponseEntity.ok(ApiResponse.success(jobId, "OCR-NEW job submitted"));
+    }
+
+    @Operation(
+            summary = "Get OCR-NEW async job status/result",
+            description = "Returns job status and, if succeeded, the OCR-NEW analysis result."
+    )
+    @GetMapping(value = "/jobs/{jobId}")
+    public ResponseEntity<ApiResponse<OcrNewJobStatusResponse>> getJob(
+            @PathVariable("jobId") String jobId
+    ) {
+        OcrNewJobStatusResponse out = ocrNewJobService.getJob(jobId);
+        return ResponseEntity.ok(ApiResponse.success(out, "OCR-NEW job status"));
     }
 
     @Operation(

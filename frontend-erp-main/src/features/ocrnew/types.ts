@@ -74,3 +74,20 @@ export interface OcrNewDocumentAnalysisResponse {
   message: string;
   timestamp: string;
 }
+
+export type OcrNewJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+
+export interface OcrNewJobStatusResponseData {
+  jobId: string;
+  status: OcrNewJobStatus;
+  progressPercent?: number | null;
+  errorMessage?: string | null;
+  result?: OcrNewDocumentAnalysisResponseData | null;
+}
+
+export interface OcrNewJobStatusResponse {
+  success: boolean;
+  data: OcrNewJobStatusResponseData;
+  message: string;
+  timestamp: string;
+}

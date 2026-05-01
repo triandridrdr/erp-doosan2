@@ -1,13 +1,11 @@
 import { useMutation } from '@tanstack/react-query';
-import { AlertCircle, Loader2, Upload, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { Modal } from '../../components/ui/Modal';
+import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { ocrNewApi } from './api';
 import type { OcrNewDocumentAnalysisResponseData } from './types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -29,16 +27,17 @@ const SALES_ORDER_HEADER_FIELDS = [
 ] as const;
 
 export function OcrNewPage() {
-  const navigate = useNavigate();
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [results, setResults] = useState<Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>>([]);
   const [data, setData] = useState<OcrNewDocumentAnalysisResponseData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
+  const [_multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Draft updated.');
-  const [lastSavedId, setLastSavedId] = useState<number | null>(null);
+  const [_lastSavedId, setLastSavedId] = useState<number | null>(null);
+
+  const pageCount = Math.max(1, Number(data?.pageCount ?? 1));
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<
@@ -220,15 +219,43 @@ export function OcrNewPage() {
         const t0 = performance.now();
         appendLog(`START file=${f.name} sizeBytes=${f.size}`);
         try {
-          const res = await ocrNewApi.analyze(f);
+          const submit = await ocrNewApi.submitJob(f);
+          const jobId = submit?.data;
+          if (!jobId) throw new Error('No jobId returned');
+
+          appendLog(`JOB_SUBMITTED file=${f.name} jobId=${jobId}`);
+
+          const pollUntilDone = async () => {
+            const started = performance.now();
+            let attempt = 0;
+            for (;;) {
+              attempt += 1;
+              const st = await ocrNewApi.getJob(jobId);
+              const status = st?.data?.status;
+              const pct = st?.data?.progressPercent ?? null;
+              appendLog(`JOB_STATUS file=${f.name} jobId=${jobId} status=${status} progress=${pct}`);
+
+              if (status === 'SUCCEEDED' || status === 'FAILED') return st;
+              if (performance.now() - started > 15 * 60 * 1000) throw new Error('OCR job timeout');
+              await new Promise((r) => setTimeout(r, 1200));
+            }
+          };
+
+          const st = await pollUntilDone();
+          if (st?.data?.status !== 'SUCCEEDED') {
+            const msg = st?.data?.errorMessage ?? 'OCR job failed';
+            throw new Error(msg);
+          }
+
+          const resData = st?.data?.result ?? null;
           const dtMs = Math.round(performance.now() - t0);
-          const pc = res?.data?.pageCount ?? 0;
-          const tc = res?.data?.tables?.length ?? 0;
-          const dc = (res?.data?.salesOrderDetailSizeBreakdown ?? []).length;
+          const pc = resData?.pageCount ?? 0;
+          const tc = resData?.tables?.length ?? 0;
+          const dc = (resData?.salesOrderDetailSizeBreakdown ?? []).length;
           appendLog(`OK file=${f.name} durationMs=${dtMs} pageCount=${pc} tableCount=${tc} detailRowCount=${dc}`);
-          logBackendSection2DetailRows(f.name, res?.data);
-          if (res?.data) {
-            out.push({ fileName: f.name, data: res.data });
+          logBackendSection2DetailRows(f.name, resData ?? undefined);
+          if (resData) {
+            out.push({ fileName: f.name, data: resData });
           }
         } catch (e) {
           const dtMs = Math.round(performance.now() - t0);
@@ -633,30 +660,6 @@ export function OcrNewPage() {
     return m;
   }, [section2TotalByCountryRows]);
 
-  const exportSection2SizeBreakdownToExcel = () => {
-    const toNumOrNull = (v: unknown) => {
-      const d = normalizeDigits((v ?? '').toString());
-      if (!d) return null;
-      const n = Number(d);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    const rows = section2NonTotalEntries.map(({ row }) => ({
-      'Country of Destination': (row.countryOfDestination ?? '').toString(),
-      Type: (row.type ?? '').toString(),
-      Color: (row.color ?? '').toString(),
-      Size: (row.size ?? '').toString(),
-      Qty: toNumOrNull(row.qty),
-      Total: toNumOrNull(row.total),
-      'No of Asst': (row.noOfAsst ?? '').toString(),
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
-    XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
   return (
     <div className='space-y-6'>
       <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
@@ -736,14 +739,15 @@ export function OcrNewPage() {
 
         {results.length > 1 && (
           <div className='mt-4 flex flex-wrap gap-2'>
-            {results.map((r, idx) => (
-              <span
-                key={r.fileName}
-                className='px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'
-              >
-                {r.fileName}
-              </span>
-            ))}
+            {Array.from({ length: pageCount }).map((_, _idx) => {
+              const p = _idx + 1;
+              const label = `Page-${p}`;
+              return (
+                <span key={label} className='px-3 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700'>
+                  {label}
+                </span>
+              );
+            })}
           </div>
         )}
 

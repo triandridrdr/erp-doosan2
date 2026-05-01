@@ -195,15 +195,6 @@ export function SalesOrderPrototypeEditPage() {
     return m;
   }, [section2TotalByCountryRows]);
 
-  const section2cGrandTotal = useMemo(() => {
-    let sum = 0;
-    for (const r of section2cDraftRows ?? []) {
-      const d = normalizeDigits((r?.qty ?? '').toString());
-      if (d) sum += Number(d);
-    }
-    return sum;
-  }, [section2cDraftRows]);
-
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['sales-order-prototypes', id],
     enabled: Number.isFinite(id) && id > 0,

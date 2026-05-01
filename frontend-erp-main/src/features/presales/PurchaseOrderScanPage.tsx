@@ -267,9 +267,30 @@ export function PurchaseOrderScanPage() {
     const out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }> = [];
     for (const f of files) {
       try {
-        const res = await ocrNewApi.analyze(f);
-        if (res?.data) {
-          out.push({ fileName: f.name, data: res.data });
+        const submit = await ocrNewApi.submitJob(f);
+        const jobId = submit?.data;
+        if (!jobId) throw new Error('No jobId returned');
+
+        const pollUntilDone = async () => {
+          const started = performance.now();
+          for (;;) {
+            const st = await ocrNewApi.getJob(jobId);
+            const status = st?.data?.status;
+            if (status === 'SUCCEEDED' || status === 'FAILED') return st;
+            if (performance.now() - started > 15 * 60 * 1000) throw new Error('OCR job timeout');
+            await new Promise((r) => setTimeout(r, 1200));
+          }
+        };
+
+        const st = await pollUntilDone();
+        if (st?.data?.status !== 'SUCCEEDED') {
+          const msg = st?.data?.errorMessage ?? 'OCR job failed';
+          throw new Error(msg);
+        }
+
+        const resData = st?.data?.result ?? null;
+        if (resData) {
+          out.push({ fileName: f.name, data: resData });
         }
       } catch (e) {
         throw e;

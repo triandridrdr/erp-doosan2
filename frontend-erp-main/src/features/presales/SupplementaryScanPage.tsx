@@ -261,15 +261,36 @@ export function SupplementaryScanPage() {
         const t0 = performance.now();
         appendLog(`START file=${f.name} sizeBytes=${f.size}`);
         try {
-          const res = await ocrNewApi.analyze(f);
+          const submit = await ocrNewApi.submitJob(f);
+          const jobId = submit?.data;
+          if (!jobId) throw new Error('No jobId returned');
+
+          const pollUntilDone = async () => {
+            const started = performance.now();
+            for (;;) {
+              const st = await ocrNewApi.getJob(jobId);
+              const status = st?.data?.status;
+              if (status === 'SUCCEEDED' || status === 'FAILED') return st;
+              if (performance.now() - started > 15 * 60 * 1000) throw new Error('OCR job timeout');
+              await new Promise((r) => setTimeout(r, 1200));
+            }
+          };
+
+          const st = await pollUntilDone();
+          if (st?.data?.status !== 'SUCCEEDED') {
+            const msg = st?.data?.errorMessage ?? 'OCR job failed';
+            throw new Error(msg);
+          }
+
+          const resData = st?.data?.result ?? null;
           const dtMs = Math.round(performance.now() - t0);
-          const pc = (res as any)?.data?.pageCount ?? 0;
-          const tc = (res as any)?.data?.tables?.length ?? 0;
-          const dc = ((res as any)?.data?.salesOrderDetailSizeBreakdown ?? []).length;
+          const pc = resData?.pageCount ?? 0;
+          const tc = resData?.tables?.length ?? 0;
+          const dc = (resData?.salesOrderDetailSizeBreakdown ?? []).length;
           appendLog(`OK file=${f.name} durationMs=${dtMs} pageCount=${pc} tableCount=${tc} detailRowCount=${dc}`);
-          logBackendSection2DetailRows(f.name, (res as any)?.data);
-          if ((res as any)?.data) {
-            out.push({ fileName: f.name, data: (res as any).data });
+          logBackendSection2DetailRows(f.name, resData ?? undefined);
+          if (resData) {
+            out.push({ fileName: f.name, data: resData });
           }
         } catch (e) {
           const dtMs = Math.round(performance.now() - t0);
