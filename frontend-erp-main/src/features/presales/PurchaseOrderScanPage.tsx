@@ -61,6 +61,8 @@ export function PurchaseOrderScanPage() {
   const [quantityPerArticleRows, setQuantityPerArticleRows] = useState<Array<Record<string, string>>>([]);
   const [invoiceAvgPriceRows, setInvoiceAvgPriceRows] = useState<Array<Record<string, string>>>([]);
 
+  const [termsOfDeliveryByPageDraft, setTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+
   useEffect(() => {
     setActivePage((p) => Math.min(Math.max(1, p), pageCount));
   }, [pageCount]);
@@ -203,7 +205,34 @@ export function PurchaseOrderScanPage() {
     setTimeOfDeliveryRows(d?.purchaseOrderTimeOfDelivery ?? []);
     setQuantityPerArticleRows(d?.purchaseOrderQuantityPerArticle ?? []);
     setInvoiceAvgPriceRows(d?.purchaseOrderInvoiceAvgPrice ?? []);
+
+    const nextTerms: Record<number, string> = {};
+    for (const r of d?.purchaseOrderTermsOfDelivery ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.termsOfDelivery ?? '').toString();
+      if (v.trim().length > 0) nextTerms[p] = v;
+    }
+    setTermsOfDeliveryByPageDraft(nextTerms);
   };
+
+  const termsOfDeliveryForActivePage = useMemo(() => {
+    if (activePage === 1) {
+      const v = (salesOrderHeaderDraft?.['Terms of Delivery'] ?? '').toString();
+      if (v.trim().length > 0) return v;
+    }
+    return (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+  }, [activePage, salesOrderHeaderDraft, termsOfDeliveryByPageDraft]);
+
+  const quantityPerArticleRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+  }, [activePage, quantityPerArticleRows]);
+
+  const invoiceAvgPriceRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (invoiceAvgPriceRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+  }, [activePage, invoiceAvgPriceRows]);
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
     const mergedFf: Record<string, any> = {};
@@ -783,10 +812,10 @@ useEffect(() => {
             <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
             <textarea
               className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-              value={salesOrderHeaderDraft['Terms of Delivery'] ?? ''}
+              value={termsOfDeliveryForActivePage}
               onChange={(e) => {
                 const v = e.target.value;
-                setSalesOrderHeaderDraft((prev) => ({ ...prev, ['Terms of Delivery']: v }));
+                setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
               }}
             />
           </div>
@@ -849,8 +878,8 @@ useEffect(() => {
                   </tr>
                 </thead>
                 <tbody>
-                  {quantityPerArticleRows.length > 0 ? (
-                    quantityPerArticleRows.map((row, rIdx) => (
+                  {quantityPerArticleRowsForActivePage.length > 0 ? (
+                    quantityPerArticleRowsForActivePage.map((row, rIdx) => (
                       <tr key={rIdx}>
                         <td className='px-3 py-2 border-b border-gray-100'>
                           <Input value={row.articleNo ?? ''} onChange={() => {}} />
@@ -898,8 +927,8 @@ useEffect(() => {
                   </tr>
                 </thead>
                 <tbody>
-                  {invoiceAvgPriceRows.length > 0 ? (
-                    invoiceAvgPriceRows.map((row, rIdx) => (
+                  {invoiceAvgPriceRowsForActivePage.length > 0 ? (
+                    invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
                       <tr key={rIdx}>
                         <td className='px-3 py-2 border-b border-gray-100'>
                           <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />

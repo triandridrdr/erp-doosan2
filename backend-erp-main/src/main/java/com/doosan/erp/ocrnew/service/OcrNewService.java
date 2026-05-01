@@ -2242,15 +2242,29 @@ public class OcrNewService {
             if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
-            List<Map<String, String>> poQuantityPerArticle = List.of();
-            if (isPdf(file)) {
-                poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
-            }
+            List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
+
+            List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleByPage(allLines);
             if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
-                poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
+                poQuantityPerArticle = List.of();
+                if (isPdf(file)) {
+                    poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
+                }
+                if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
+                    poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
+                }
+                for (Map<String, String> r : poQuantityPerArticle) {
+                    if (r != null && !r.containsKey("page")) r.put("page", "1");
+                }
             }
             fillMissingPurchaseOrderQuantityPerArticleColour(poQuantityPerArticle, allLines);
+
+            // IMPORTANT: Use the global extractor to keep the proven-valid pairing logic
+            // (price-only line + country-only line, multi-country lists, etc.).
+            // Then annotate each extracted row with a best-effort page number so the frontend
+            // can still filter by active page.
             List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+            annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
 
             String terms = formFields.get("Terms of Delivery");
             String termsWithCountries = addPurchaseOrderTermsDeliveryCountryCodes(terms, allLines, poTimeOfDelivery);
@@ -2418,6 +2432,7 @@ public class OcrNewService {
                     .purchaseOrderTimeOfDelivery(poTimeOfDelivery)
                     .purchaseOrderQuantityPerArticle(poQuantityPerArticle)
                     .purchaseOrderInvoiceAvgPrice(poInvoiceAvgPrice)
+                    .purchaseOrderTermsOfDelivery(poTermsOfDeliveryByPage)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();
@@ -2464,7 +2479,118 @@ public class OcrNewService {
                 .replaceAll("(?i)\\.n(ship\\s+by\\b)", ".\\n$1")
                 .replaceAll("(?i)\\.\\s+(ship\\s+by\\b)", ".\\n$1");
         if (formatted.isBlank()) return codesLine;
-        return codesLine + "\\n" + formatted;
+        return codesLine + "\n" + existing;
+    }
+
+    private static List<Map<String, String>> extractPurchaseOrderTermsOfDeliveryByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) {
+            log.debug("[PO-TERMS-DELIVERY] allLines is null or empty");
+            return out;
+        }
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            int headerIdx = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.equalsIgnoreCase("Terms of Delivery") || s.toLowerCase(Locale.ROOT).startsWith("terms of delivery")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            StringBuilder buf = new StringBuilder();
+            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 20); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.startsWith("page:")) break;
+                if (low.contains("quantity per artic") || low.contains("invoice average") || low.contains("time of delivery")) break;
+                if (low.contains("purchase order detail") || low.contains("purchase order")) break;
+
+                if (buf.length() > 0) buf.append("\n");
+                buf.append(s);
+            }
+
+            String terms = buf.toString().trim();
+            if (!terms.isBlank()) {
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", String.valueOf(page));
+                row.put("termsOfDelivery", terms);
+                out.add(row);
+            }
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractPurchaseOrderQuantityPerArticleByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            List<Map<String, String>> rows = extractPurchaseOrderQuantityPerArticle(pageLines);
+            if (rows == null || rows.isEmpty()) continue;
+            for (Map<String, String> r : rows) {
+                if (r == null) continue;
+                r.put("page", String.valueOf(page));
+                out.add(r);
+            }
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPriceByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            List<Map<String, String>> rows = extractPurchaseOrderInvoiceAvgPrice(pageLines);
+            if (rows == null || rows.isEmpty()) continue;
+            for (Map<String, String> r : rows) {
+                if (r == null) continue;
+                r.put("page", String.valueOf(page));
+                out.add(r);
+            }
+        }
+
+        return out;
     }
 
     private static LinkedHashSet<String> extractPurchaseOrderPlanningMarketCountryCodesExpanded(List<OcrNewLine> allLines, List<Map<String, String>> poTimeOfDelivery) {
@@ -3854,5 +3980,49 @@ public class OcrNewService {
 
         log.info("[PO-INVOICE-PRICE] Total rows extracted: {}", out.size());
         return out;
+    }
+
+    private static void annotatePurchaseOrderInvoiceAvgPricePages(List<Map<String, String>> rows, List<OcrNewLine> allLines) {
+        if (rows == null || rows.isEmpty()) return;
+        if (allLines == null || allLines.isEmpty()) {
+            for (Map<String, String> r : rows) {
+                if (r != null && !r.containsKey("page")) r.put("page", "1");
+            }
+            return;
+        }
+
+        // Build per-page text for quick contains() checks.
+        Map<Integer, StringBuilder> pageText = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            int p = l.getPage();
+            pageText.computeIfAbsent(p, k -> new StringBuilder());
+            StringBuilder sb = pageText.get(p);
+            if (sb.length() > 0) sb.append("\n");
+            sb.append(oneLine(l.getText()));
+        }
+
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            if (r.containsKey("page") && r.get("page") != null && !r.get("page").isBlank()) continue;
+
+            String price = oneLine(r.get("invoiceAveragePrice"));
+            String country = oneLine(r.get("country"));
+            int chosen = 1;
+
+            for (Map.Entry<Integer, StringBuilder> en : pageText.entrySet()) {
+                int p = en.getKey();
+                String txt = en.getValue().toString();
+                boolean priceHit = price != null && !price.isBlank() && txt.contains(price);
+                boolean countryHit = country != null && !country.isBlank() && txt.contains(country);
+                if (priceHit || countryHit) {
+                    chosen = p;
+                    // Prefer a page that contains BOTH, if possible.
+                    if (priceHit && countryHit) break;
+                }
+            }
+
+            r.put("page", String.valueOf(chosen));
+        }
     }
 }

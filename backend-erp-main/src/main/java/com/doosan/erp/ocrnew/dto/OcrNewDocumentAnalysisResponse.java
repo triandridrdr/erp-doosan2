@@ -56,4 +56,10 @@ public class OcrNewDocumentAnalysisResponse {
      * Columns: invoiceAveragePrice, country
      */
     private List<Map<String, String>> purchaseOrderInvoiceAvgPrice;
+
+    /**
+     * Purchase Order: Terms of Delivery content per page.
+     * Row keys: page, termsOfDelivery
+     */
+    private List<Map<String, String>> purchaseOrderTermsOfDelivery;
 }

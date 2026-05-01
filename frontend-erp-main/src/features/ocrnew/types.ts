@@ -62,8 +62,15 @@ export interface OcrNewDocumentAnalysisResponseData {
   /**
    * Purchase Order: Invoice Average Price table
    * Columns: invoiceAveragePrice, country
+   * (may also include: page)
    */
   purchaseOrderInvoiceAvgPrice?: Array<Record<string, string>>;
+
+  /**
+   * Purchase Order: Terms of Delivery content per page
+   * Row keys: page, termsOfDelivery
+   */
+  purchaseOrderTermsOfDelivery?: Array<Record<string, string>>;
   averageConfidence: number;
   pageCount: number;
 }
