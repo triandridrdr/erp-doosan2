@@ -20,7 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -216,6 +218,30 @@ public class OcrNewService {
             log.debug("[TCB-LINES][SUMMARY] rowsParsed={}", out.size());
         }
         return out;
+    }
+
+    private static void upsertPurchaseOrderTermsOfDeliveryPage1(List<Map<String, String>> poTermsOfDeliveryByPage, String terms) {
+        if (poTermsOfDeliveryByPage == null) return;
+        if (terms == null || terms.isBlank()) return;
+
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("page", "1");
+        row.put("termsOfDelivery", terms.trim());
+
+        boolean replaced = false;
+        for (int i = 0; i < poTermsOfDeliveryByPage.size(); i++) {
+            Map<String, String> r = poTermsOfDeliveryByPage.get(i);
+            if (r == null) continue;
+            String p = (r.get("page") == null ? "" : r.get("page")).trim();
+            if (p.equals("1")) {
+                poTermsOfDeliveryByPage.set(i, row);
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            poTermsOfDeliveryByPage.add(0, row);
+        }
     }
 
     private static void fillMissingPurchaseOrderInvoiceAvgPriceCountries(
@@ -511,6 +537,338 @@ public class OcrNewService {
         if (filled > 0) {
             log.info("[PO-TIME-DELIVERY][REGION-OCR] file={} filledPlanningMarketsRows={}", fileName, filled);
         }
+    }
+
+    private static void fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(
+            List<Map<String, String>> poTermsOfDeliveryByPage,
+            List<OcrNewLine> allLines,
+            List<BufferedImage> pageImages,
+            TesseractOcrEngine ocrEngine,
+            String fileName,
+            boolean effectiveDebug
+    ) {
+        if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
+        if (allLines == null || allLines.isEmpty()) return;
+        if (pageImages == null || pageImages.isEmpty()) return;
+        if (ocrEngine == null) return;
+
+        Pattern twoLetterCountryPat = Pattern.compile("^[A-Z]{2}$");
+
+        // Find the header bbox for each page to anchor a small crop region under it.
+        Map<Integer, List<OcrNewLine>> headerCandidatesByPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.equalsIgnoreCase("Terms of Delivery") || t.toLowerCase(Locale.ROOT).startsWith("terms of delivery")) {
+                headerCandidatesByPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+            }
+        }
+        Map<Integer, OcrNewLine> headerByPage = new LinkedHashMap<>();
+        for (Map.Entry<Integer, List<OcrNewLine>> en : headerCandidatesByPage.entrySet()) {
+            List<OcrNewLine> cands = en.getValue();
+            if (cands == null || cands.isEmpty()) continue;
+            // Prefer non-synthetic lines (PDFBox supplement uses left=0,right=1000,empty words).
+            OcrNewLine best = null;
+            for (OcrNewLine c : cands) {
+                if (c == null) continue;
+                boolean looksSynthetic = c.getLeft() == 0 && c.getRight() == 1000 && (c.getWords() == null || c.getWords().isEmpty());
+                if (looksSynthetic) continue;
+                best = c;
+                break;
+            }
+            if (best == null) {
+                // Fall back to the first candidate if we have nothing else.
+                best = cands.get(0);
+            }
+            headerByPage.put(en.getKey(), best);
+        }
+        if (headerByPage.isEmpty()) return;
+
+        // Also capture the first 'Transport by Sea' line per page to bound the crop region.
+        Map<Integer, List<OcrNewLine>> transportCandidatesByPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+            if (!low.contains("transport by sea")) continue;
+            transportCandidatesByPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+        Map<Integer, OcrNewLine> transportByPage = new LinkedHashMap<>();
+        for (Map.Entry<Integer, List<OcrNewLine>> en : transportCandidatesByPage.entrySet()) {
+            List<OcrNewLine> cands = en.getValue();
+            if (cands == null || cands.isEmpty()) continue;
+            OcrNewLine best = null;
+            for (OcrNewLine c : cands) {
+                if (c == null) continue;
+                boolean looksSynthetic = c.getLeft() == 0 && c.getRight() == 1000 && (c.getWords() == null || c.getWords().isEmpty());
+                if (looksSynthetic) continue;
+                best = c;
+                break;
+            }
+            if (best == null) best = cands.get(0);
+            transportByPage.put(en.getKey(), best);
+        }
+
+        int filled = 0;
+        for (Map<String, String> row : poTermsOfDeliveryByPage) {
+            if (row == null) continue;
+            int page;
+            try {
+                page = Integer.parseInt((row.get("page") == null ? "" : row.get("page")).trim());
+            } catch (Exception e) {
+                continue;
+            }
+            if (page <= 0) continue;
+
+            String existing = (row.get("termsOfDelivery") == null ? "" : row.get("termsOfDelivery")).trim();
+            if (existing.isBlank()) continue;
+
+            // Skip if it already starts with a 2-letter code line.
+            String firstLine = existing;
+            int nl = existing.indexOf('\n');
+            if (nl >= 0) firstLine = existing.substring(0, nl).trim();
+            if (twoLetterCountryPat.matcher(firstLine).matches()) continue;
+
+            String inferred = inferTwoLetterCountryFromPageText(allLines, page);
+            if (twoLetterCountryPat.matcher(inferred).matches()) {
+                row.put("termsOfDelivery", inferred + "\n" + existing);
+                filled++;
+                log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} filledCountry='{}' via=inferFromPageText", fileName, page, inferred);
+                continue;
+            }
+
+            OcrNewLine header = headerByPage.get(page);
+            if (header == null) {
+                if (effectiveDebug) {
+                    log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} skip: header bbox not found", fileName, page);
+                }
+                continue;
+            }
+            int pageIndex = page - 1;
+            if (pageIndex < 0 || pageIndex >= pageImages.size()) continue;
+            BufferedImage img = pageImages.get(pageIndex);
+            if (img == null) continue;
+
+            OcrNewLine transport = transportByPage.get(page);
+
+            boolean headerLooksSynthetic = header.getLeft() == 0 && header.getRight() == 1000 && (header.getWords() == null || header.getWords().isEmpty());
+            boolean transportLooksSynthetic = transport != null && transport.getLeft() == 0 && transport.getRight() == 1000 && (transport.getWords() == null || transport.getWords().isEmpty());
+
+            int top;
+            int bottom;
+            int left;
+            int right;
+            boolean usedTemplateFallback = false;
+
+            if (headerLooksSynthetic || transportLooksSynthetic) {
+                OcrNewLine anchor = null;
+                for (OcrNewLine l : allLines) {
+                    if (l == null || l.getText() == null) continue;
+                    if (l.getPage() != page) continue;
+                    boolean looksSynthetic = l.getLeft() == 0 && l.getRight() == 1000;
+                    if (looksSynthetic) continue;
+                    String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+                    if (low.contains("transport by sea")) {
+                        anchor = l;
+                        break;
+                    }
+                    if (anchor == null && (low.startsWith("transport by") || low.contains("transport by"))) {
+                        anchor = l;
+                    }
+                }
+
+                if (anchor == null) {
+                    if (effectiveDebug) {
+                        log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} fallback: synthetic header/transport bbox and no real content anchor found; using template region", fileName, page);
+                    }
+
+                    usedTemplateFallback = true;
+                    top = 0;
+                    bottom = 0;
+                    left = 0;
+                    right = 0;
+                } else {
+                    top = Math.max(0, anchor.getTop() - 40);
+                    bottom = Math.min(img.getHeight(), anchor.getTop() + 15);
+                    left = Math.max(0, anchor.getLeft() - 60);
+                    right = Math.min(img.getWidth(), left + 120);
+                }
+            } else {
+                top = Math.max(0, header.getBottom() + 2);
+                bottom = Math.min(img.getHeight(), top + 120);
+                if (transport != null) {
+                    int transportTop = Math.max(0, transport.getTop());
+                    if (transportTop > top + 6) {
+                        bottom = Math.min(bottom, transportTop - 2);
+                    }
+                }
+
+                int anchorLeft = header.getLeft();
+                if (transport != null && transport.getLeft() > 0 && transport.getLeft() < img.getWidth()) {
+                    anchorLeft = transport.getLeft();
+                }
+                left = Math.max(0, anchorLeft - 10);
+                right = Math.min(img.getWidth(), left + 140);
+            }
+            int width = Math.max(0, right - left);
+            int height = Math.max(0, bottom - top);
+            String whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+            String raw1 = "";
+            String raw2 = "";
+            String regionText = "";
+            int resolvedLeft = left;
+            int resolvedTop = top;
+            int resolvedRight = right;
+            int resolvedBottom = bottom;
+
+            if (usedTemplateFallback) {
+                double h = img.getHeight();
+                double w = img.getWidth();
+                int[][] templates = new int[][]{
+                        // Crop around the expected JP/KR token under the 'Terms of Delivery' header.
+                        // (x, y, width, height)
+                        new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.035), 140, 100},
+                        new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.040), 160, 110},
+                        new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.045), 180, 130},
+                        new int[]{(int) Math.round(w * 0.06), (int) Math.round(h * 0.035), 140, 100},
+                        new int[]{(int) Math.round(w * 0.06), (int) Math.round(h * 0.040), 160, 110},
+                        new int[]{(int) Math.round(w * 0.06), (int) Math.round(h * 0.045), 180, 130},
+                        new int[]{(int) Math.round(w * 0.07), (int) Math.round(h * 0.040), 180, 130}
+                };
+
+                for (int i = 0; i < templates.length; i++) {
+                    int tLeft = Math.max(0, templates[i][0]);
+                    int tTop = Math.max(0, templates[i][1]);
+                    int tW = Math.max(0, Math.min(img.getWidth() - tLeft, templates[i][2]));
+                    int tH = Math.max(0, Math.min(img.getHeight() - tTop, templates[i][3]));
+                    if (tW <= 5 || tH <= 5) continue;
+
+                    BufferedImage cropped;
+                    try {
+                        cropped = img.getSubimage(tLeft, tTop, tW, tH);
+                    } catch (Exception e) {
+                        continue;
+                    }
+                    BufferedImage scaled = scaleUp(cropped, 3);
+                    if (scaled == null) continue;
+                    Rectangle scaledRect = new Rectangle(0, 0, scaled.getWidth(), scaled.getHeight());
+
+                    String tRaw1 = ocrEngine.extractTextFromRegion(scaled, scaledRect, 8, whitelist);
+                    String tRaw2 = "";
+                    String tRegion = oneLine(tRaw1)
+                            .replaceAll("[^A-Za-z]", "")
+                            .trim()
+                            .toUpperCase(Locale.ROOT);
+                    if (tRegion.length() < 2) {
+                        tRaw2 = ocrEngine.extractTextFromRegion(scaled, scaledRect, 7, whitelist);
+                        tRegion = oneLine(tRaw2)
+                                .replaceAll("[^A-Za-z]", "")
+                                .trim()
+                                .toUpperCase(Locale.ROOT);
+                    }
+                    if (tRegion.length() >= 2) tRegion = tRegion.substring(0, 2);
+
+                    raw1 = tRaw1;
+                    raw2 = tRaw2;
+                    regionText = tRegion;
+                    resolvedLeft = tLeft;
+                    resolvedTop = tTop;
+                    resolvedRight = tLeft + tW;
+                    resolvedBottom = tTop + tH;
+
+                    if (twoLetterCountryPat.matcher(regionText).matches()) {
+                        break;
+                    }
+                }
+            } else {
+                if (width <= 5 || height <= 5) continue;
+                raw1 = ocrEngine.extractTextFromRegion(img, new Rectangle(left, top, width, height), 8, whitelist);
+                regionText = oneLine(raw1)
+                        .replaceAll("[^A-Za-z]", "")
+                        .trim()
+                        .toUpperCase(Locale.ROOT);
+
+                if (regionText.length() < 2) {
+                    // Fallback: single text line
+                    raw2 = ocrEngine.extractTextFromRegion(img, new Rectangle(left, top, width, height), 7, whitelist);
+                    regionText = oneLine(raw2)
+                            .replaceAll("[^A-Za-z]", "")
+                            .trim()
+                            .toUpperCase(Locale.ROOT);
+                }
+
+                if (regionText.length() >= 2) {
+                    regionText = regionText.substring(0, 2);
+                }
+            }
+            if (!twoLetterCountryPat.matcher(regionText).matches()) {
+                if (effectiveDebug) {
+                    log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} noMatch regionText='{}' rawPsm8='{}' rawPsm7='{}' headerBBox=[{},{}-{},{}] transportBBox=[{},{}-{},{}] regionBBox=[{},{}-{},{}]",
+                            fileName,
+                            page,
+                            truncate(regionText, 40),
+                            truncate(oneLine(raw1), 60),
+                            truncate(oneLine(raw2), 60),
+                            header.getLeft(), header.getTop(), header.getRight(), header.getBottom(),
+                            transport == null ? -1 : transport.getLeft(),
+                            transport == null ? -1 : transport.getTop(),
+                            transport == null ? -1 : transport.getRight(),
+                            transport == null ? -1 : transport.getBottom(),
+                            resolvedLeft, resolvedTop, resolvedRight, resolvedBottom);
+                }
+                continue;
+            }
+
+            row.put("termsOfDelivery", regionText + "\n" + existing);
+            filled++;
+            log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} page={} filledCountry='{}' regionBBox=[{},{}-{},{}]", fileName, page, regionText, resolvedLeft, resolvedTop, resolvedRight, resolvedBottom);
+        }
+
+        if (filled > 0) {
+            log.info("[PO-TERMS-DELIVERY][REGION-OCR] file={} filledCountryRows={}", fileName, filled);
+        }
+    }
+
+    private static String inferTwoLetterCountryFromPageText(List<OcrNewLine> allLines, int page) {
+        if (allLines == null || allLines.isEmpty()) return "";
+        if (page <= 0) return "";
+        boolean hasJapan = false;
+        boolean hasKorea = false;
+        boolean hasKawasaki = false;
+        boolean hasTokyo = false;
+        boolean hasSeoul = false;
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            if (l.getPage() != page) continue;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+            if (low.contains("japan")) hasJapan = true;
+            if (low.contains("korea")) hasKorea = true;
+            if (low.contains("kawasaki")) hasKawasaki = true;
+            if (low.contains("tokyo")) hasTokyo = true;
+            if (low.contains("seoul")) hasSeoul = true;
+        }
+
+        if (hasJapan || hasKawasaki || hasTokyo) return "JP";
+        if (hasKorea || hasSeoul) return "KR";
+        return "";
+    }
+
+    private static BufferedImage scaleUp(BufferedImage src, int scale) {
+        if (src == null) return null;
+        if (scale <= 1) return src;
+        int w = Math.max(1, src.getWidth() * scale);
+        int h = Math.max(1, src.getHeight() * scale);
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(src, 0, 0, w, h, null);
+        } finally {
+            g.dispose();
+        }
+        return out;
     }
 
     /**
@@ -2089,8 +2447,10 @@ public class OcrNewService {
             // Always keep a raw OCR pass from the rendered PNG pages for sales-order detail extraction.
             List<OcrNewLine> rawLinesForDetail = new ArrayList<>();
             List<OcrNewLine> rawLinesForTables = useHocr ? new ArrayList<>() : allLines;
+            List<BufferedImage> cleanedPageImages = new ArrayList<>();
             for (int i = 0; i < pageImages.size(); i++) {
                 BufferedImage pageImage = removeColoredBorders(pageImages.get(i));
+                cleanedPageImages.add(pageImage);
                 List<OcrNewLine> hocrPageLines = null;
                 List<OcrNewLine> rawPageLines = ocrEngine.extractLinesFromImage(pageImage, i);
 
@@ -2243,6 +2603,7 @@ public class OcrNewService {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
             List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
+            fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug);
 
             List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleByPage(allLines);
             if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
@@ -2271,6 +2632,11 @@ public class OcrNewService {
             if (termsWithCountries != null && !termsWithCountries.isBlank()) {
                 formFields.put("Terms of Delivery", termsWithCountries);
             }
+
+            // Keep a consistent per-page Terms of Delivery source in the frontend: page 1 should
+            // use the proven-valid global extractor result (formFields) instead of accidentally
+            // capturing nearby section/table headers.
+            upsertPurchaseOrderTermsOfDeliveryPage1(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
 
             String termsForInvoiceFallback = termsWithCountries;
             if (termsForInvoiceFallback == null || termsForInvoiceFallback.isBlank()) {
@@ -2515,13 +2881,58 @@ public class OcrNewService {
             if (headerIdx < 0) continue;
 
             StringBuilder buf = new StringBuilder();
-            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 20); i++) {
+            Pattern twoLetterCountryPat = Pattern.compile("^[A-Z]{2}$");
+            boolean countryPrepended = false;
+            String detectedCountry = null;
+
+            // Try to detect a standalone 2-letter country code (e.g. JP, VN) in the first few
+            // lines after the header. Depending on PDFBox sorting, the code line may not be
+            // the immediate next line.
+            for (int k = headerIdx + 1; k < Math.min(pageLines.size(), headerIdx + 10); k++) {
+                String s = oneLine(pageLines.get(k).getText()).trim();
+                if (s.isBlank()) continue;
+                if (twoLetterCountryPat.matcher(s).matches()) {
+                    detectedCountry = s;
+                    break;
+                }
+            }
+            if (detectedCountry != null) {
+                buf.append(detectedCountry);
+                countryPrepended = true;
+            }
+
+            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 40); i++) {
                 String s = oneLine(pageLines.get(i).getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
                 if (low.startsWith("page:")) break;
                 if (low.contains("quantity per artic") || low.contains("invoice average") || low.contains("time of delivery")) break;
                 if (low.contains("purchase order detail") || low.contains("purchase order")) break;
+
+                // Stop once we enter standard conditions / legal text that often follows the shipping lines.
+                if (low.startsWith("by accepting")
+                        || low.contains("supplier acknowledges")
+                        || low.startsWith("(i)")
+                        || low.startsWith("(ii)")
+                        || low.startsWith("(iii)")
+                        || low.contains("standard purchase conditions")
+                        || low.contains("conditions apply")
+                        || low.contains("kawasaki")
+                        || low.equals("hong kong")) {
+                    break;
+                }
+
+                // Some POs have a single 2-letter destination/country code line (e.g. "JP")
+                // right after the header; keep it as the first line.
+                if (twoLetterCountryPat.matcher(s).matches()) {
+                    // If we already prepended a country code, skip this standalone line to avoid duplicates.
+                    if (countryPrepended) continue;
+                    if (buf.length() == 0) {
+                        buf.append(s);
+                        countryPrepended = true;
+                    }
+                    continue;
+                }
 
                 if (buf.length() > 0) buf.append("\n");
                 buf.append(s);

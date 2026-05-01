@@ -217,12 +217,8 @@ export function PurchaseOrderScanPage() {
   };
 
   const termsOfDeliveryForActivePage = useMemo(() => {
-    if (activePage === 1) {
-      const v = (salesOrderHeaderDraft?.['Terms of Delivery'] ?? '').toString();
-      if (v.trim().length > 0) return v;
-    }
     return (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
-  }, [activePage, salesOrderHeaderDraft, termsOfDeliveryByPageDraft]);
+  }, [activePage, termsOfDeliveryByPageDraft]);
 
   const quantityPerArticleRowsForActivePage = useMemo(() => {
     const p = String(activePage);
