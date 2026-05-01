@@ -218,6 +218,70 @@ public class OcrNewService {
         return out;
     }
 
+    private static void fillMissingPurchaseOrderQuantityPerArticleColour(List<Map<String, String>> rows, List<OcrNewLine> allLines) {
+        if (rows == null || rows.isEmpty() || allLines == null || allLines.isEmpty()) return;
+
+        int headerIdx = -1;
+        for (int i = 0; i < allLines.size(); i++) {
+            OcrNewLine l = allLines.get(i);
+            if (l == null || l.getText() == null) continue;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+            if (low.contains("quantity per artic")) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return;
+
+        int headerPage = allLines.get(headerIdx).getPage();
+        Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
+        final int colourColLeftMin = 900;
+
+        StringBuilder colourBuf = new StringBuilder();
+        for (int i = headerIdx + 1; i < Math.min(allLines.size(), headerIdx + 40); i++) {
+            OcrNewLine l = allLines.get(i);
+            if (l == null || l.getText() == null) continue;
+            if (l.getPage() != headerPage) break;
+
+            String s = oneLine(l.getText()).trim();
+            if (s.isBlank()) continue;
+            String low = s.toLowerCase(Locale.ROOT);
+
+            if (low.contains("total quantity") || low.contains("invoice average") || low.contains("time of delivery")) break;
+            if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost") || low.equals("colour")) continue;
+            if (low.contains("total quantity") || low.contains("invoice average") || low.contains("time of delivery")) break;
+            if (costQtyPat.matcher(s).find()) continue;
+
+            // Only capture text from the Colour column region (avoids accidentally concatenating other columns).
+            if (l.getLeft() < colourColLeftMin) continue;
+
+            if (colourBuf.length() > 0) colourBuf.append(" ");
+            colourBuf.append(s);
+        }
+
+        String colour = colourBuf.toString().replaceAll("\\s+", " ").trim();
+        if (colour.isBlank()) return;
+
+        Pattern optionLikePat = Pattern.compile("^\\s*[0-9A-Z]{3,}\\s*\\(V\\d+\\)\\s*$");
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            String existing = r.get("colour");
+            boolean overwrite = false;
+            if (existing == null || existing.isBlank() || existing.length() < 6) overwrite = true;
+            if (existing != null && optionLikePat.matcher(existing).find()) overwrite = true;
+            if (!overwrite && existing != null) {
+                String ex = existing.replaceAll("\\s+", " ").trim();
+                if (!ex.isBlank() && colour.length() > ex.length()) {
+                    // If OCR-derived colour is a longer/complete version of the existing partial value, replace it.
+                    if (colour.startsWith(ex) || colour.contains(ex)) overwrite = true;
+                }
+            }
+            if (overwrite) {
+                r.put("colour", colour);
+            }
+        }
+    }
+
     private static void fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromRegionOcr(
             List<Map<String, String>> poTimeOfDelivery,
             List<OcrNewLine> allLines,
@@ -2089,7 +2153,14 @@ public class OcrNewService {
             if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
-            List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
+            List<Map<String, String>> poQuantityPerArticle = List.of();
+            if (isPdf(file)) {
+                poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
+            }
+            if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
+                poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
+            }
+            fillMissingPurchaseOrderQuantityPerArticleColour(poQuantityPerArticle, allLines);
             List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
 
             String terms = formFields.get("Terms of Delivery");
@@ -3362,7 +3433,15 @@ public class OcrNewService {
         List<String> texts = new ArrayList<>();
         for (OcrNewLine l : allLines) {
             if (l != null && l.getText() != null) {
-                texts.add(oneLine(l.getText()).trim());
+                String s = oneLine(l.getText()).trim();
+                s = s
+                        .replace('\u2010', '-')
+                        .replace('\u2011', '-')
+                        .replace('\u2012', '-')
+                        .replace('\u2013', '-')
+                        .replace('\u2014', '-')
+                        .replace('\u2212', '-');
+                texts.add(s);
             }
         }
 
@@ -3385,6 +3464,9 @@ public class OcrNewService {
 
         Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
         Pattern articleStartPat = Pattern.compile("^(\\d{3})\\s+([\\d\\-]+)\\s*(.*)$");
+        Pattern hmColourPrefixPat = Pattern.compile("^\\d{2}-\\d{2}$");
+        Pattern hmSplitFixPat = Pattern.compile("^(\\d)\\s+(.*)$");
+        Pattern hmSplitFixCompactPat = Pattern.compile("^(\\d)(\\d{2})(.*)$");
 
         String lastColourLine = "";
         String pendingArticleNo = "";
@@ -3408,8 +3490,12 @@ public class OcrNewService {
                     && !low.contains("colour code")
                     && !low.contains("qty/article")
                     && !low.contains("cost")) {
-                if (!line.matches("^[A-Z]{2}$")) {
-                    lastColourLine = lastColourLine.isBlank() ? line : (lastColourLine + " " + line);
+                if (!pendingArticleNo.isBlank()) {
+                    pendingMiddle = pendingMiddle.isBlank() ? line : (pendingMiddle + " " + line);
+                } else {
+                    if (!line.matches("^[A-Z]{2}$")) {
+                        lastColourLine = lastColourLine.isBlank() ? line : (lastColourLine + " " + line);
+                    }
                 }
                 continue;
             }
@@ -3422,14 +3508,27 @@ public class OcrNewService {
                 continue;
             }
             if (!pendingArticleNo.isBlank()) {
-                Matcher hmFix = Pattern.compile("^(\\d)\\s+(.*)$").matcher(line);
-                if (hmFix.find() && pendingHmColourCode.matches("\\d{2}-\\d{2}$")) {
-                    pendingHmColourCode = pendingHmColourCode + hmFix.group(1);
-                    String rest = hmFix.group(2).trim();
-                    if (!rest.isBlank()) {
-                        pendingMiddle = pendingMiddle.isBlank() ? rest : (pendingMiddle + " " + rest);
+                if (hmColourPrefixPat.matcher(pendingHmColourCode).find()) {
+                    Matcher hmFix = hmSplitFixPat.matcher(line);
+                    if (hmFix.find()) {
+                        pendingHmColourCode = pendingHmColourCode + hmFix.group(1);
+                        String rest = hmFix.group(2).trim();
+                        if (!rest.isBlank()) {
+                            pendingMiddle = pendingMiddle.isBlank() ? rest : (pendingMiddle + " " + rest);
+                        }
+                        continue;
                     }
-                    continue;
+
+                    String compact = line.replaceAll("\\s+", "");
+                    Matcher hmFix2 = hmSplitFixCompactPat.matcher(compact);
+                    if (hmFix2.find()) {
+                        pendingHmColourCode = pendingHmColourCode + hmFix2.group(1);
+                        String rest = (hmFix2.group(2) + " " + hmFix2.group(3)).trim();
+                        if (!rest.isBlank()) {
+                            pendingMiddle = pendingMiddle.isBlank() ? rest : (pendingMiddle + " " + rest);
+                        }
+                        continue;
+                    }
                 }
             }
 
@@ -3487,6 +3586,90 @@ public class OcrNewService {
         }
 
         log.info("[PO-QTY-ARTICLE] Total rows extracted: {}", out.size());
+        return out;
+    }
+
+    private static List<Map<String, String>> extractPurchaseOrderQuantityPerArticleFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            String text = stripper.getText(doc);
+            if (text == null || text.isBlank()) return out;
+
+            String[] lines = text.split("\\r?\\n");
+            int headerIdx = -1;
+            for (int i = 0; i < lines.length; i++) {
+                String low = lines[i] == null ? "" : lines[i].toLowerCase(Locale.ROOT);
+                if (low.contains("quantity per artic")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) return out;
+
+            Pattern articlePrefixPat = Pattern.compile("^(\\d{3})\\s+(\\d{2}-\\d{3})\\s+(\\d{2})\\s+(.*)$");
+            Pattern optionPat = Pattern.compile("\\b([0-9A-Z]{3,})\\s*\\((V\\d+)\\)");
+            Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
+
+            for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 200); i++) {
+                String raw = lines[i];
+                if (raw == null) continue;
+                String line = oneLine(raw).trim();
+                if (line.isBlank()) continue;
+                String low = line.toLowerCase(Locale.ROOT);
+                if (low.contains("total quantity") || low.contains("invoice average")
+                        || low.contains("sales sample") || low.contains("time of delivery")) {
+                    break;
+                }
+                if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost")) {
+                    continue;
+                }
+                if (!line.matches("^\\d{3}\\b.*") || !costQtyPat.matcher(line).find()) {
+                    continue;
+                }
+
+                Matcher cq = costQtyPat.matcher(line);
+                if (!cq.find()) continue;
+
+                String cost = cq.group(1).trim() + " " + cq.group(2).trim();
+                String qtyArticle = cq.group(3).replaceAll("\\s+", " ").trim();
+                String prefix = line.substring(0, cq.start()).replaceAll("\\s+", " ").trim();
+
+                Matcher prefixM = articlePrefixPat.matcher(prefix);
+                if (!prefixM.find()) continue;
+
+                String articleNo = prefixM.group(1).trim();
+                String hmColourCode = prefixM.group(2).trim();
+                String ptArticleNumber = prefixM.group(3).trim();
+                String remainder = prefixM.group(4) == null ? "" : prefixM.group(4).trim();
+
+                String colour = "";
+                String optionNo = "";
+                Matcher optM = optionPat.matcher(remainder);
+                if (optM.find()) {
+                    optionNo = (optM.group(1).trim() + " (" + optM.group(2).trim() + ")").trim();
+                    colour = remainder.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
+                } else {
+                    colour = remainder.replaceAll("\\s+", " ").trim();
+                }
+
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("articleNo", articleNo);
+                row.put("hmColourCode", hmColourCode);
+                row.put("ptArticleNumber", ptArticleNumber);
+                row.put("colour", colour);
+                row.put("optionNo", optionNo);
+                row.put("cost", cost);
+                row.put("qtyArticle", qtyArticle);
+                out.add(row);
+            }
+        } catch (Exception ex) {
+            log.warn("[PO-QTY-ARTICLE][PDFBOX] failed: {}", ex.getMessage());
+        }
+
         return out;
     }
 
