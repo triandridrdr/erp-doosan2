@@ -351,7 +351,12 @@ public class OcrNewService {
             out.add(line);
 
             String low = line.toLowerCase(Locale.ROOT);
-            if (low.contains("transport by") || low.contains("incoterms") || low.contains("ship by") || low.contains("origin delivery information")) {
+            if (low.contains("transport by")
+                    || low.contains("incoterms")
+                    || low.contains("ship by")
+                    || low.contains("origin delivery information")
+                    || low.contains("account number")
+                    || low.contains("account no")) {
                 lastRelevantIdx = out.size() - 1;
             }
         }
@@ -969,7 +974,6 @@ public class OcrNewService {
         if (page <= 0) return "";
 
         List<String> pageTexts = new ArrayList<>();
-        LinkedHashSet<String> tokenCandidates = new LinkedHashSet<>();
         boolean hasJapan = false;
         boolean hasKorea = false;
         boolean hasPhilippines = false;
@@ -982,14 +986,6 @@ public class OcrNewService {
             if (l.getPage() != page) continue;
             String text = oneLine(l.getText());
             pageTexts.add(text);
-
-            Matcher m = COUNTRY_CODE_TOKEN_PAT.matcher(text);
-            while (m.find()) {
-                String code = m.group();
-                if (PO_DELIVERY_COUNTRY_CODES.contains(code)) {
-                    tokenCandidates.add(code);
-                }
-            }
 
             String low = text.toLowerCase(Locale.ROOT);
             if (low.contains("japan")) hasJapan = true;
@@ -1031,10 +1027,6 @@ public class OcrNewService {
                     return code;
                 }
             }
-        }
-
-        if (!tokenCandidates.isEmpty()) {
-            return tokenCandidates.iterator().next();
         }
 
         if (hasJapan || hasKawasaki || hasTokyo) return "JP";
