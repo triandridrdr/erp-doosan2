@@ -2833,8 +2833,11 @@ public class OcrNewService {
             // (price-only line + country-only line, multi-country lists, etc.).
             // Then annotate each extracted row with a best-effort page number so the frontend
             // can still filter by active page.
-            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
-            annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
+            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
+            if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+                annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
+            }
 
             String terms = formFields.get("Terms of Delivery");
             String termsWithCountries = addPurchaseOrderTermsDeliveryCountryCodes(terms, allLines, poTimeOfDelivery);
