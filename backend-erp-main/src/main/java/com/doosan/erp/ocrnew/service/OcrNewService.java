@@ -293,11 +293,12 @@ public class OcrNewService {
                 }
             }
 
+            int bandEndTop = stopTop != Integer.MAX_VALUE ? stopTop : (headerTop + 2000);
+
             List<OcrNewLine> band = new ArrayList<>();
             for (OcrNewLine l : pageLines) {
                 if (l.getTop() < sectionStartTop) continue;
-                if (l.getTop() > headerTop + 600) continue;
-                if (stopTop != Integer.MAX_VALUE && l.getTop() >= stopTop) continue;
+                if (l.getTop() >= bandEndTop) continue;
                 band.add(l);
             }
             band.sort(Comparator
@@ -312,6 +313,7 @@ public class OcrNewService {
                 if (low.startsWith("sales sample terms")) continue;
                 if (low.startsWith("page:")) continue;
                 if (low.startsWith("created:")) continue;
+                if (low.contains("purchase order") && low.contains("sales sample") && low.length() <= 40) continue;
                 if (low.startsWith("by accepting")) continue;
                 if (low.startsWith("(i)") || low.startsWith("(ii)") || low.startsWith("(iii)")) continue;
                 if (low.contains("conditions apply") || low.contains("standard purchase")) continue;
