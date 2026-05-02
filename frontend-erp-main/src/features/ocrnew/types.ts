@@ -71,6 +71,12 @@ export interface OcrNewDocumentAnalysisResponseData {
    * Row keys: page, termsOfDelivery
    */
   purchaseOrderTermsOfDelivery?: Array<Record<string, string>>;
+
+  /**
+   * Sales Sample: Terms content per page
+   * Row keys: page, salesSampleTerms
+   */
+  salesSampleTermsByPage?: Array<Record<string, string>>;
   averageConfidence: number;
   pageCount: number;
 }

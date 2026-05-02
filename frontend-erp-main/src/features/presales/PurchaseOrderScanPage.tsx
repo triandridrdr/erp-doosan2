@@ -63,6 +63,8 @@ export function PurchaseOrderScanPage() {
 
   const [termsOfDeliveryByPageDraft, setTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
 
+  const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
+
   useEffect(() => {
     setActivePage((p) => Math.min(Math.max(1, p), pageCount));
   }, [pageCount]);
@@ -214,11 +216,31 @@ export function PurchaseOrderScanPage() {
       if (v.trim().length > 0) nextTerms[p] = v;
     }
     setTermsOfDeliveryByPageDraft(nextTerms);
+
+    const nextSalesSampleTerms: Record<number, string> = {};
+    for (const r of d?.salesSampleTermsByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.salesSampleTerms ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleTerms[p] = v;
+    }
+    setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
   };
 
   const termsOfDeliveryForActivePage = useMemo(() => {
     return (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
   }, [activePage, termsOfDeliveryByPageDraft]);
+
+  const salesSampleTermsForActivePage = useMemo(() => {
+    const direct = (salesSampleTermsByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+    for (const p of Object.keys(salesSampleTermsByPageDraft ?? {})) {
+      const v = (salesSampleTermsByPageDraft as any)?.[p];
+      const t = (v ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleTermsByPageDraft]);
 
   const quantityPerArticleRowsForActivePage = useMemo(() => {
     const p = String(activePage);
@@ -951,6 +973,17 @@ useEffect(() => {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 text-sm font-semibold text-gray-900'>Sales Sample</div>
         <div className='p-6 space-y-4'>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Sales Sample Terms</div>
+            <textarea
+              className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+              value={salesSampleTermsForActivePage}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSalesSampleTermsByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+              }}
+            />
+          </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
             <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
             <Input value='' onChange={() => {}} />

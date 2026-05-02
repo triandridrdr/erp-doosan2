@@ -228,6 +228,158 @@ public class OcrNewService {
         return out;
     }
 
+    private static List<Map<String, String>> extractSalesSampleTermsByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            int headerIdx = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.equals("sales sample terms") || low.startsWith("sales sample terms") || low.contains("sales sample terms")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            StringBuilder buf = new StringBuilder();
+            Set<String> seenLines = new HashSet<>();
+
+            // Some templates place key Sales Sample paragraphs BEFORE the "Sales Sample Terms" header.
+            // Option B: find the start of the Sales Sample section (title / key-value header),
+            // then collect paragraph-like lines until the "Sales Sample Terms" header.
+            int searchStart = Math.max(0, headerIdx - 260);
+            int sectionStartIdx = -1;
+            for (int i = headerIdx - 1; i >= searchStart; i--) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.contains("purchase order") && low.contains("sales sample")) {
+                    sectionStartIdx = i;
+                    break;
+                }
+                if (low.contains("sales sample order no")) {
+                    if (sectionStartIdx < 0) {
+                        sectionStartIdx = i;
+                    }
+                }
+            }
+
+            if (sectionStartIdx >= 0) {
+                for (int i = sectionStartIdx + 1; i < headerIdx; i++) {
+                    String s = oneLine(pageLines.get(i).getText()).trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+
+                    if (low.startsWith("page:")) continue;
+                    if (low.startsWith("sales sample terms")) break;
+                    if (low.startsWith("time of delivery") || low.equals("time of delivery")) continue;
+                    if (low.startsWith("article no") || low.contains("h&m colour")) continue;
+                    if (low.startsWith("by accepting")) continue;
+                    if (low.startsWith("created:")) continue;
+                    if (low.startsWith("as soon as possible")) continue;
+                    if (low.contains("destination studio")) {
+                        // Address block begins; it is not part of Sales Sample Terms.
+                        continue;
+                    }
+
+                    // Skip known key/value lines and obvious metadata.
+                    if (low.startsWith("purchase order no")) continue;
+                    if (low.startsWith("date of order")) continue;
+                    if (low.startsWith("product description")) continue;
+                    if (low.startsWith("supplier code")) continue;
+                    if (low.startsWith("supplier name")) continue;
+                    if (low.startsWith("type of construction")) continue;
+                    if (low.startsWith("account number")) continue;
+                    if (low.startsWith("transport by")) continue;
+                    if (low.startsWith("sales sample order no")) continue;
+                    if (low.startsWith("(i)") || low.startsWith("(ii)") || low.startsWith("(iii)")) continue;
+                    if (low.contains("conditions apply") || low.contains("standard purchase")) continue;
+
+                    // Filter for paragraph-like content: avoid short labels and table-ish rows.
+                    boolean looksLikeSalesSampleParagraph =
+                            low.contains("sales sample")
+                                    || low.contains("sales samples")
+                                    || low.contains("hang tag")
+                                    || low.contains("price tag")
+                                    || low.contains("qr");
+
+                    boolean looksLikeSentence =
+                            low.startsWith("the ")
+                                    || low.startsWith("if ")
+                                    || low.startsWith("costs ")
+                                    || low.startsWith("any liability");
+
+                    if (!looksLikeSalesSampleParagraph && !looksLikeSentence) continue;
+
+                    if (s.length() < 25 && !looksLikeSalesSampleParagraph) continue;
+                    if (low.matches("^[a-z\s]{0,18}:.*$")) continue;
+                    if (low.matches("^\\d{3}\\s+\\d{2}-\\d{3}.*$")) continue;
+                    if (low.contains("qty") && low.contains("tod") && low.contains("destination")) continue;
+
+                    String norm = low
+                            .replaceAll("\\s+", " ")
+                            .replace(" and the supplier ", " and supplier ")
+                            .replace(" the supplier ", " supplier ")
+                            .trim();
+                    if (seenLines.add(norm)) {
+                        if (buf.length() > 0) buf.append("\n");
+                        buf.append(s);
+                    }
+                }
+            }
+
+            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 80); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.startsWith("page:")) break;
+                if (low.startsWith("time of delivery") || low.equals("time of delivery")) break;
+                if (low.startsWith("terms of delivery") || low.equals("terms of delivery")) break;
+                if (low.startsWith("destination") || low.contains("destination studio")) break;
+                if (low.startsWith("article no") || low.contains("article no") || low.contains("h&m colour")) break;
+                if (low.startsWith("purchase order")) break;
+
+                String norm = low
+                        .replaceAll("\\s+", " ")
+                        .replace(" and the supplier ", " and supplier ")
+                        .replace(" the supplier ", " supplier ")
+                        .trim();
+                if (!seenLines.add(norm)) continue;
+
+                if (buf.length() > 0) buf.append("\n");
+                buf.append(s);
+            }
+
+            String terms = buf.toString().trim();
+            if (!terms.isBlank()) {
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", String.valueOf(page));
+                row.put("salesSampleTerms", terms);
+                out.add(row);
+            }
+        }
+
+        return out;
+    }
+
     private static void upsertPurchaseOrderTermsOfDeliveryPage1(List<Map<String, String>> poTermsOfDeliveryByPage, String terms) {
         if (poTermsOfDeliveryByPage == null) return;
         if (terms == null || terms.isBlank()) return;
@@ -2873,6 +3025,16 @@ public class OcrNewService {
             }
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
 
+            List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
+            if (effectiveDebug) {
+                log.info("[SALES-SAMPLE-TERMS] extracted rows: {}", salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size());
+                for (int i = 0; i < Math.min(10, salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size()); i++) {
+                    Map<String, String> r = salesSampleTermsByPage.get(i);
+                    if (r == null) continue;
+                    log.info("[SALES-SAMPLE-TERMS] row[{}]: page={} textPreview={}", i, r.get("page"), truncate(r.get("salesSampleTerms"), 200));
+                }
+            }
+
             String extractedText = allLines.stream()
                     .map(OcrNewLine::getText)
                     .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b);
@@ -3028,6 +3190,7 @@ public class OcrNewService {
                     .purchaseOrderQuantityPerArticle(poQuantityPerArticle)
                     .purchaseOrderInvoiceAvgPrice(poInvoiceAvgPrice)
                     .purchaseOrderTermsOfDelivery(poTermsOfDeliveryByPage)
+                    .salesSampleTermsByPage(salesSampleTermsByPage)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();
