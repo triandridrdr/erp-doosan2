@@ -259,111 +259,101 @@ public class OcrNewService {
             }
             if (headerIdx < 0) continue;
 
+            int headerTop = pageLines.get(headerIdx).getTop();
+
             StringBuilder buf = new StringBuilder();
             Set<String> seenLines = new HashSet<>();
 
-            // Some templates place key Sales Sample paragraphs BEFORE the "Sales Sample Terms" header.
-            // Option B: find the start of the Sales Sample section (title / key-value header),
-            // then collect paragraph-like lines until the "Sales Sample Terms" header.
-            int searchStart = Math.max(0, headerIdx - 260);
-            int sectionStartIdx = -1;
-            for (int i = headerIdx - 1; i >= searchStart; i--) {
-                String s = oneLine(pageLines.get(i).getText()).trim();
+            // Coordinate-based extraction: OCR ordering can be unreliable on multi-block layouts.
+            // Determine a vertical band for the Sales Sample section and collect only relevant lines.
+            int sectionStartTop = Integer.MAX_VALUE;
+            for (OcrNewLine l : pageLines) {
+                String s = oneLine(l.getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
                 if (low.contains("purchase order") && low.contains("sales sample")) {
-                    sectionStartIdx = i;
-                    break;
-                }
-                if (low.contains("sales sample order no")) {
-                    if (sectionStartIdx < 0) {
-                        sectionStartIdx = i;
-                    }
+                    sectionStartTop = Math.min(sectionStartTop, l.getTop());
                 }
             }
-
-            if (sectionStartIdx >= 0) {
-                for (int i = sectionStartIdx + 1; i < headerIdx; i++) {
-                    String s = oneLine(pageLines.get(i).getText()).trim();
-                    if (s.isBlank()) continue;
-                    String low = s.toLowerCase(Locale.ROOT);
-
-                    if (low.startsWith("page:")) continue;
-                    if (low.startsWith("sales sample terms")) break;
-                    if (low.startsWith("time of delivery") || low.equals("time of delivery")) continue;
-                    if (low.startsWith("article no") || low.contains("h&m colour")) continue;
-                    if (low.startsWith("by accepting")) continue;
-                    if (low.startsWith("created:")) continue;
-                    if (low.startsWith("as soon as possible")) continue;
-                    if (low.contains("destination studio")) {
-                        // Address block begins; it is not part of Sales Sample Terms.
-                        continue;
-                    }
-
-                    // Skip known key/value lines and obvious metadata.
-                    if (low.startsWith("purchase order no")) continue;
-                    if (low.startsWith("date of order")) continue;
-                    if (low.startsWith("product description")) continue;
-                    if (low.startsWith("supplier code")) continue;
-                    if (low.startsWith("supplier name")) continue;
-                    if (low.startsWith("type of construction")) continue;
-                    if (low.startsWith("account number")) continue;
-                    if (low.startsWith("transport by")) continue;
-                    if (low.startsWith("sales sample order no")) continue;
-                    if (low.startsWith("(i)") || low.startsWith("(ii)") || low.startsWith("(iii)")) continue;
-                    if (low.contains("conditions apply") || low.contains("standard purchase")) continue;
-
-                    // Filter for paragraph-like content: avoid short labels and table-ish rows.
-                    boolean looksLikeSalesSampleParagraph =
-                            low.contains("sales sample")
-                                    || low.contains("sales samples")
-                                    || low.contains("hang tag")
-                                    || low.contains("price tag")
-                                    || low.contains("qr");
-
-                    boolean looksLikeSentence =
-                            low.startsWith("the ")
-                                    || low.startsWith("if ")
-                                    || low.startsWith("costs ")
-                                    || low.startsWith("any liability");
-
-                    if (!looksLikeSalesSampleParagraph && !looksLikeSentence) continue;
-
-                    if (s.length() < 25 && !looksLikeSalesSampleParagraph) continue;
-                    if (low.matches("^[a-z\s]{0,18}:.*$")) continue;
-                    if (low.matches("^\\d{3}\\s+\\d{2}-\\d{3}.*$")) continue;
-                    if (low.contains("qty") && low.contains("tod") && low.contains("destination")) continue;
-
-                    String norm = low
-                            .replaceAll("\\s+", " ")
-                            .replace(" and the supplier ", " and supplier ")
-                            .replace(" the supplier ", " supplier ")
-                            .trim();
-                    if (seenLines.add(norm)) {
-                        if (buf.length() > 0) buf.append("\n");
-                        buf.append(s);
-                    }
-                }
+            if (sectionStartTop == Integer.MAX_VALUE) {
+                // Fallback: no explicit section title detected; start from top of page.
+                sectionStartTop = 0;
             }
 
-            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 80); i++) {
-                String s = oneLine(pageLines.get(i).getText()).trim();
+            int stopTop = Integer.MAX_VALUE;
+            for (OcrNewLine l : pageLines) {
+                if (l.getTop() <= sectionStartTop) continue;
+                String s = oneLine(l.getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
-                if (low.startsWith("page:")) break;
-                if (low.startsWith("time of delivery") || low.equals("time of delivery")) break;
-                if (low.startsWith("terms of delivery") || low.equals("terms of delivery")) break;
-                if (low.startsWith("destination") || low.contains("destination studio")) break;
-                if (low.startsWith("article no") || low.contains("article no") || low.contains("h&m colour")) break;
-                if (low.startsWith("purchase order")) break;
+                if (low.startsWith("time of delivery") || low.equals("time of delivery")
+                        || low.startsWith("article no") || low.contains("article no")
+                        || low.contains("destination studio") || low.startsWith("destination studio")) {
+                    stopTop = Math.min(stopTop, l.getTop());
+                }
+            }
+
+            List<OcrNewLine> band = new ArrayList<>();
+            for (OcrNewLine l : pageLines) {
+                if (l.getTop() < sectionStartTop) continue;
+                if (l.getTop() > headerTop + 600) continue;
+                if (stopTop != Integer.MAX_VALUE && l.getTop() >= stopTop) continue;
+                band.add(l);
+            }
+            band.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            for (OcrNewLine l : band) {
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+
+                if (low.startsWith("sales sample terms")) continue;
+                if (low.startsWith("page:")) continue;
+                if (low.startsWith("created:")) continue;
+                if (low.startsWith("by accepting")) continue;
+                if (low.startsWith("(i)") || low.startsWith("(ii)") || low.startsWith("(iii)")) continue;
+                if (low.contains("conditions apply") || low.contains("standard purchase")) continue;
+                if (low.startsWith("sales sample order no")) continue;
+                if (low.startsWith("purchase order no")) continue;
+                if (low.startsWith("date of order")) continue;
+                if (low.startsWith("product description")) continue;
+                if (low.startsWith("supplier code")) continue;
+                if (low.startsWith("supplier name")) continue;
+                if (low.startsWith("type of construction")) continue;
+                if (low.startsWith("account number")) continue;
+                if (low.startsWith("transport by")) continue;
+
+                boolean looksLikeSalesSampleTerms =
+                        low.contains("sales sample")
+                                || low.contains("sales samples")
+                                || low.contains("hang tag")
+                                || low.contains("price tag")
+                                || low.contains("qr")
+                                || low.contains("attached before shipping")
+                                || low.contains("fails to deliver")
+                                || low.contains("right to cancel")
+                                || low.contains("reimburse")
+                                || low.startsWith("the ")
+                                || low.startsWith("if ")
+                                || low.startsWith("costs ")
+                                || low.startsWith("any liability");
+
+                if (!looksLikeSalesSampleTerms) continue;
+                if (s.length() < 18) continue;
+                if (low.matches("^[a-z\s]{0,18}:.*$")) continue;
+                if (low.matches("^\\d{3}\\s+\\d{2}-\\d{3}.*$")) continue;
 
                 String norm = low
                         .replaceAll("\\s+", " ")
+                        .replace(" and the supplier shall ", " and shall ")
+                        .replace(" and supplier shall ", " and shall ")
                         .replace(" and the supplier ", " and supplier ")
                         .replace(" the supplier ", " supplier ")
                         .trim();
-                if (!seenLines.add(norm)) continue;
 
+                if (!seenLines.add(norm)) continue;
                 if (buf.length() > 0) buf.append("\n");
                 buf.append(s);
             }
