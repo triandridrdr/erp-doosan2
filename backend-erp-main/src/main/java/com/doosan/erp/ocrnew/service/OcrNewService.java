@@ -2815,14 +2815,29 @@ public class OcrNewService {
             fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug, allowedTermsCountries);
 
             List<Map<String, String>> poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleByPage(allLines);
+            // Pages > 1 often lose this dense table in hOCR; supplement with PDFBox text extraction when PDF.
+            if (isPdf(file)) {
+                List<Map<String, String>> poQuantityFromPdf = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
+                if (poQuantityFromPdf != null && !poQuantityFromPdf.isEmpty()) {
+                    if (poQuantityPerArticle == null) poQuantityPerArticle = new ArrayList<>();
+                    Set<String> existingKeys = new HashSet<>();
+                    for (Map<String, String> r : poQuantityPerArticle) {
+                        if (r == null) continue;
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        existingKeys.add(k);
+                    }
+                    for (Map<String, String> r : poQuantityFromPdf) {
+                        if (r == null) continue;
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        if (!existingKeys.contains(k)) {
+                            poQuantityPerArticle.add(r);
+                            existingKeys.add(k);
+                        }
+                    }
+                }
+            }
             if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
-                poQuantityPerArticle = List.of();
-                if (isPdf(file)) {
-                    poQuantityPerArticle = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
-                }
-                if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
-                    poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
-                }
+                poQuantityPerArticle = extractPurchaseOrderQuantityPerArticle(allLines);
                 for (Map<String, String> r : poQuantityPerArticle) {
                     if (r != null && !r.containsKey("page")) r.put("page", "1");
                 }
@@ -3179,6 +3194,10 @@ public class OcrNewService {
             List<OcrNewLine> pageLines = en.getValue();
             if (pageLines == null || pageLines.isEmpty()) continue;
 
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
             List<Map<String, String>> rows = extractPurchaseOrderQuantityPerArticle(pageLines);
             if (rows == null || rows.isEmpty()) continue;
             for (Map<String, String> r : rows) {
@@ -3422,6 +3441,10 @@ public class OcrNewService {
 
     private static String oneLine(String s) {
         return safe(s).replaceAll("\\s+", " ").trim();
+    }
+
+    private static String nvl(String s) {
+        return s == null ? "" : s;
     }
 
     /**
@@ -4276,20 +4299,51 @@ public class OcrNewService {
             return out;
         }
 
-        List<String> texts = new ArrayList<>();
+        List<OcrNewLine> sorted = new ArrayList<>();
         for (OcrNewLine l : allLines) {
-            if (l != null && l.getText() != null) {
-                String s = oneLine(l.getText()).trim();
-                s = s
-                        .replace('\u2010', '-')
-                        .replace('\u2011', '-')
-                        .replace('\u2012', '-')
-                        .replace('\u2013', '-')
-                        .replace('\u2014', '-')
-                        .replace('\u2212', '-');
-                texts.add(s);
+            if (l == null || l.getText() == null) continue;
+            sorted.add(l);
+        }
+        sorted.sort(Comparator
+                .comparingInt(OcrNewLine::getTop)
+                .thenComparingInt(OcrNewLine::getLeft));
+
+        // Merge OCR lines that belong to the same visual row (table cells often split into separate lines).
+        // This helps reconstruct rows like: "001 22-216 02 ... 6.92 USD 251" on pages > 1.
+        List<String> texts = new ArrayList<>();
+        StringBuilder group = new StringBuilder();
+        Integer groupTop = null;
+        int yTol = 6;
+        for (OcrNewLine l : sorted) {
+            String s = oneLine(l.getText()).trim();
+            if (s.isBlank()) continue;
+            s = s
+                    .replace('\u2010', '-')
+                    .replace('\u2011', '-')
+                    .replace('\u2012', '-')
+                    .replace('\u2013', '-')
+                    .replace('\u2014', '-')
+                    .replace('\u2212', '-');
+
+            if (groupTop == null) {
+                groupTop = l.getTop();
+                group.append(s);
+                continue;
+            }
+
+            if (Math.abs(l.getTop() - groupTop) <= yTol) {
+                if (group.length() > 0) group.append(' ');
+                group.append(s);
+            } else {
+                String merged = group.toString().replaceAll("\\s+", " ").trim();
+                if (!merged.isBlank()) texts.add(merged);
+                group.setLength(0);
+                groupTop = l.getTop();
+                group.append(s);
             }
         }
+        String merged = group.toString().replaceAll("\\s+", " ").trim();
+        if (!merged.isBlank()) texts.add(merged);
 
         log.info("[PO-QTY-ARTICLE] Searching in {} text lines", texts.size());
 
@@ -4297,7 +4351,10 @@ public class OcrNewService {
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
             String low = texts.get(i).toLowerCase(Locale.ROOT);
-            if (low.contains("quantity per artic")) {
+            if (low.contains("quantity per artic")
+                    || low.contains("quanity per artic")
+                    || low.contains("qty per article")
+                    || (low.contains("quantity") && low.contains("per") && low.contains("artic"))) {
                 headerIdx = i;
                 log.info("[PO-QTY-ARTICLE] Found header at line {}: {}", i, texts.get(i));
                 break;
@@ -4326,7 +4383,10 @@ public class OcrNewService {
 
             // Stop at next section
             if (low.contains("total quantity") || low.contains("invoice average")
-                    || low.contains("sales sample") || low.contains("time of delivery")) {
+                    || low.contains("sales sample") || low.contains("time of delivery")
+                    || low.contains("terms of delivery")
+                    || low.contains("purchase order detail")
+                    || low.contains("purchase order")) {
                 break;
             }
 
@@ -4442,75 +4502,82 @@ public class OcrNewService {
         try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
             PDFTextStripper stripper = new PDFTextStripper();
             stripper.setSortByPosition(true);
-            String text = stripper.getText(doc);
-            if (text == null || text.isBlank()) return out;
-
-            String[] lines = text.split("\\r?\\n");
-            int headerIdx = -1;
-            for (int i = 0; i < lines.length; i++) {
-                String low = lines[i] == null ? "" : lines[i].toLowerCase(Locale.ROOT);
-                if (low.contains("quantity per artic")) {
-                    headerIdx = i;
-                    break;
-                }
-            }
-            if (headerIdx < 0) return out;
 
             Pattern articlePrefixPat = Pattern.compile("^(\\d{3})\\s+(\\d{2}-\\d{3})\\s+(\\d{2})\\s+(.*)$");
             Pattern optionPat = Pattern.compile("\\b([0-9A-Z]{3,})\\s*\\((V\\d+)\\)");
             Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
 
-            for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 200); i++) {
-                String raw = lines[i];
-                if (raw == null) continue;
-                String line = oneLine(raw).trim();
-                if (line.isBlank()) continue;
-                String low = line.toLowerCase(Locale.ROOT);
-                if (low.contains("total quantity") || low.contains("invoice average")
-                        || low.contains("sales sample") || low.contains("time of delivery")) {
-                    break;
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String low = lines[i] == null ? "" : lines[i].toLowerCase(Locale.ROOT);
+                    if (low.contains("quantity per artic")) {
+                        headerIdx = i;
+                        break;
+                    }
                 }
-                if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost")) {
-                    continue;
+                if (headerIdx < 0) continue;
+
+                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 200); i++) {
+                    String raw = lines[i];
+                    if (raw == null) continue;
+                    String line = oneLine(raw).trim();
+                    if (line.isBlank()) continue;
+                    String low = line.toLowerCase(Locale.ROOT);
+                    if (low.contains("total quantity") || low.contains("invoice average")
+                            || low.contains("sales sample") || low.contains("time of delivery")) {
+                        break;
+                    }
+                    if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost")) {
+                        continue;
+                    }
+                    if (!line.matches("^\\d{3}\\b.*") || !costQtyPat.matcher(line).find()) {
+                        continue;
+                    }
+
+                    Matcher cq = costQtyPat.matcher(line);
+                    if (!cq.find()) continue;
+
+                    String cost = cq.group(1).trim() + " " + cq.group(2).trim();
+                    String qtyArticle = cq.group(3).replaceAll("\\s+", " ").trim();
+                    String prefix = line.substring(0, cq.start()).replaceAll("\\s+", " ").trim();
+
+                    Matcher prefixM = articlePrefixPat.matcher(prefix);
+                    if (!prefixM.find()) continue;
+
+                    String articleNo = prefixM.group(1).trim();
+                    String hmColourCode = prefixM.group(2).trim();
+                    String ptArticleNumber = prefixM.group(3).trim();
+                    String remainder = prefixM.group(4) == null ? "" : prefixM.group(4).trim();
+
+                    String colour = "";
+                    String optionNo = "";
+                    Matcher optM = optionPat.matcher(remainder);
+                    if (optM.find()) {
+                        optionNo = (optM.group(1).trim() + " (" + optM.group(2).trim() + ")").trim();
+                        colour = remainder.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
+                    } else {
+                        colour = remainder.replaceAll("\\s+", " ").trim();
+                    }
+
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("page", String.valueOf(page));
+                    row.put("articleNo", articleNo);
+                    row.put("hmColourCode", hmColourCode);
+                    row.put("ptArticleNumber", ptArticleNumber);
+                    row.put("colour", colour);
+                    row.put("optionNo", optionNo);
+                    row.put("cost", cost);
+                    row.put("qtyArticle", qtyArticle);
+                    out.add(row);
                 }
-                if (!line.matches("^\\d{3}\\b.*") || !costQtyPat.matcher(line).find()) {
-                    continue;
-                }
-
-                Matcher cq = costQtyPat.matcher(line);
-                if (!cq.find()) continue;
-
-                String cost = cq.group(1).trim() + " " + cq.group(2).trim();
-                String qtyArticle = cq.group(3).replaceAll("\\s+", " ").trim();
-                String prefix = line.substring(0, cq.start()).replaceAll("\\s+", " ").trim();
-
-                Matcher prefixM = articlePrefixPat.matcher(prefix);
-                if (!prefixM.find()) continue;
-
-                String articleNo = prefixM.group(1).trim();
-                String hmColourCode = prefixM.group(2).trim();
-                String ptArticleNumber = prefixM.group(3).trim();
-                String remainder = prefixM.group(4) == null ? "" : prefixM.group(4).trim();
-
-                String colour = "";
-                String optionNo = "";
-                Matcher optM = optionPat.matcher(remainder);
-                if (optM.find()) {
-                    optionNo = (optM.group(1).trim() + " (" + optM.group(2).trim() + ")").trim();
-                    colour = remainder.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
-                } else {
-                    colour = remainder.replaceAll("\\s+", " ").trim();
-                }
-
-                Map<String, String> row = new LinkedHashMap<>();
-                row.put("articleNo", articleNo);
-                row.put("hmColourCode", hmColourCode);
-                row.put("ptArticleNumber", ptArticleNumber);
-                row.put("colour", colour);
-                row.put("optionNo", optionNo);
-                row.put("cost", cost);
-                row.put("qtyArticle", qtyArticle);
-                out.add(row);
             }
         } catch (Exception ex) {
             log.warn("[PO-QTY-ARTICLE][PDFBOX] failed: {}", ex.getMessage());
