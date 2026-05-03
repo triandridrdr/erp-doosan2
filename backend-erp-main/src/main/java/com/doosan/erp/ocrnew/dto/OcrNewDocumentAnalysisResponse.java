@@ -68,4 +68,8 @@ public class OcrNewDocumentAnalysisResponse {
      * Row keys: page, salesSampleTerms
      */
     private List<Map<String, String>> salesSampleTermsByPage;
+
+    private List<Map<String, String>> salesSampleTimeOfDeliveryByPage;
+
+    private List<Map<String, String>> salesSampleArticlesByPage;
 }

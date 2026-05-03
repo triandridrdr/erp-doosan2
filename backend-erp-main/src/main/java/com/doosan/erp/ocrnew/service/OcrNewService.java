@@ -243,6 +243,21 @@ public class OcrNewService {
             List<OcrNewLine> pageLines = en.getValue();
             if (pageLines == null || pageLines.isEmpty()) continue;
 
+            boolean isSalesSamplePage = false;
+            for (OcrNewLine l : pageLines) {
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if ((low.contains("purchase order") && low.contains("sales sample"))
+                        || low.contains("sales sample order")
+                        || low.equals("sales sample terms")
+                        || low.startsWith("sales sample terms")) {
+                    isSalesSamplePage = true;
+                    break;
+                }
+            }
+            if (!isSalesSamplePage) continue;
+
             pageLines.sort(Comparator
                     .comparingInt(OcrNewLine::getTop)
                     .thenComparingInt(OcrNewLine::getLeft));
@@ -500,6 +515,199 @@ public class OcrNewService {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("page", String.valueOf(page));
                 row.put("salesSampleTerms", terms);
+                out.add(row);
+            }
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractSalesSampleTimeOfDeliveryByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            boolean isSalesSamplePage = false;
+            for (OcrNewLine l : pageLines) {
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if ((low.contains("purchase order") && low.contains("sales sample"))
+                        || low.contains("sales sample order")
+                        || low.equals("sales sample terms")
+                        || low.startsWith("sales sample terms")) {
+                    isSalesSamplePage = true;
+                    break;
+                }
+            }
+            if (!isSalesSamplePage) continue;
+
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            int headerIdx = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                // On Sales Sample page, the field label is "Time Of Delivery".
+                // Avoid matching the Purchase Order table header by restricting to sales-sample pages above.
+                // Also avoid matching the cancellation sentence "... at the Time of Delivery ..." by requiring the line to start with the label.
+                if (low.equals("time of delivery") || low.startsWith("time of delivery")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 30); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.startsWith("article no")) break;
+                if (low.startsWith("by accepting")) break;
+                if (low.startsWith("created:")) break;
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(s);
+            }
+
+            String tod = sb.toString().trim();
+            if (!tod.isBlank()) {
+                tod = tod.replaceAll("(?i)\\bas\\s+soon\\s+possible\\b", "As soon as possible");
+            }
+            if (tod.isBlank()) continue;
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("page", String.valueOf(page));
+            row.put("timeOfDelivery", tod);
+            out.add(row);
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractSalesSampleArticlesByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Pattern datePat = Pattern.compile("\\b\\d{1,2}\\s+[A-Za-z]{3},\\s+\\d{4}\\b");
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            boolean isSalesSamplePage = false;
+            for (OcrNewLine l : pageLines) {
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if ((low.contains("purchase order") && low.contains("sales sample"))
+                        || low.contains("sales sample order")
+                        || low.equals("sales sample terms")
+                        || low.startsWith("sales sample terms")) {
+                    isSalesSamplePage = true;
+                    break;
+                }
+            }
+            if (!isSalesSamplePage) continue;
+
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            int headerIdx = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                // Header OCR is often split; keep this check loose and rely on row pattern matching below.
+                if (low.startsWith("article no") && low.contains("tod") && (low.contains("qty") || low.contains("quantity"))) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+
+            int startIdx = headerIdx >= 0 ? (headerIdx + 1) : 0;
+
+            for (int i = startIdx; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.startsWith("by accepting")) break;
+                if (low.startsWith("created:")) break;
+                if (low.startsWith("page:")) break;
+
+                if (!Character.isDigit(s.charAt(0))) continue;
+                Matcher dm = datePat.matcher(s);
+                if (!dm.find()) continue;
+                String date = dm.group();
+
+                String pre = s.substring(0, dm.start()).trim();
+                String[] toks = pre.split("\\s+");
+                if (toks.length < 6) continue;
+
+                String articleNo = toks[0];
+                String hmColourCode = toks[1];
+                String ptArticleNumber = toks[2];
+
+                String qty = toks[toks.length - 1];
+                if (!qty.matches("\\d+")) continue;
+                String sizeRaw = toks[toks.length - 2];
+                String size = sizeRaw.replaceAll("[^A-Za-z0-9]", "").trim();
+
+                StringBuilder colourSb = new StringBuilder();
+                for (int t = 3; t < toks.length - 2; t++) {
+                    String tok = toks[t];
+                    if (tok == null || tok.isBlank()) continue;
+                    if (colourSb.length() > 0) colourSb.append(' ');
+                    colourSb.append(tok);
+                }
+                String colour = colourSb.toString().trim();
+
+                String destinationStudio = "";
+                int look = i + 1;
+                if (look < pageLines.size()) {
+                    String next = oneLine(pageLines.get(look).getText()).trim();
+                    String nextLow = next.toLowerCase(Locale.ROOT);
+                    if (!next.isBlank()
+                            && !nextLow.startsWith("by accepting")
+                            && !nextLow.startsWith("created:")
+                            && !nextLow.startsWith("page:")
+                            && next.length() <= 24
+                            && next.matches("[A-Za-z]+")) {
+                        destinationStudio = next;
+                        i = look;
+                    }
+                }
+
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", String.valueOf(page));
+                row.put("articleNo", articleNo);
+                row.put("hmColourCode", hmColourCode);
+                row.put("ptArticleNumber", ptArticleNumber);
+                row.put("colour", colour);
+                row.put("size", size);
+                row.put("qty", qty);
+                row.put("tod", date);
+                row.put("destinationStudio", destinationStudio);
                 out.add(row);
             }
         }
@@ -3177,12 +3385,37 @@ public class OcrNewService {
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
+            List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
+            List<Map<String, String>> salesSampleArticlesByPage = extractSalesSampleArticlesByPage(allLines);
             if (effectiveDebug) {
                 log.info("[SALES-SAMPLE-TERMS] extracted rows: {}", salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size());
                 for (int i = 0; i < Math.min(10, salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size()); i++) {
                     Map<String, String> r = salesSampleTermsByPage.get(i);
                     if (r == null) continue;
                     log.info("[SALES-SAMPLE-TERMS] row[{}]: page={} textPreview={}", i, r.get("page"), truncate(r.get("salesSampleTerms"), 200));
+                }
+
+                log.info("[SALES-SAMPLE-TOD] extracted rows: {}", salesSampleTimeOfDeliveryByPage == null ? 0 : salesSampleTimeOfDeliveryByPage.size());
+                if (salesSampleTimeOfDeliveryByPage != null && !salesSampleTimeOfDeliveryByPage.isEmpty()) {
+                    Map<String, String> r = salesSampleTimeOfDeliveryByPage.get(0);
+                    log.info("[SALES-SAMPLE-TOD] first: page={} textPreview={}", r.get("page"), truncate(r.get("timeOfDelivery"), 220));
+                }
+
+                log.info("[SALES-SAMPLE-ARTICLES] extracted rows: {}", salesSampleArticlesByPage == null ? 0 : salesSampleArticlesByPage.size());
+                for (int i = 0; i < Math.min(5, salesSampleArticlesByPage == null ? 0 : salesSampleArticlesByPage.size()); i++) {
+                    Map<String, String> r = salesSampleArticlesByPage.get(i);
+                    if (r == null) continue;
+                    log.info("[SALES-SAMPLE-ARTICLES] row[{}]: page={} articleNo={} hmColourCode={} ptArticleNumber={} colour={} size={} qty={} tod={} dest={}",
+                            i,
+                            r.get("page"),
+                            r.get("articleNo"),
+                            r.get("hmColourCode"),
+                            r.get("ptArticleNumber"),
+                            truncate(r.get("colour"), 80),
+                            r.get("size"),
+                            r.get("qty"),
+                            r.get("tod"),
+                            r.get("destinationStudio"));
                 }
             }
 
@@ -3342,6 +3575,8 @@ public class OcrNewService {
                     .purchaseOrderInvoiceAvgPrice(poInvoiceAvgPrice)
                     .purchaseOrderTermsOfDelivery(poTermsOfDeliveryByPage)
                     .salesSampleTermsByPage(salesSampleTermsByPage)
+                    .salesSampleTimeOfDeliveryByPage(salesSampleTimeOfDeliveryByPage)
+                    .salesSampleArticlesByPage(salesSampleArticlesByPage)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())
                     .build();

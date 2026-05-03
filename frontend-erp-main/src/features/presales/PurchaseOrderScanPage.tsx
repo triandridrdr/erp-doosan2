@@ -65,6 +65,9 @@ export function PurchaseOrderScanPage() {
 
   const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
 
+  const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleArticleRows, setSalesSampleArticleRows] = useState<Array<Record<string, string>>>([]);
+
   useEffect(() => {
     setActivePage((p) => Math.min(Math.max(1, p), pageCount));
   }, [pageCount]);
@@ -225,6 +228,17 @@ export function PurchaseOrderScanPage() {
       if (v.trim().length > 0) nextSalesSampleTerms[p] = v;
     }
     setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
+
+    const nextSalesSampleTod: Record<number, string> = {};
+    for (const r of d?.salesSampleTimeOfDeliveryByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.timeOfDelivery ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleTod[p] = v;
+    }
+    setSalesSampleTimeOfDeliveryByPageDraft(nextSalesSampleTod);
+
+    setSalesSampleArticleRows(d?.salesSampleArticlesByPage ?? []);
   };
 
   const termsOfDeliveryForActivePage = useMemo(() => {
@@ -241,6 +255,36 @@ export function PurchaseOrderScanPage() {
     }
     return '';
   }, [activePage, salesSampleTermsByPageDraft]);
+
+  const salesSampleTimeOfDeliveryForActivePage = useMemo(() => {
+    const direct = (salesSampleTimeOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+
+    const pages = Object.keys(salesSampleTimeOfDeliveryByPageDraft ?? {})
+      .map((p) => Number(p))
+      .filter((p) => Number.isFinite(p) && p > 0)
+      .sort((a, b) => b - a);
+    for (const p of pages) {
+      const v = (salesSampleTimeOfDeliveryByPageDraft as any)?.[p];
+      const t = (v ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleTimeOfDeliveryByPageDraft]);
+
+  const salesSampleArticlesRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    const direct = (salesSampleArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+    if (direct.length > 0) return direct;
+
+    let maxPage = 0;
+    for (const r of salesSampleArticleRows ?? []) {
+      const rp = Number((r?.page ?? '').toString().trim());
+      if (Number.isFinite(rp) && rp > maxPage) maxPage = rp;
+    }
+    if (maxPage <= 0) return [];
+    return (salesSampleArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === String(maxPage));
+  }, [activePage, salesSampleArticleRows]);
 
   const quantityPerArticleRowsForActivePage = useMemo(() => {
     const p = String(activePage);
@@ -994,7 +1038,7 @@ useEffect(() => {
           </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
             <div className='text-sm font-semibold text-gray-900 mb-3'>Time Of Delivery</div>
-            <Input value='' onChange={() => {}} />
+            <Input value={salesSampleTimeOfDeliveryForActivePage} onChange={() => {}} />
           </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 overflow-hidden'>
             <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Articles</div>
@@ -1006,21 +1050,49 @@ useEffect(() => {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>TOD</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Destination Studio</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Array.from({ length: placeholderRowCount }).map((_, rIdx) => (
-                    <tr key={rIdx}>
-                      {Array.from({ length: 7 }).map((_, cIdx) => (
-                        <td key={cIdx} className='px-3 py-2 border-b border-gray-100'>
-                          <Input value='' onChange={() => {}} />
+                  {salesSampleArticlesRowsForActivePage.length > 0 ? (
+                    salesSampleArticlesRowsForActivePage.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.articleNo ?? ''} onChange={() => {}} />
                         </td>
-                      ))}
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.colour ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.size ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.qty ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.tod ?? ''} onChange={() => {}} />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Input value={row.destinationStudio ?? ''} onChange={() => {}} />
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        No data
+                      </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
