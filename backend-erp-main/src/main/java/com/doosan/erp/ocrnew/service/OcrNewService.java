@@ -241,17 +241,22 @@ public class OcrNewService {
         for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
             int page = en.getKey();
             List<OcrNewLine> pageLines = en.getValue();
-            if (pageLines == null || pageLines.isEmpty()) continue;
 
+            List<OcrNewLine> sorted = new ArrayList<>(pageLines);
+            sorted.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            // Only extract from Sales Sample pages (avoid Purchase Order pages which also have "Article No" tables)
             boolean isSalesSamplePage = false;
-            for (OcrNewLine l : pageLines) {
+            for (OcrNewLine l : sorted) {
                 String s = oneLine(l.getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
-                if ((low.contains("purchase order") && low.contains("sales sample"))
-                        || low.contains("sales sample order")
-                        || low.equals("sales sample terms")
-                        || low.startsWith("sales sample terms")) {
+                if (low.contains("sales sample")
+                        || (low.contains("purchase order") && low.contains("sales sample"))
+                        || low.contains("sales sample terms")
+                        || low.contains("sales samples")) {
                     isSalesSamplePage = true;
                     break;
                 }
@@ -601,7 +606,7 @@ public class OcrNewService {
         List<Map<String, String>> out = new ArrayList<>();
         if (allLines == null || allLines.isEmpty()) return out;
 
-        Pattern datePat = Pattern.compile("\\b\\d{1,2}\\s+[A-Za-z]{3},\\s+\\d{4}\\b");
+        Pattern datePat = Pattern.compile("\\b\\d{1,2}\\s+[A-Za-z]{3},\\s*\\d{4}\\b");
 
         Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
         for (OcrNewLine l : allLines) {
@@ -614,8 +619,13 @@ public class OcrNewService {
             List<OcrNewLine> pageLines = en.getValue();
             if (pageLines == null || pageLines.isEmpty()) continue;
 
+            List<OcrNewLine> sorted = new ArrayList<>(pageLines);
+            sorted.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
             boolean isSalesSamplePage = false;
-            for (OcrNewLine l : pageLines) {
+            for (OcrNewLine l : sorted) {
                 String s = oneLine(l.getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
@@ -629,13 +639,9 @@ public class OcrNewService {
             }
             if (!isSalesSamplePage) continue;
 
-            pageLines.sort(Comparator
-                    .comparingInt(OcrNewLine::getTop)
-                    .thenComparingInt(OcrNewLine::getLeft));
-
             int headerIdx = -1;
-            for (int i = 0; i < pageLines.size(); i++) {
-                String s = oneLine(pageLines.get(i).getText()).trim();
+            for (int i = 0; i < sorted.size(); i++) {
+                String s = oneLine(sorted.get(i).getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
                 // Header OCR is often split; keep this check loose and rely on row pattern matching below.
@@ -647,13 +653,16 @@ public class OcrNewService {
 
             int startIdx = headerIdx >= 0 ? (headerIdx + 1) : 0;
 
-            for (int i = startIdx; i < pageLines.size(); i++) {
-                String s = oneLine(pageLines.get(i).getText()).trim();
+            boolean extractedAny = false;
+
+            for (int i = startIdx; i < sorted.size(); i++) {
+                String s = oneLine(sorted.get(i).getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
-                if (low.startsWith("by accepting")) break;
-                if (low.startsWith("created:")) break;
-                if (low.startsWith("page:")) break;
+                if (low.startsWith("by accepting") || low.startsWith("created:") || low.startsWith("page:")) {
+                    if (extractedAny) break;
+                    continue;
+                }
 
                 if (!Character.isDigit(s.charAt(0))) continue;
                 Matcher dm = datePat.matcher(s);
@@ -684,8 +693,8 @@ public class OcrNewService {
 
                 String destinationStudio = "";
                 int look = i + 1;
-                if (look < pageLines.size()) {
-                    String next = oneLine(pageLines.get(look).getText()).trim();
+                if (look < sorted.size()) {
+                    String next = oneLine(sorted.get(look).getText()).trim();
                     String nextLow = next.toLowerCase(Locale.ROOT);
                     if (!next.isBlank()
                             && !nextLow.startsWith("by accepting")
@@ -709,6 +718,7 @@ public class OcrNewService {
                 row.put("tod", date);
                 row.put("destinationStudio", destinationStudio);
                 out.add(row);
+                extractedAny = true;
             }
         }
 
