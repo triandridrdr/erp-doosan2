@@ -261,7 +261,7 @@ public class OcrNewService {
 
             int headerTop = pageLines.get(headerIdx).getTop();
 
-            StringBuilder buf = new StringBuilder();
+            List<String> kept = new ArrayList<>();
             Set<String> seenLines = new HashSet<>();
 
             // Coordinate-based extraction: OCR ordering can be unreliable on multi-block layouts.
@@ -282,7 +282,7 @@ public class OcrNewService {
 
             int stopTop = Integer.MAX_VALUE;
             for (OcrNewLine l : pageLines) {
-                if (l.getTop() <= sectionStartTop) continue;
+                if (l.getTop() <= headerTop) continue;
                 String s = oneLine(l.getText()).trim();
                 if (s.isBlank()) continue;
                 String low = s.toLowerCase(Locale.ROOT);
@@ -353,14 +353,104 @@ public class OcrNewService {
                         .replace(" and supplier shall ", " and shall ")
                         .replace(" and the supplier ", " and supplier ")
                         .replace(" the supplier ", " supplier ")
+                        .replace(" costs for sales samples are included in the total price for above-mentioned ",
+                                " costs for sales samples are included in the total price for the above-mentioned ")
                         .trim();
 
                 if (!seenLines.add(norm)) continue;
-                if (buf.length() > 0) buf.append("\n");
-                buf.append(s);
+                kept.add(s);
             }
 
-            String terms = buf.toString().trim();
+            if (!kept.isEmpty()) {
+                // Remove duplicate "Costs for Sales Samples are included..." variants.
+                List<Integer> costIdx = new ArrayList<>();
+                for (int i = 0; i < kept.size(); i++) {
+                    String k = kept.get(i);
+                    if (k == null) continue;
+                    String kl = k.toLowerCase(Locale.ROOT);
+                    if (kl.contains("costs for sales samples") && kl.contains("included") && kl.contains("total price")) {
+                        costIdx.add(i);
+                    }
+                }
+                if (costIdx.size() > 1) {
+                    int best = costIdx.get(0);
+                    for (int idx : costIdx) {
+                        String v = kept.get(idx);
+                        if (v == null) continue;
+                        String vl = v.toLowerCase(Locale.ROOT);
+                        String bl = kept.get(best) == null ? "" : kept.get(best).toLowerCase(Locale.ROOT);
+                        boolean vHasThe = vl.contains("the above-mentioned");
+                        boolean bHasThe = bl.contains("the above-mentioned");
+                        if (vHasThe && !bHasThe) {
+                            best = idx;
+                            continue;
+                        }
+                        if (v.length() > (kept.get(best) == null ? 0 : kept.get(best).length())) {
+                            best = idx;
+                        }
+                    }
+                    for (int i = costIdx.size() - 1; i >= 0; i--) {
+                        int idx = costIdx.get(i);
+                        if (idx != best && idx >= 0 && idx < kept.size()) {
+                            kept.remove(idx);
+                        }
+                    }
+                }
+
+                // Reorder common continuation lines to match natural paragraph flow.
+                int sendTheIdx = -1;
+                for (int i = 0; i < kept.size(); i++) {
+                    String k = kept.get(i);
+                    if (k == null) continue;
+                    String kl = k.trim().toLowerCase(Locale.ROOT);
+                    if (kl.endsWith("send the") || kl.endsWith("send the,")) {
+                        sendTheIdx = i;
+                        break;
+                    }
+                }
+                if (sendTheIdx >= 0) {
+                    for (int i = sendTheIdx + 1; i < kept.size(); i++) {
+                        String k = kept.get(i);
+                        if (k == null) continue;
+                        String kl = k.trim().toLowerCase(Locale.ROOT);
+                        if (kl.startsWith("sales samples ")) {
+                            String moved = kept.remove(i);
+                            kept.add(sendTheIdx + 1, moved);
+                            break;
+                        }
+                    }
+                }
+
+                int qrIdx = -1;
+                for (int i = 0; i < kept.size(); i++) {
+                    String k = kept.get(i);
+                    if (k == null) continue;
+                    String kl = k.trim().toLowerCase(Locale.ROOT);
+                    if (kl.endsWith(" qr") || kl.endsWith(" qr,")) {
+                        qrIdx = i;
+                        break;
+                    }
+                }
+                if (qrIdx >= 0) {
+                    for (int i = qrIdx + 1; i < kept.size(); i++) {
+                        String k = kept.get(i);
+                        if (k == null) continue;
+                        String kl = k.trim().toLowerCase(Locale.ROOT);
+                        if (kl.startsWith("codes (")) {
+                            String moved = kept.remove(i);
+                            kept.add(qrIdx + 1, moved);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            String terms = kept.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .reduce("", (a, b) -> a.isEmpty() ? b : a + "\n" + b)
+                    .trim();
             if (!terms.isBlank()) {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("page", String.valueOf(page));
@@ -2810,6 +2900,20 @@ public class OcrNewService {
                     hocrPageLines = ocrEngine.extractLinesWithHocr(pageImage, i);
                 }
 
+                int pageNum = i + 1;
+                List<OcrNewLine> pageLinesForSupplement = useHocr ? hocrPageLines : rawPageLines;
+                List<OcrNewLine> recovered = recoverSalesSampleCancellationLineFromRegion(pageImage, pageNum, pageLinesForSupplement);
+                if (recovered != null && !recovered.isEmpty()) {
+                    if (pageLinesForSupplement != null) {
+                        pageLinesForSupplement.addAll(recovered);
+                    }
+                    if (effectiveDebug) {
+                        for (OcrNewLine rl : recovered) {
+                            log.info("[OCR-REGION-SUPPLEMENT] page={} added: {}", pageNum, truncate(oneLine(rl.getText()), 300));
+                        }
+                    }
+                }
+
                 if (compareModes && effectiveDebug) {
                     logComparisonForPage(i + 1, hocrPageLines, rawPageLines);
                 }
@@ -3939,6 +4043,81 @@ public class OcrNewService {
             }
         }
         return dst;
+    }
+
+    private List<OcrNewLine> recoverSalesSampleCancellationLineFromRegion(
+            BufferedImage pageImage,
+            int pageNum,
+            List<OcrNewLine> pageLines
+    ) {
+        if (pageImage == null) return List.of();
+        if (pageLines == null || pageLines.isEmpty()) return List.of();
+
+        boolean looksLikeSalesSamplePage = false;
+        for (OcrNewLine l : pageLines) {
+            if (l == null || l.getText() == null) continue;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT).trim();
+            if (low.contains("sales sample terms")
+                    || (low.contains("purchase order") && low.contains("sales sample"))) {
+                looksLikeSalesSamplePage = true;
+                break;
+            }
+        }
+        if (!looksLikeSalesSamplePage) return List.of();
+
+        boolean alreadyHasCancellationSentence = false;
+        OcrNewLine anyLiabilityLine = null;
+        for (OcrNewLine l : pageLines) {
+            if (l == null || l.getText() == null) continue;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT).trim();
+            if (low.startsWith("if the supplier")
+                    || low.contains("fails to deliver")
+                    || low.contains("right to cancel")) {
+                alreadyHasCancellationSentence = true;
+                break;
+            }
+            if (anyLiabilityLine == null
+                    && low.startsWith("any liability")
+                    && (low.contains("cancellation") || low.contains("cancel"))) {
+                anyLiabilityLine = l;
+            }
+        }
+        if (alreadyHasCancellationSentence) return List.of();
+        if (anyLiabilityLine == null) return List.of();
+
+        int lineH = Math.max(20, anyLiabilityLine.getBottom() - anyLiabilityLine.getTop());
+        int padding = 20;
+        int regionH = Math.max(80, (lineH * 2) + padding);
+        int regionY = Math.max(0, anyLiabilityLine.getTop() - regionH);
+        Rectangle region = new Rectangle(0, regionY, pageImage.getWidth(), Math.min(regionH, pageImage.getHeight() - regionY));
+
+        String recoveredText = ocrEngine.extractTextFromRegion(pageImage, region, 6, null);
+        if (recoveredText == null || recoveredText.isBlank()) return List.of();
+
+        String best = "";
+        String[] lines = recoveredText.split("\\r?\\n");
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String s = oneLine(raw).trim();
+            if (s.isBlank()) continue;
+            String low = s.toLowerCase(Locale.ROOT);
+            boolean looksLikeTarget = low.startsWith("if ")
+                    || (low.contains("supplier") && (low.contains("fail") || low.contains("cancel") || low.contains("without")));
+            if (!looksLikeTarget) continue;
+            if (s.length() > best.length()) best = s;
+        }
+        if (best.isBlank()) return List.of();
+
+        return List.of(OcrNewLine.builder()
+                .page(pageNum)
+                .text(best)
+                .left(region.x)
+                .top(region.y)
+                .right(region.x + region.width)
+                .bottom(region.y + region.height)
+                .confidence(98f)
+                .words(List.of())
+                .build());
     }
 
     // ── Delivery fields enrichment for Section 1 Header ──────────────────────
