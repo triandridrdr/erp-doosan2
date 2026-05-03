@@ -443,6 +443,51 @@ public class OcrNewService {
                         }
                     }
                 }
+
+                // Merge the cancellation sentence continuation:
+                // "... without" + "any liability ... cancellation." should be a single paragraph line.
+                int withoutIdx = -1;
+                for (int i = 0; i < kept.size(); i++) {
+                    String k = kept.get(i);
+                    if (k == null) continue;
+                    String kl = k.trim().toLowerCase(Locale.ROOT);
+                    if (kl.endsWith(" without") || kl.endsWith(" without,") || kl.endsWith(" without.")) {
+                        withoutIdx = i;
+                        break;
+                    }
+                }
+
+                int anyLiabIdx = -1;
+                for (int i = 0; i < kept.size(); i++) {
+                    String k = kept.get(i);
+                    if (k == null) continue;
+                    String kl = k.trim().toLowerCase(Locale.ROOT);
+                    if (kl.startsWith("any liability")) {
+                        anyLiabIdx = i;
+                        break;
+                    }
+                }
+
+                if (withoutIdx >= 0 && anyLiabIdx >= 0 && withoutIdx != anyLiabIdx) {
+                    int secondIdx = anyLiabIdx;
+                    if (withoutIdx + 1 == anyLiabIdx) {
+                        secondIdx = anyLiabIdx;
+                    }
+
+                    String first = kept.get(withoutIdx);
+                    String second = kept.get(secondIdx);
+                    if (first != null && second != null) {
+                        String merged = first.trim() + " " + second.trim();
+                        kept.set(withoutIdx, merged);
+                        if (secondIdx > withoutIdx) {
+                            kept.remove(secondIdx);
+                        } else {
+                            kept.remove(secondIdx);
+                            // index shifted after removal; withoutIdx-1 is the merged element
+                            withoutIdx = withoutIdx - 1;
+                        }
+                    }
+                }
             }
 
             String terms = kept.stream()
@@ -2900,20 +2945,6 @@ public class OcrNewService {
                     hocrPageLines = ocrEngine.extractLinesWithHocr(pageImage, i);
                 }
 
-                int pageNum = i + 1;
-                List<OcrNewLine> pageLinesForSupplement = useHocr ? hocrPageLines : rawPageLines;
-                List<OcrNewLine> recovered = recoverSalesSampleCancellationLineFromRegion(pageImage, pageNum, pageLinesForSupplement);
-                if (recovered != null && !recovered.isEmpty()) {
-                    if (pageLinesForSupplement != null) {
-                        pageLinesForSupplement.addAll(recovered);
-                    }
-                    if (effectiveDebug) {
-                        for (OcrNewLine rl : recovered) {
-                            log.info("[OCR-REGION-SUPPLEMENT] page={} added: {}", pageNum, truncate(oneLine(rl.getText()), 300));
-                        }
-                    }
-                }
-
                 if (compareModes && effectiveDebug) {
                     logComparisonForPage(i + 1, hocrPageLines, rawPageLines);
                 }
@@ -2979,6 +3010,30 @@ public class OcrNewService {
                     }
                 } catch (IOException ex) {
                     log.warn("[OCR-PDFBOX-SUPPLEMENT] failed: {}", ex.getMessage());
+                }
+            }
+
+            if (!cleanedPageImages.isEmpty()) {
+                int pageCount = cleanedPageImages.size();
+                for (int pageNum = 1; pageNum <= pageCount; pageNum++) {
+                    BufferedImage pageImage = cleanedPageImages.get(pageNum - 1);
+                    List<OcrNewLine> pageLines = new ArrayList<>();
+                    for (OcrNewLine l : allLines) {
+                        if (l != null && l.getPage() == pageNum) {
+                            pageLines.add(l);
+                        }
+                    }
+                    if (pageLines.isEmpty()) continue;
+
+                    List<OcrNewLine> recovered = recoverSalesSampleCancellationLineFromRegion(pageImage, pageNum, pageLines);
+                    if (recovered != null && !recovered.isEmpty()) {
+                        allLines.addAll(recovered);
+                        if (effectiveDebug) {
+                            for (OcrNewLine rl : recovered) {
+                                log.info("[OCR-REGION-SUPPLEMENT] page={} added: {}", pageNum, truncate(oneLine(rl.getText()), 300));
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4085,28 +4140,86 @@ public class OcrNewService {
         if (alreadyHasCancellationSentence) return List.of();
         if (anyLiabilityLine == null) return List.of();
 
-        int lineH = Math.max(20, anyLiabilityLine.getBottom() - anyLiabilityLine.getTop());
-        int padding = 20;
-        int regionH = Math.max(80, (lineH * 2) + padding);
-        int regionY = Math.max(0, anyLiabilityLine.getTop() - regionH);
-        Rectangle region = new Rectangle(0, regionY, pageImage.getWidth(), Math.min(regionH, pageImage.getHeight() - regionY));
+        int imgW = pageImage.getWidth();
+        int imgH = pageImage.getHeight();
 
-        String recoveredText = ocrEngine.extractTextFromRegion(pageImage, region, 6, null);
-        if (recoveredText == null || recoveredText.isBlank()) return List.of();
+        boolean looksSyntheticBox = (anyLiabilityLine.getWords() == null || anyLiabilityLine.getWords().isEmpty())
+                && anyLiabilityLine.getLeft() == 0
+                && anyLiabilityLine.getRight() <= 1100
+                && anyLiabilityLine.getTop() <= 80;
+
+        Rectangle region;
+        if (looksSyntheticBox) {
+            int regionY = (int) Math.round(imgH * 0.12);
+            int regionH = (int) Math.round(imgH * 0.70);
+            regionH = Math.max(260, Math.min(regionH, imgH - regionY));
+            region = new Rectangle(0, regionY, imgW, regionH);
+        } else {
+            int lineH = Math.max(20, anyLiabilityLine.getBottom() - anyLiabilityLine.getTop());
+            int padding = 20;
+            int regionH = Math.max(420, (lineH * 14) + padding);
+            int regionY = Math.max(0, anyLiabilityLine.getTop() - regionH);
+            region = new Rectangle(0, regionY, imgW, Math.min(regionH, imgH - regionY));
+        }
 
         String best = "";
-        String[] lines = recoveredText.split("\\r?\\n");
-        for (String raw : lines) {
-            if (raw == null) continue;
-            String s = oneLine(raw).trim();
-            if (s.isBlank()) continue;
-            String low = s.toLowerCase(Locale.ROOT);
-            boolean looksLikeTarget = low.startsWith("if ")
-                    || (low.contains("supplier") && (low.contains("fail") || low.contains("cancel") || low.contains("without")));
-            if (!looksLikeTarget) continue;
-            if (s.length() > best.length()) best = s;
+        String lastRecoveredSnippet = "";
+        int[] psms = new int[]{6, 11, 7, 4, 3};
+        Pattern targetPat = Pattern.compile("(?i)\\b(?:if|lf)\\s+the\\s+suppl\\w*\\b.*\\b(?:fail\\w*|right)\\b.*\\b(?:deliver\\w*|cancel\\w*)\\b");
+        for (int psm : psms) {
+            BufferedImage cropped;
+            try {
+                int cx = Math.max(0, region.x);
+                int cy = Math.max(0, region.y);
+                int cw = Math.min(pageImage.getWidth() - cx, region.width);
+                int ch = Math.min(pageImage.getHeight() - cy, region.height);
+                if (cw <= 5 || ch <= 5) continue;
+                cropped = pageImage.getSubimage(cx, cy, cw, ch);
+            } catch (Exception e) {
+                continue;
+            }
+
+            BufferedImage scaled = scaleUp(cropped, 2);
+            if (scaled == null) continue;
+            Rectangle scaledRect = new Rectangle(0, 0, scaled.getWidth(), scaled.getHeight());
+
+            String recoveredText = ocrEngine.extractTextFromRegion(scaled, scaledRect, psm, null);
+            if (recoveredText == null || recoveredText.isBlank()) continue;
+            if (lastRecoveredSnippet.isBlank()) {
+                lastRecoveredSnippet = truncate(oneLine(recoveredText), 260);
+            }
+
+            String[] lines = recoveredText.split("\\r?\\n");
+            for (String raw : lines) {
+                if (raw == null) continue;
+                String s = oneLine(raw).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                String norm = low.replaceAll("[^a-z0-9]+", " ").replaceAll("\\s+", " ").trim();
+                boolean looksLikeTarget = norm.startsWith("if the suppl")
+                        || norm.startsWith("lf the suppl")
+                        || norm.contains("right to cancel")
+                        || (norm.contains("fail") && norm.contains("deliver"))
+                        || (norm.contains("supplier") && (norm.contains("deliver") || norm.contains("cancel") || norm.contains("without")))
+                        || targetPat.matcher(norm).find();
+                if (!looksLikeTarget) continue;
+                if (s.length() > best.length()) best = s;
+            }
+
+            if (!best.isBlank()) {
+                break;
+            }
         }
-        if (best.isBlank()) return List.of();
+
+        if (best.isBlank()) {
+            log.info("[OCR-REGION-SUPPLEMENT] page={} no match: syntheticBBox={}, region=[{},{} {}x{}], anchor='{}', recoveredSnippet='{}'",
+                    pageNum,
+                    looksSyntheticBox,
+                    region.x, region.y, region.width, region.height,
+                    truncate(oneLine(anyLiabilityLine.getText()), 160),
+                    lastRecoveredSnippet);
+            return List.of();
+        }
 
         return List.of(OcrNewLine.builder()
                 .page(pageNum)
