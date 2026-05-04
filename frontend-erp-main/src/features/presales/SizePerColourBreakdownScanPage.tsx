@@ -217,10 +217,24 @@ export function SizePerColourBreakdownScanPage() {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
 
-  const section2NonTotalEntries = useMemo(() => {
+  const section2AssortmentEntries = useMemo(() => {
     return (salesOrderDetailDraftRows ?? [])
       .map((row, idx) => ({ row, idx }))
-      .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
+      .filter(({ row }) => {
+        const t = (row?.type ?? '').toString().trim().toLowerCase();
+        if (t === 'total') return false;
+        return t === 'assortment';
+      });
+  }, [salesOrderDetailDraftRows]);
+
+  const section2SolidEntries = useMemo(() => {
+    return (salesOrderDetailDraftRows ?? [])
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => {
+        const t = (row?.type ?? '').toString().trim().toLowerCase();
+        if (t === 'total') return false;
+        return t === 'solid';
+      });
   }, [salesOrderDetailDraftRows]);
 
   return (
@@ -333,71 +347,163 @@ export function SizePerColourBreakdownScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
-          <div className='flex items-center gap-2'>
-            <Button type='button' variant='primary' disabled={!data} onClick={() => setSalesOrderDetailDraftRows((prev) => [...prev, { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true }])}>
-              Add row
-            </Button>
-          </div>
         </div>
         <div className='p-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2NonTotalEntries.length === 0 ? (
+          ) : section2AssortmentEntries.length === 0 && section2SolidEntries.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
-            <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50 sticky top-0 z-10'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2NonTotalEntries.map(({ row, idx }) => (
-                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.countryOfDestination} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.type} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.color} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <SizeAutocompleteInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.qty} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.total} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.noOfAsst ?? ''} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Button
-                          type='button'
-                          variant='danger'
-                          onClick={() => {
-                            setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
+              <div className='border border-gray-200 rounded-xl overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Assortment</div>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() =>
+                      setSalesOrderDetailDraftRows((prev) => [
+                        ...prev,
+                        { countryOfDestination: '', type: 'Assortment', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                      ])
+                    }
+                  >
+                    Add row
+                  </Button>
+                </div>
+
+                {section2AssortmentEntries.length === 0 ? (
+                  <div className='p-4 text-sm text-gray-500 italic'>No Assortment rows.</div>
+                ) : (
+                  <div className='w-full max-h-[60vh] overflow-auto'>
+                    <table className='min-w-[980px] w-full border-separate border-spacing-0'>
+                      <thead className='bg-white sticky top-0 z-10'>
+                        <tr>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className='bg-white'>
+                        {section2AssortmentEntries.map(({ row, idx }) => (
+                          <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input
+                                value={row.countryOfDestination}
+                                onChange={(e) =>
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r)))
+                                }
+                              />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.color} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <SizeAutocompleteInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.qty} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.noOfAsst ?? ''} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                onClick={() => {
+                                  setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className='border border-gray-200 rounded-xl overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Solid</div>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() =>
+                      setSalesOrderDetailDraftRows((prev) => [
+                        ...prev,
+                        { countryOfDestination: '', type: 'Solid', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                      ])
+                    }
+                  >
+                    Add row
+                  </Button>
+                </div>
+
+                {section2SolidEntries.length === 0 ? (
+                  <div className='p-4 text-sm text-gray-500 italic'>No Solid rows.</div>
+                ) : (
+                  <div className='w-full max-h-[60vh] overflow-auto'>
+                    <table className='min-w-[980px] w-full border-separate border-spacing-0'>
+                      <thead className='bg-white sticky top-0 z-10'>
+                        <tr>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                          <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className='bg-white'>
+                        {section2SolidEntries.map(({ row, idx }) => (
+                          <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input
+                                value={row.countryOfDestination}
+                                onChange={(e) =>
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r)))
+                                }
+                              />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.color} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <SizeAutocompleteInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.qty} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Input value={row.noOfAsst ?? ''} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: e.target.value } : r)))} />
+                            </td>
+                            <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                onClick={() => {
+                                  setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
