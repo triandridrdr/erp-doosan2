@@ -66,6 +66,7 @@ export function PurchaseOrderScanPage() {
   const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
 
   const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleDestinationStudioAddressByPageDraft, setSalesSampleDestinationStudioAddressByPageDraft] = useState<Record<number, string>>({});
   const [salesSampleArticleRows, setSalesSampleArticleRows] = useState<Array<Record<string, string>>>([]);
 
   useEffect(() => {
@@ -238,6 +239,15 @@ export function PurchaseOrderScanPage() {
     }
     setSalesSampleTimeOfDeliveryByPageDraft(nextSalesSampleTod);
 
+    const nextSalesSampleDest: Record<number, string> = {};
+    for (const r of d?.salesSampleDestinationStudioAddressByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.destinationStudioAddress ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleDest[p] = v;
+    }
+    setSalesSampleDestinationStudioAddressByPageDraft(nextSalesSampleDest);
+
     setSalesSampleArticleRows(d?.salesSampleArticlesByPage ?? []);
   };
 
@@ -271,6 +281,22 @@ export function PurchaseOrderScanPage() {
     }
     return '';
   }, [activePage, salesSampleTimeOfDeliveryByPageDraft]);
+
+  const salesSampleDestinationStudioAddressForActivePage = useMemo(() => {
+    const direct = (salesSampleDestinationStudioAddressByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+
+    const pages = Object.keys(salesSampleDestinationStudioAddressByPageDraft ?? {})
+      .map((p) => Number(p))
+      .filter((p) => Number.isFinite(p) && p > 0)
+      .sort((a, b) => b - a);
+    for (const p of pages) {
+      const v = (salesSampleDestinationStudioAddressByPageDraft as any)?.[p];
+      const t = (v ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleDestinationStudioAddressByPageDraft]);
 
   const salesSampleArticlesRowsForActivePage = useMemo(() => {
     const p = String(activePage);
@@ -1034,7 +1060,14 @@ useEffect(() => {
           </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
             <div className='text-sm font-semibold text-gray-900 mb-3'>Destination Studio Address</div>
-            <Input value='' onChange={() => {}} />
+            <textarea
+              className='w-full min-h-[84px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+              value={salesSampleDestinationStudioAddressForActivePage}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSalesSampleDestinationStudioAddressByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+              }}
+            />
           </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
             <div className='text-sm font-semibold text-gray-900 mb-3'>Time Of Delivery</div>

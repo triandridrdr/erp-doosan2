@@ -85,6 +85,12 @@ export interface OcrNewDocumentAnalysisResponseData {
   salesSampleTimeOfDeliveryByPage?: Array<Record<string, string>>;
 
   /**
+   * Sales Sample: Destination Studio Address content per page
+   * Row keys: page, destinationStudioAddress
+   */
+  salesSampleDestinationStudioAddressByPage?: Array<Record<string, string>>;
+
+  /**
    * Sales Sample: Articles rows per page
    * Row keys: page, articleNo, hmColourCode, ptArticleNumber, colour, size, qty, tod, destinationStudio
    */

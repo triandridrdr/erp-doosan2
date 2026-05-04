@@ -228,6 +228,87 @@ public class OcrNewService {
         return out;
     }
 
+    private static List<Map<String, String>> extractSalesSampleDestinationStudioAddressByPage(List<OcrNewLine> allLines) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Map<Integer, List<OcrNewLine>> byPage = new LinkedHashMap<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            byPage.computeIfAbsent(l.getPage(), k -> new ArrayList<>()).add(l);
+        }
+
+        for (Map.Entry<Integer, List<OcrNewLine>> en : byPage.entrySet()) {
+            int page = en.getKey();
+            List<OcrNewLine> pageLines = en.getValue();
+            if (pageLines == null || pageLines.isEmpty()) continue;
+
+            boolean isSalesSamplePage = false;
+            for (OcrNewLine l : pageLines) {
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if ((low.contains("purchase order") && low.contains("sales sample"))
+                        || low.contains("sales sample order")
+                        || low.equals("sales sample terms")
+                        || low.startsWith("sales sample terms")) {
+                    isSalesSamplePage = true;
+                    break;
+                }
+            }
+            if (!isSalesSamplePage) continue;
+
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            int headerIdx = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.equals("destination studio address") || low.startsWith("destination studio address")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = headerIdx + 1; i < Math.min(pageLines.size(), headerIdx + 30); i++) {
+                String s = oneLine(pageLines.get(i).getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.startsWith("time of delivery")) break;
+                if (low.startsWith("article no")) break;
+                if (low.startsWith("sales sample terms")) break;
+                if (low.startsWith("by accepting")) break;
+                if (low.startsWith("created:")) break;
+                if (low.startsWith("page:")) break;
+
+                // Exclude cancellation paragraph accidentally intersecting the address block
+                if (low.startsWith("if the supplier fails")
+                        || (low.contains("sales samples") && low.contains("time of delivery") && low.contains("right to cancel"))) {
+                    continue;
+                }
+
+                s = s.replaceAll("(?i)\\bH&M\\b", "H & M");
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(s);
+            }
+
+            String addr = sb.toString().trim();
+            if (addr.isBlank()) continue;
+
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("page", String.valueOf(page));
+            row.put("destinationStudioAddress", addr);
+            out.add(row);
+        }
+
+        return out;
+    }
+
     private static List<Map<String, String>> extractSalesSampleTermsByPage(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
         if (allLines == null || allLines.isEmpty()) return out;
@@ -3396,6 +3477,7 @@ public class OcrNewService {
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
             List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
+            List<Map<String, String>> salesSampleDestinationStudioAddressByPage = extractSalesSampleDestinationStudioAddressByPage(allLines);
             List<Map<String, String>> salesSampleArticlesByPage = extractSalesSampleArticlesByPage(allLines);
             if (effectiveDebug) {
                 log.info("[SALES-SAMPLE-TERMS] extracted rows: {}", salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size());
@@ -3426,6 +3508,12 @@ public class OcrNewService {
                             r.get("qty"),
                             r.get("tod"),
                             r.get("destinationStudio"));
+                }
+
+                log.info("[SALES-SAMPLE-DEST-STUDIO-ADDR] extracted rows: {}", salesSampleDestinationStudioAddressByPage == null ? 0 : salesSampleDestinationStudioAddressByPage.size());
+                if (salesSampleDestinationStudioAddressByPage != null && !salesSampleDestinationStudioAddressByPage.isEmpty()) {
+                    Map<String, String> r = salesSampleDestinationStudioAddressByPage.get(0);
+                    log.info("[SALES-SAMPLE-DEST-STUDIO-ADDR] first: page={} textPreview={}", r.get("page"), truncate(r.get("destinationStudioAddress"), 220));
                 }
             }
 
@@ -3586,6 +3674,7 @@ public class OcrNewService {
                     .purchaseOrderTermsOfDelivery(poTermsOfDeliveryByPage)
                     .salesSampleTermsByPage(salesSampleTermsByPage)
                     .salesSampleTimeOfDeliveryByPage(salesSampleTimeOfDeliveryByPage)
+                    .salesSampleDestinationStudioAddressByPage(salesSampleDestinationStudioAddressByPage)
                     .salesSampleArticlesByPage(salesSampleArticlesByPage)
                     .averageConfidence(avgConfidence)
                     .pageCount(pageImages.size())

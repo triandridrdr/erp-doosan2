@@ -71,5 +71,7 @@ public class OcrNewDocumentAnalysisResponse {
 
     private List<Map<String, String>> salesSampleTimeOfDeliveryByPage;
 
+    private List<Map<String, String>> salesSampleDestinationStudioAddressByPage;
+
     private List<Map<String, String>> salesSampleArticlesByPage;
 }
