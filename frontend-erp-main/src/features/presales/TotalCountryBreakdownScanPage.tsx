@@ -2,11 +2,11 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
+import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -43,6 +43,8 @@ export function TotalCountryBreakdownScanPage() {
     Array<{ country: string; countryOfDestination?: string; pmCode: string; total: string; editable: boolean }>
   >([]);
 
+  const [section2cDraftRows, setSection2cDraftRows] = useState<Array<{ article: string; size: string; qty: string; editable: boolean }>>([]);
+
   const normalizeDigits = (v: string) => {
     const d = (v ?? '').toString().replace(/[^0-9]/g, '');
     return d.length ? d : '';
@@ -59,23 +61,44 @@ export function TotalCountryBreakdownScanPage() {
     const rows = d?.totalCountryBreakdown ?? [];
     if (!Array.isArray(rows) || rows.length === 0) {
       setCountryBreakdownDraftRows([]);
+    } else {
+      const keys = Object.keys(rows[0] ?? {});
+      const toVal = (m: Record<string, any>, k: string) => (m?.[k] ?? '').toString();
+      const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
+      const kCountry = findKey(['country']) ?? 'country';
+      const kCountryOfDestination = findKey(['countryofdestination', 'destinationcountry']) ?? '';
+      const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
+      const kTotal = findKey(['total', 'tot']) ?? 'total';
+      const out = (rows as any[]).map((m) => ({
+        country: toVal(m, kCountry),
+        countryOfDestination: kCountryOfDestination ? toVal(m, kCountryOfDestination) : '',
+        pmCode: toVal(m, kPm),
+        total: toVal(m, kTotal),
+        editable: true,
+      }));
+      setCountryBreakdownDraftRows(out);
+    }
+
+    const s2c = d?.colourSizeBreakdown ?? [];
+    if (!Array.isArray(s2c) || s2c.length === 0) {
+      setSection2cDraftRows([]);
       return;
     }
 
-    const keys = Object.keys(rows[0] ?? {});
-    const toVal = (m: Record<string, any>, k: string) => (m?.[k] ?? '').toString();
-    const findKey = (alts: string[]) => keys.find((k) => alts.includes(k.toLowerCase()));
-    const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
-    const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
-    const kTotal = findKey(['total', 'tot']) ?? 'total';
-    const out = (rows as any[]).map((m) => ({
-      country: toVal(m, kCountry),
-      countryOfDestination: '',
-      pmCode: toVal(m, kPm),
-      total: toVal(m, kTotal),
-      editable: true,
-    }));
-    setCountryBreakdownDraftRows(out);
+    const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
+    for (const m of s2c as any[]) {
+      if (!m || typeof m !== 'object') continue;
+      const article = ((m.article ?? m.Article ?? '') as any).toString();
+      const mKeys = Object.keys(m ?? {});
+      for (const k of mKeys) {
+        const low = k.toLowerCase();
+        if (low === 'article' || low === 'total' || low === 'page') continue;
+        const qty = (m?.[k] ?? '').toString();
+        if (!qty.trim()) continue;
+        exploded.push({ article, size: k, qty, editable: true });
+      }
+    }
+    setSection2cDraftRows(exploded);
   };
 
   const analyzeMutation = useMutation({
@@ -123,6 +146,7 @@ export function TotalCountryBreakdownScanPage() {
       setResults([]);
       setSalesOrderHeaderDraft({});
       setCountryBreakdownDraftRows([]);
+      setSection2cDraftRows([]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
   });
@@ -138,6 +162,7 @@ export function TotalCountryBreakdownScanPage() {
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
         totalCountryBreakdown: countryBreakdownDraftRows,
+        section2cColourSizeBreakdown: section2cDraftRows,
         raw: data,
       };
       return salesOrderPrototypeApi.createOrMerge(payload);
@@ -162,17 +187,9 @@ export function TotalCountryBreakdownScanPage() {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
 
-  const export2bToExcel = () => {
-    const rows = (countryBreakdownDraftRows ?? []).map((r) => ({
-      Country: (r.country ?? '').toString(),
-      'PM Code': (r.pmCode ?? '').toString(),
-      Total: Number(normalizeDigits((r.total ?? '').toString()) || '0') || null,
-    }));
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'TOTAL COUNTRY');
-    XLSX.writeFile(wb, `TOTAL_COUNTRY_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
+  const sourceFileName = useMemo(() => {
+    return results?.[activeFileIndex]?.fileName ?? selectedFiles?.[activeFileIndex]?.name ?? '';
+  }, [activeFileIndex, results, selectedFiles]);
 
   return (
     <div className='space-y-6'>
@@ -211,6 +228,7 @@ export function TotalCountryBreakdownScanPage() {
                 setError(null);
                 setSalesOrderHeaderDraft({});
                 setCountryBreakdownDraftRows([]);
+                setSection2cDraftRows([]);
               }}
             />
           </div>
@@ -282,12 +300,20 @@ export function TotalCountryBreakdownScanPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>SECTION 2B – TOTAL COUNTRY BREAKDOWN</div>
-          <div className='flex items-center gap-2'>
-            <Button type='button' disabled={countryBreakdownDraftRows.length === 0} onClick={export2bToExcel}>
-              Export Excel
-            </Button>
+          <div>
+            <div className='text-xs font-semibold text-gray-500'>SECTION 2B – TOTAL COUNTRY BREAKDOWN</div>
+            {!!sourceFileName && <div className='text-xs text-gray-400 mt-0.5'>Source: {sourceFileName}</div>}
           </div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', total: '', editable: true }]);
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
@@ -296,12 +322,13 @@ export function TotalCountryBreakdownScanPage() {
             <div className='text-sm text-gray-500 italic'>No country breakdown detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[700px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PM Code</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -314,7 +341,96 @@ export function TotalCountryBreakdownScanPage() {
                         <Input value={row.pmCode} onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, pmCode: e.target.value } : r)))} />
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input value={row.total} onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: e.target.value } : r)))} />
+                        <Input
+                          value={formatIdThousands(row.total)}
+                          onChange={(e) =>
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(e.target.value) } : r)))
+                          }
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setCountryBreakdownDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>SECTION 2C – COLOUR / SIZE BREAKDOWN</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setSection2cDraftRows((prev) => [...(prev ?? []), { article: '', size: '', qty: '', editable: true }]);
+            }}
+          >
+            Add row
+          </Button>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : section2cDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No size breakdown detected.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {section2cDraftRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input value={row.article} onChange={(e) => setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: e.target.value } : r)))} />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <SizeAutocompleteInput
+                          value={row.size}
+                          onChange={(e) => {
+                            const v = normalizeSizeKey(e.target.value);
+                            setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands(row.qty)}
+                          onChange={(e) => setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(e.target.value) } : r)))}
+                          style={{ textAlign: 'left' }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setSection2cDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -337,4 +453,25 @@ export function TotalCountryBreakdownScanPage() {
       )}
     </div>
   );
+}
+
+const idFormatter = new Intl.NumberFormat('id-ID');
+
+function formatIdThousands(input: string): string {
+  const digits = (input ?? '').toString().replace(/\D+/g, '');
+  if (!digits) return '';
+  try {
+    return idFormatter.format(Number(digits));
+  } catch {
+    return digits;
+  }
+}
+
+function normalizeSizeKey(input: string): string {
+  const s = (input ?? '').toString().trim();
+  if (!s) return '';
+  return s
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/\*/g, '');
 }
