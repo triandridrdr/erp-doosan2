@@ -2,12 +2,10 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
@@ -116,11 +114,6 @@ export function SupplementaryScanPage() {
         appendLog(`[BACKEND->FE] row=[unserializable]`);
       }
     }
-  };
-
-  const normalizeDigits = (v: string) => {
-    const d = (v ?? '').toString().replace(/[^0-9]/g, '');
-    return d.length ? d : '';
   };
 
   const isBomDraftTable = (rows?: unknown) => {
@@ -367,36 +360,6 @@ export function SupplementaryScanPage() {
     return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
 
-  const section2NonTotalEntries = useMemo(() => {
-    return (salesOrderDetailDraftRows ?? [])
-      .map((row, idx) => ({ row, idx }))
-      .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
-  }, [salesOrderDetailDraftRows]);
-
-  const exportSection2SizeBreakdownToExcel = () => {
-    const toNumOrNull = (v: unknown) => {
-      const d = normalizeDigits((v ?? '').toString());
-      if (!d) return null;
-      const n = Number(d);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    const rows = section2NonTotalEntries.map(({ row }) => ({
-      'Country of Destination': (row.countryOfDestination ?? '').toString(),
-      Type: (row.type ?? '').toString(),
-      Color: (row.color ?? '').toString(),
-      Size: (row.size ?? '').toString(),
-      Qty: toNumOrNull(row.qty),
-      Total: toNumOrNull(row.total),
-      'No of Asst': (row.noOfAsst ?? '').toString(),
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
-    XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
   return (
     <div className='space-y-6'>
       <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
@@ -487,7 +450,7 @@ export function SupplementaryScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div>
-            <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
+            <div className='text-xs font-semibold text-gray-500'>SALES ORDER HEADER (DRAFT)</div>
           </div>
           <div className='flex gap-2'>
             <Button
@@ -538,110 +501,110 @@ export function SupplementaryScanPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
-          <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={!data}
-              onClick={() => {
-                setSalesOrderDetailDraftRows((prev) => [
-                  ...prev,
-                  { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-                ]);
-              }}
-            >
-              Add row
-            </Button>
-            <Button type='button' disabled={section2NonTotalEntries.length === 0} onClick={exportSection2SizeBreakdownToExcel}>
-              Export Excel
-            </Button>
-          </div>
+          <div className='text-xs font-semibold text-gray-500'>BILL OF MATERIALS (BOM DRAFT)</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setBomDraftRows((prev) => [...prev, { position: '', placement: '', type: '', description: '', composition: '', materialSupplier: '' }]);
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2NonTotalEntries.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
+          ) : bomDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Position</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Placement</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Type</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
-                  {section2NonTotalEntries.map(({ row, idx }) => (
+                  {bomDraftRows.map((row, idx) => (
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                      <td className='px-3 py-2 align-top'>
                         <Input
-                          value={row.countryOfDestination}
+                          value={row.position}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, position: v } : r)));
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.placement}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, placement: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
                         <Input
                           value={row.type}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.color}
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.description}
+                          rows={2}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, description: v } : r)));
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <SizeAutocompleteInput
-                          value={row.size}
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.composition}
+                          rows={2}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.qty}
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.materialSupplier}
+                          rows={2}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
                           }}
                         />
                       </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.total}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: v } : r)));
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setBomDraftRows((prev) => prev.filter((_, i) => i !== idx));
                           }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={row.noOfAsst ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: v } : r)));
-                          }}
-                        />
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
