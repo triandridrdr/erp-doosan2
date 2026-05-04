@@ -2,7 +2,6 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -58,11 +57,6 @@ export function SizePerColourBreakdownScanPage() {
   >([]);
 
   const appendLog = (_msg: string) => {};
-
-  const normalizeDigits = (v: string) => {
-    const d = (v ?? '').toString().replace(/[^0-9]/g, '');
-    return d.length ? d : '';
-  };
 
   const isBomDraftTable = (rows?: unknown) => {
     if (!Array.isArray(rows) || rows.length < 2) return false;
@@ -229,30 +223,6 @@ export function SizePerColourBreakdownScanPage() {
       .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
   }, [salesOrderDetailDraftRows]);
 
-  const exportSection2SizeBreakdownToExcel = () => {
-    const toNumOrNull = (v: unknown) => {
-      const d = normalizeDigits((v ?? '').toString());
-      if (!d) return null;
-      const n = Number(d);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    const rows = section2NonTotalEntries.map(({ row }) => ({
-      'Country of Destination': (row.countryOfDestination ?? '').toString(),
-      Type: (row.type ?? '').toString(),
-      Color: (row.color ?? '').toString(),
-      Size: (row.size ?? '').toString(),
-      Qty: toNumOrNull(row.qty),
-      Total: toNumOrNull(row.total),
-      'No of Asst': (row.noOfAsst ?? '').toString(),
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'SECTION 2');
-    XLSX.writeFile(wb, `SECTION_2_SIZE_BREAKDOWN_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
   return (
     <div className='space-y-6'>
       <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
@@ -322,7 +292,7 @@ export function SizePerColourBreakdownScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div>
-            <div className='text-xs font-semibold text-gray-500'>SECTION 1 – SALES ORDER HEADER (DRAFT)</div>
+            <div className='text-xs font-semibold text-gray-500'>SALES ORDER HEADER (DRAFT)</div>
           </div>
           <div className='flex gap-2'>
             <Button type='button' variant='primary' disabled={!data || saveDraftMutation.isPending} onClick={() => saveDraftMutation.mutate()}>
@@ -362,13 +332,10 @@ export function SizePerColourBreakdownScanPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
+          <div className='text-xs font-semibold text-gray-500'>SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
           <div className='flex items-center gap-2'>
             <Button type='button' variant='primary' disabled={!data} onClick={() => setSalesOrderDetailDraftRows((prev) => [...prev, { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true }])}>
               Add row
-            </Button>
-            <Button type='button' disabled={section2NonTotalEntries.length === 0} onClick={exportSection2SizeBreakdownToExcel}>
-              Export Excel
             </Button>
           </div>
         </div>
@@ -389,6 +356,7 @@ export function SizePerColourBreakdownScanPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -414,6 +382,17 @@ export function SizePerColourBreakdownScanPage() {
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                         <Input value={row.noOfAsst ?? ''} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: e.target.value } : r)))} />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
