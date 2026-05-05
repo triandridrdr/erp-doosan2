@@ -319,7 +319,17 @@ export function PurchaseOrderScanPage() {
 
   const invoiceAvgPriceRowsForActivePage = useMemo(() => {
     const p = String(activePage);
-    return (invoiceAvgPriceRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+    return (invoiceAvgPriceRows ?? []).filter((r) => {
+      const rp = (r?.page ?? '1').toString();
+      if (rp === p) return true;
+
+      if (p === '1') {
+        const c = (r?.country ?? '').toString();
+        if (c.includes(',')) return true;
+      }
+
+      return false;
+    });
   }, [activePage, invoiceAvgPriceRows]);
 
   const termsOfDeliveryForPage1 = useMemo(() => {

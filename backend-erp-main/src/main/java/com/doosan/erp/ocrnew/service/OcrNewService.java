@@ -1034,14 +1034,29 @@ public class OcrNewService {
         }
         if (detectedPrices.isEmpty()) return;
 
-        Set<String> existingPrices = new HashSet<>();
+        Map<String, List<String>> existingCountriesByPrice = new LinkedHashMap<>();
         for (Map<String, String> r : poInvoiceAvgPrice) {
             String p = r == null ? null : r.get("invoiceAveragePrice");
-            if (p != null && !p.isBlank()) existingPrices.add(p.trim());
+            if (p == null || p.isBlank()) continue;
+            String c = r.get("country");
+            existingCountriesByPrice.computeIfAbsent(p.trim(), k -> new ArrayList<>());
+            if (c != null && !c.isBlank()) {
+                existingCountriesByPrice.get(p.trim()).add(c.trim());
+            }
         }
 
         for (String price : detectedPrices) {
-            if (existingPrices.contains(price)) continue;
+            List<String> existingCountries = existingCountriesByPrice.get(price);
+            if (existingCountries != null && !existingCountries.isEmpty()) {
+                boolean hasMultiCountry = false;
+                for (String c : existingCountries) {
+                    if (c != null && c.contains(",")) {
+                        hasMultiCountry = true;
+                        break;
+                    }
+                }
+                if (hasMultiCountry) continue;
+            }
             Map<String, String> row = new LinkedHashMap<>();
             row.put("invoiceAveragePrice", price);
             row.put("country", fallbackCountryList);
