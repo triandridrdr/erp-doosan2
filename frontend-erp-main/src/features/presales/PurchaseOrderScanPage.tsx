@@ -874,6 +874,154 @@ useEffect(() => {
         </div>
       </div>
 
+      {activePage === 1 ? (
+        <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+          <div className='p-6 space-y-6 bg-gray-50'>
+            <div className='bg-white rounded-xl border border-gray-200 p-4'>
+              <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+              <textarea
+                className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                value={termsOfDeliveryForActivePage}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                }}
+              />
+            </div>
+
+            <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
+              <div className='overflow-auto'>
+                <table className='min-w-[900px] w-full'>
+                  <thead className='bg-gray-50'>
+                    <tr>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timeOfDeliveryRows.length > 0 ? (
+                      timeOfDeliveryRows.map((row, rIdx) => (
+                        <tr key={rIdx}>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.quantity ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                          No data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
+              <div className='overflow-auto'>
+                <table className='min-w-[900px] w-full'>
+                  <thead className='bg-gray-50'>
+                    <tr>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quantityPerArticleRowsForActivePage.length > 0 ? (
+                      quantityPerArticleRowsForActivePage.map((row, rIdx) => (
+                        <tr key={rIdx}>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.colour ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.optionNo ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.cost ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                          No data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+              <div className='overflow-auto'>
+                <table className='min-w-full w-full'>
+                  <thead className='bg-gray-50'>
+                    <tr>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceAvgPriceRowsForActivePage.length > 0 ? (
+                      invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
+                        <tr key={rIdx}>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Input value={row.country ?? ''} onChange={() => {}} />
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                          No data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-3 border-b border-gray-200 flex gap-2 overflow-auto'>
           {Array.from({ length: pageCount }).map((_, idx) => {
@@ -896,147 +1044,151 @@ useEffect(() => {
           })}
         </div>
         <div className='p-6 space-y-6 bg-gray-50'>
-          <div className='bg-white rounded-xl border border-gray-200 p-4'>
-            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
-            <textarea
-              className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-              value={termsOfDeliveryForActivePage}
-              onChange={(e) => {
-                const v = e.target.value;
-                setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
-              }}
-            />
-          </div>
+          {activePage === 1 ? null : (
+            <>
+              <div className='bg-white rounded-xl border border-gray-200 p-4'>
+                <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+                <textarea
+                  className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                  value={termsOfDeliveryForActivePage}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                  }}
+                />
+              </div>
 
-          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
-            <div className='overflow-auto'>
-              <table className='min-w-[900px] w-full'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {timeOfDeliveryRows.length > 0 ? (
-                    timeOfDeliveryRows.map((row, rIdx) => (
-                      <tr key={rIdx}>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.quantity ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
-                        </td>
+              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
+                <div className='overflow-auto'>
+                  <table className='min-w-[900px] w-full'>
+                    <thead className='bg-gray-50'>
+                      <tr>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    </thead>
+                    <tbody>
+                      {timeOfDeliveryRows.length > 0 ? (
+                        timeOfDeliveryRows.map((row, rIdx) => (
+                          <tr key={rIdx}>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.quantity ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
-          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
-            <div className='overflow-auto'>
-              <table className='min-w-[900px] w-full'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quantityPerArticleRowsForActivePage.length > 0 ? (
-                    quantityPerArticleRowsForActivePage.map((row, rIdx) => (
-                      <tr key={rIdx}>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.articleNo ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.colour ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.optionNo ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.cost ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
-                        </td>
+              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                <div className='overflow-auto'>
+                  <table className='min-w-[900px] w-full'>
+                    <thead className='bg-gray-50'>
+                      <tr>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    </thead>
+                    <tbody>
+                      {quantityPerArticleRowsForActivePage.length > 0 ? (
+                        quantityPerArticleRowsForActivePage.map((row, rIdx) => (
+                          <tr key={rIdx}>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.colour ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.optionNo ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.cost ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
-          <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
-            <div className='overflow-auto'>
-              <table className='min-w-full w-full'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoiceAvgPriceRowsForActivePage.length > 0 ? (
-                    invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
-                      <tr key={rIdx}>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
-                        </td>
-                        <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.country ?? ''} onChange={() => {}} />
-                        </td>
+              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                <div className='overflow-auto'>
+                  <table className='min-w-full w-full'>
+                    <thead className='bg-gray-50'>
+                      <tr>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
-                        No data
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    </thead>
+                    <tbody>
+                      {invoiceAvgPriceRowsForActivePage.length > 0 ? (
+                        invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
+                          <tr key={rIdx}>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Input value={row.country ?? ''} onChange={() => {}} />
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
