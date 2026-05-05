@@ -5,11 +5,12 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 
@@ -39,8 +40,8 @@ public class OcrNewJob extends BaseEntity {
     @Column(name = "content_type", length = 100)
     private String contentType;
 
-    @Lob
-    @Column(name = "file_bytes", nullable = false, columnDefinition = "LONGBLOB")
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "file_bytes", nullable = false)
     private byte[] fileBytes;
 
     @Enumerated(EnumType.STRING)
@@ -65,11 +66,9 @@ public class OcrNewJob extends BaseEntity {
     @Column(name = "compare_modes")
     private Boolean compareModes;
 
-    @Lob
-    @Column(name = "result_json", columnDefinition = "LONGTEXT")
+    @Column(name = "result_json", columnDefinition = "TEXT")
     private String resultJson;
 
-    @Lob
-    @Column(name = "error_message", columnDefinition = "LONGTEXT")
+    @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 }

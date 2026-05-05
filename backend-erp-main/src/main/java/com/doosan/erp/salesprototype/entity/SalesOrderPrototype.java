@@ -21,7 +21,7 @@ public class SalesOrderPrototype extends BaseEntity {
     private String analyzedFileName;
 
     @Lob
-    @Column(name = "payload_json", nullable = false, columnDefinition = "LONGTEXT")
+    @Column(name = "payload_json", nullable = false, columnDefinition = "TEXT")
     private String payloadJson;
 
     // Document type tracking
@@ -39,18 +39,18 @@ public class SalesOrderPrototype extends BaseEntity {
 
     // Separate JSON storage per document type
     @Lob
-    @Column(name = "purchase_order_json", columnDefinition = "LONGTEXT")
+    @Column(name = "purchase_order_json", columnDefinition = "TEXT")
     private String purchaseOrderJson;
 
     @Lob
-    @Column(name = "supplementary_json", columnDefinition = "LONGTEXT")
+    @Column(name = "supplementary_json", columnDefinition = "TEXT")
     private String supplementaryJson;
 
     @Lob
-    @Column(name = "size_per_colour_json", columnDefinition = "LONGTEXT")
+    @Column(name = "size_per_colour_json", columnDefinition = "TEXT")
     private String sizePerColourJson;
 
     @Lob
-    @Column(name = "total_country_json", columnDefinition = "LONGTEXT")
+    @Column(name = "total_country_json", columnDefinition = "TEXT")
     private String totalCountryJson;
 }

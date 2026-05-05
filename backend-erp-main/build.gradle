@@ -46,7 +46,7 @@ dependencies {
     testAnnotationProcessor 'org.projectlombok:lombok'
 
     // ================= DATABASE =================
-    runtimeOnly 'com.mysql:mysql-connector-j'
+    runtimeOnly 'org.postgresql:postgresql'
 
     // ================= JWT =================
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
