@@ -146,7 +146,7 @@ function safeJsonParse(v: string): any {
   }
 }
 
-export function SalesOrderPrototypeEditPage() {
+export function SalesOrderDraftEditPage() {
   const params = useParams();
   const navigate = useNavigate();
   const id = Number(params.id);

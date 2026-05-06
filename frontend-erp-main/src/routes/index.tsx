@@ -20,8 +20,8 @@ import { SizePerColourBreakdownScanPage } from '../features/presales/SizePerColo
 import { SupplementaryScanPage } from '../features/presales/SupplementaryScanPage';
 import { TotalCountryBreakdownScanPage } from '../features/presales/TotalCountryBreakdownScanPage';
 import { SalesOrderListPage } from '../features/sales/SalesOrderListPage';
-import { SalesOrderPrototypeEditPage } from '../features/salesOrderPrototype/SalesOrderPrototypeEditPage';
-import { SalesOrderPrototypeListPage } from '../features/salesOrderPrototype/SalesOrderPrototypeListPage';
+import { SalesOrderDraftEditPage } from '../features/salesOrderPrototype/SalesOrderDraftEditPage';
+import { SalesOrderDraftListPage } from '../features/salesOrderPrototype/SalesOrderDraftListPage';
 
 function ProtectedRoute() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -39,8 +39,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'sales', element: <SalesOrderListPage /> },
-      { path: 'sales-order-prototype', element: <SalesOrderPrototypeListPage /> },
-      { path: 'sales-order-prototype/:id', element: <SalesOrderPrototypeEditPage /> },
+      { path: 'sales-order-prototype', element: <SalesOrderDraftListPage /> },
+      { path: 'sales-order-prototype/:id', element: <SalesOrderDraftEditPage /> },
       { path: 'inventory', element: <StockListPage /> },
       { path: 'accounting', element: <JournalEntryListPage /> },
       { path: 'ocr', element: <OcrPage /> },

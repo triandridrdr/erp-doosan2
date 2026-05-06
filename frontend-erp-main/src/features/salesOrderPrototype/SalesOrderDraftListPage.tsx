@@ -8,7 +8,7 @@ import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { salesOrderPrototypeApi } from './api';
 
-export function SalesOrderPrototypeListPage() {
+export function SalesOrderDraftListPage() {
   const [q, setQ] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
