@@ -44,8 +44,16 @@ export function SupplementaryScanPage() {
       placement: string;
       type: string;
       description: string;
+      materialAppearance: string;
       composition: string;
+      construction: string;
+      consumption: string;
+      weight: string;
+      componentTreatments: string;
       materialSupplier: string;
+      supplierArticle: string;
+      bookingId: string;
+      demandId: string;
     }>
   >([]);
 
@@ -172,8 +180,16 @@ export function SupplementaryScanPage() {
         placement: r?.[1] ?? '',
         type: r?.[2] ?? '',
         description: r?.[3] ?? '',
+        materialAppearance: r?.[6] ?? '',
         composition: r?.[4] ?? '',
+        construction: r?.[7] ?? '',
+        consumption: r?.[8] ?? '',
+        weight: r?.[9] ?? '',
+        componentTreatments: r?.[10] ?? '',
         materialSupplier: r?.[5] ?? '',
+        supplierArticle: r?.[11] ?? '',
+        bookingId: r?.[12] ?? '',
+        demandId: r?.[13] ?? '',
       }));
       setBomDraftRows(rows);
     } else {
@@ -208,8 +224,16 @@ export function SupplementaryScanPage() {
       placement: string;
       type: string;
       description: string;
+      materialAppearance: string;
       composition: string;
+      construction: string;
+      consumption: string;
+      weight: string;
+      componentTreatments: string;
       materialSupplier: string;
+      supplierArticle: string;
+      bookingId: string;
+      demandId: string;
     }> = [];
     for (const r of out) {
       const bomTable = (r?.data?.tables ?? []).find((t) => isBomDraftTable((t as any).rows));
@@ -219,8 +243,16 @@ export function SupplementaryScanPage() {
           placement: row?.[1] ?? '',
           type: row?.[2] ?? '',
           description: row?.[3] ?? '',
+          materialAppearance: row?.[6] ?? '',
           composition: row?.[4] ?? '',
+          construction: row?.[7] ?? '',
+          consumption: row?.[8] ?? '',
+          weight: row?.[9] ?? '',
+          componentTreatments: row?.[10] ?? '',
           materialSupplier: row?.[5] ?? '',
+          supplierArticle: row?.[11] ?? '',
+          bookingId: row?.[12] ?? '',
+          demandId: row?.[13] ?? '',
         }));
         break;
       }
@@ -488,7 +520,7 @@ export function SupplementaryScanPage() {
             variant='primary'
             disabled={!data}
             onClick={() => {
-              setBomDraftRows((prev) => [...prev, { position: '', placement: '', type: '', description: '', composition: '', materialSupplier: '' }]);
+              setBomDraftRows((prev) => [...prev, { position: '', placement: '', type: '', description: '', materialAppearance: '', composition: '', construction: '', consumption: '', weight: '', componentTreatments: '', materialSupplier: '', supplierArticle: '', bookingId: '', demandId: '' }]);
             }}
           >
             Add row
@@ -501,15 +533,23 @@ export function SupplementaryScanPage() {
             <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <table className='min-w-[2800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
                 <thead className='bg-gray-50 sticky top-0 z-10'>
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Position</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Placement</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Type</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Description</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Appearance</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Construction</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Consumption</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Weight</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Component Treatments</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Supplier Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Booking Id</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Demand ID</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -555,6 +595,15 @@ export function SupplementaryScanPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.materialAppearance}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialAppearance: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
                         <textarea
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.composition}
@@ -566,6 +615,42 @@ export function SupplementaryScanPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.construction}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, construction: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.consumption}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, consumption: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.weight}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, weight: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.componentTreatments}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, componentTreatments: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
                         <textarea
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.materialSupplier}
@@ -573,6 +658,33 @@ export function SupplementaryScanPage() {
                           onChange={(e) => {
                             const v = e.target.value;
                             setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.supplierArticle}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, supplierArticle: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.bookingId}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, bookingId: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={row.demandId}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, demandId: v } : r)));
                           }}
                         />
                       </td>

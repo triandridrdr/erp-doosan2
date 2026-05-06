@@ -449,7 +449,7 @@ public class TableParser {
                 .page(1)
                 .index(null)
                 .rowCount(mergedRows.size())
-                .columnCount(6)
+                .columnCount(14)
                 .cells(cells)
                 .rows(mergedRows)
                 .build());
@@ -825,7 +825,9 @@ public class TableParser {
 
     private static List<List<String>> normalizeBomRows(List<OcrNewLine> sectionLines, List<OcrNewLine> headerLines) {
         List<List<String>> rows = new ArrayList<>();
-        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier"));
+        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier",
+                "Material Appearance", "Construction", "Consumption", "Weight", "Component Treatments",
+                "Supplier Article", "Booking Id", "Demand ID"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
 
         List<StringBuilder> rawRowText = new ArrayList<>();
@@ -960,6 +962,15 @@ public class TableParser {
                         (ms == null ? "" : ms)
                 ));
                 cur.add(1, plc);
+                // Add new columns (indices 6-13), populated from extracted BomLineCells fields
+                cur.add(cells.materialAppearance == null ? "" : cells.materialAppearance); // 6: Material Appearance
+                cur.add(cells.construction == null ? "" : cells.construction); // 7: Construction
+                cur.add(cells.consumption == null ? "" : cells.consumption); // 8: Consumption
+                cur.add(cells.weight == null ? "" : cells.weight); // 9: Weight
+                cur.add(""); // 10: Component Treatments
+                cur.add(cells.supplierArticle == null ? "" : cells.supplierArticle); // 11: Supplier Article
+                cur.add(""); // 12: Booking Id
+                cur.add(""); // 13: Demand ID
                 rows.add(cur);
                 curRaw = new StringBuilder();
                 // Seed raw accumulator from Description and Composition columns
@@ -1126,6 +1137,29 @@ public class TableParser {
                     String oldMs = cur.size() > 5 ? cur.get(5) : "";
                     if (cur.size() > 5) {
                         cur.set(5, oneLine(oldMs + (oldMs.isBlank() ? "" : " ") + cells.materialSupplier));
+                    }
+                }
+                // Accumulate new fields from continuation lines
+                if (cur.size() > 13) {
+                    if (!cells.materialAppearance.isBlank()) {
+                        String old6 = cur.get(6);
+                        cur.set(6, oneLine(old6 + (old6.isBlank() ? "" : " ") + cells.materialAppearance));
+                    }
+                    if (!cells.construction.isBlank()) {
+                        String old7 = cur.get(7);
+                        cur.set(7, oneLine(old7 + (old7.isBlank() ? "" : " ") + cells.construction));
+                    }
+                    if (!cells.consumption.isBlank()) {
+                        String old8 = cur.get(8);
+                        cur.set(8, oneLine(old8 + (old8.isBlank() ? "" : " ") + cells.consumption));
+                    }
+                    if (!cells.weight.isBlank()) {
+                        String old9 = cur.get(9);
+                        cur.set(9, oneLine(old9 + (old9.isBlank() ? "" : " ") + cells.weight));
+                    }
+                    if (!cells.supplierArticle.isBlank()) {
+                        String old11 = cur.get(11);
+                        cur.set(11, oneLine(old11 + (old11.isBlank() ? "" : " ") + cells.supplierArticle));
                     }
                 }
             }
@@ -1643,7 +1677,9 @@ public class TableParser {
 
     private static List<List<String>> normalizeBomRowsFallback(List<OcrNewLine> sectionLines) {
         List<List<String>> rows = new ArrayList<>();
-        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier"));
+        rows.add(List.of("Position", "Placement", "Type", "Description", "Composition", "Material Supplier",
+                "Material Appearance", "Construction", "Consumption", "Weight", "Component Treatments",
+                "Supplier Article", "Booking Id", "Demand ID"));
         if (sectionLines == null || sectionLines.isEmpty()) return rows;
 
         List<String> cur = null;
@@ -1658,7 +1694,8 @@ public class TableParser {
                 BomDescComp dc = splitBomTail(parsed.tail);
                 // Apply mergeSplitWords to fix broken words in description
                 String desc = mergeSplitWords(dc.description);
-                cur = new ArrayList<>(List.of(parsed.position, parsed.placement, parsed.type, desc, dc.composition, ""));
+                cur = new ArrayList<>(List.of(parsed.position, parsed.placement, parsed.type, desc, dc.composition, "",
+                        "", "", "", "", "", "", "", ""));
                 rows.add(cur);
             } else {
                 BomDescComp dc = splitBomTail(txt);
@@ -1685,7 +1722,8 @@ public class TableParser {
         }
     }
 
-    private record BomLineCells(String position, String placement, String type, String description, String composition, String materialSupplier) {
+    private record BomLineCells(String position, String placement, String type, String description, String composition, String materialSupplier,
+                                String materialAppearance, String construction, String consumption, String weight, String supplierArticle) {
     }
 
     private static BomColumnCenters deriveBomColumnCenters(OcrNewLine headerLine) {
@@ -1785,7 +1823,7 @@ public class TableParser {
 
     private static BomLineCells extractBomLineCells(OcrNewLine line, BomColumnCenters centers, boolean isFabricRowHint) {
         if (line == null) {
-            return new BomLineCells("", "", "", "", "", "");
+            return new BomLineCells("", "", "", "", "", "", "", "", "", "", "");
         }
         
         String lineText = oneLine(line.getText());
@@ -1806,7 +1844,7 @@ public class TableParser {
             
             // Skip lines beyond tracked columns (Consumption, Weight, Supplier)
             if (lineCx > 2200) {
-                return new BomLineCells("", "", "", "", "", "");
+                return new BomLineCells("", "", "", "", "", "", "", "", "", "", "");
             }
             
             // Calculate conservative boundaries for column assignment
@@ -1821,23 +1859,23 @@ public class TableParser {
             // Assign based on x-position boundaries
             // PATCH: If baris lanjutan (tidak ada position/placement/type) dan tidak ada %, assign ke Description
             if (!hasCompositionIndicator && lineCx > centers.xType && lineCx <= descMaxX) {
-                return new BomLineCells("", "", "", lineText, "", "");
+                return new BomLineCells("", "", "", lineText, "", "", "", "", "", "", "");
             }
             // Composition zone: cx >= compMinX or has composition indicator
             if (lineCx >= compMinX || hasCompositionIndicator) {
-                return new BomLineCells("", "", "", "", lineText, "");
+                return new BomLineCells("", "", "", "", lineText, "", "", "", "", "", "");
             } else if (lineCx > descMaxX && lineCx < compMinX) {
-                return new BomLineCells("", "", "", "", "", "");
+                return new BomLineCells("", "", "", "", "", "", "", "", "", "", "");
             } else if (lineCx >= centers.xMaterialSupplier) {
-                return new BomLineCells("", "", "", "", "", lineText);
+                return new BomLineCells("", "", "", "", "", lineText, "", "", "", "", "");
             } else if (lineCx > centers.xType && lineCx <= descMaxX) {
-                return new BomLineCells("", "", "", lineText, "", "");
+                return new BomLineCells("", "", "", lineText, "", "", "", "", "", "", "");
             } else if (lineCx > centers.xPlacement && lineCx <= centers.xType) {
-                return new BomLineCells("", "", lineText, "", "", "");
+                return new BomLineCells("", "", lineText, "", "", "", "", "", "", "", "");
             } else if (lineCx > centers.xPosition && lineCx <= centers.xPlacement) {
-                return new BomLineCells("", lineText, "", "", "", "");
+                return new BomLineCells("", lineText, "", "", "", "", "", "", "", "", "");
             } else {
-                return new BomLineCells(lineText, "", "", "", "", "");
+                return new BomLineCells(lineText, "", "", "", "", "", "", "", "", "", "");
             }
         }
 
@@ -1847,10 +1885,23 @@ public class TableParser {
         StringBuilder description = new StringBuilder();
         StringBuilder composition = new StringBuilder();
         StringBuilder materialSupplier = new StringBuilder();
+        StringBuilder materialAppearance = new StringBuilder();
+        StringBuilder construction = new StringBuilder();
+        StringBuilder consumption = new StringBuilder();
+        StringBuilder weight = new StringBuilder();
+        StringBuilder supplierArticle = new StringBuilder();
 
-        // Calculate column boundaries to avoid pollution from other columns (Consumption, Weight, Supplier)
-        // These columns typically start at x > 1500, so we limit tracked data to x < 1600
+        // Zone boundaries for the right-side columns
+        // Consumption zone: cx ~1750-1960, Weight zone: cx ~1960-2200
+        int consumptionWeightBoundary = 1960;
+        // Words beyond this X are in the far-right columns (Material Supplier far-right + Supplier Article)
         int materialSupplierMaxX = 2200;
+        // Boundary between Material Supplier (far-right) and Supplier Article
+        // Material Supplier words: cx 2200-2730, Supplier Article: cx >= 2730
+        int supplierArticleBoundary = 2730;
+        // Construction zone: between composition end and consumption start
+        int constructionMinX = 1530;
+        int constructionMaxX = 1750; // upper bound for construction; beyond this is consumption/weight
         
         // Calculate boundary between Description and Appearance columns
         // Use conservative boundary: 150px before Appearance center to ensure no Appearance/Composition words leak into Description
@@ -1881,9 +1932,17 @@ public class TableParser {
             if (t.isBlank()) continue;
             int cx = (w.getLeft() + w.getRight()) / 2;
 
-            // Skip words that are beyond our tracked columns (Consumption, Weight, Supplier at x > 1600)
+            // Words beyond materialSupplierMaxX: split into Material Supplier (far-right) vs Supplier Article
             if (cx > materialSupplierMaxX) {
-                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} SKIPPED (> materialSupplierMaxX={})", t, cx, materialSupplierMaxX);
+                if (cx >= supplierArticleBoundary) {
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} -> supplierArticle", t, cx);
+                    if (supplierArticle.length() > 0) supplierArticle.append(' ');
+                    supplierArticle.append(t);
+                } else {
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} -> materialSupplier (far-right)", t, cx);
+                    if (materialSupplier.length() > 0) materialSupplier.append(' ');
+                    materialSupplier.append(t);
+                }
                 continue;
             }
 
@@ -1919,24 +1978,37 @@ public class TableParser {
                 if (type.length() > 0) type.append(' ');
                 type.append(t);
             }
-            else if (col == 3 || col == 4) {
-                // Description/Appearance columns
+            else if (col == 3) {
+                // Description column
                 if (cx < compositionMinX) {
-                    // Before composition boundary - goes to Description only
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description", t, cx, col);
                     if (description.length() > 0) description.append(' ');
                     description.append(t);
                 } else if (cx < descriptionBoundary) {
                     // In composition zone but before descriptionBoundary (fabric row extended zone)
-                    // DUAL-ASSIGN: goes to BOTH Description AND Composition
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC DUAL)", t, cx, col);
                     if (description.length() > 0) description.append(' ');
                     description.append(t);
                     if (composition.length() > 0) composition.append(' ');
                     composition.append(t);
                 } else {
-                    // Past descriptionBoundary - goes to Composition only
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> composition", t, cx, col);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                }
+            }
+            else if (col == 4) {
+                // Material Appearance column - ALWAYS capture into materialAppearance
+                if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialAppearance", t, cx, col);
+                if (materialAppearance.length() > 0) materialAppearance.append(' ');
+                materialAppearance.append(t);
+                // For fabric rows, ALSO add to description+composition
+                if (isFabricRow && cx < descriptionBoundary) {
+                    if (description.length() > 0) description.append(' ');
+                    description.append(t);
+                    if (composition.length() > 0) composition.append(' ');
+                    composition.append(t);
+                } else if (isFabricRow) {
                     if (composition.length() > 0) composition.append(' ');
                     composition.append(t);
                 }
@@ -1947,6 +2019,36 @@ public class TableParser {
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialSupplier (from col5 guard)", t, cx, col);
                     if (materialSupplier.length() > 0) materialSupplier.append(' ');
                     materialSupplier.append(t);
+                    // Also capture into consumption/weight based on X position
+                    if (cx < consumptionWeightBoundary) {
+                        if (consumption.length() > 0) consumption.append(' ');
+                        consumption.append(t);
+                    } else {
+                        if (weight.length() > 0) weight.append(' ');
+                        weight.append(t);
+                    }
+                } else if (cx >= constructionMinX && cx < constructionMaxX && !hasPercentSign) {
+                    // Construction zone: between composition and consumption, no % sign
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> construction", t, cx, col);
+                    if (construction.length() > 0) construction.append(' ');
+                    construction.append(t);
+                    // For fabric rows, ALSO add to description+composition for backward compat
+                    if (isFabricRow && cx < descriptionBoundary) {
+                        if (description.length() > 0) description.append(' ');
+                        description.append(t);
+                        if (composition.length() > 0) composition.append(' ');
+                        composition.append(t);
+                    }
+                } else if (cx >= constructionMaxX) {
+                    // Consumption/Weight zone (cx 1750+) that didn't trigger col5 guard
+                    if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> consumption/weight (col5 overflow)", t, cx, col);
+                    if (cx < consumptionWeightBoundary) {
+                        if (consumption.length() > 0) consumption.append(' ');
+                        consumption.append(t);
+                    } else {
+                        if (weight.length() > 0) weight.append(' ');
+                        weight.append(t);
+                    }
                 } else if (isFabricRow && cx < descriptionBoundary) {
                     // For fabric rows, DUAL-ASSIGN composition words
                     if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> description+composition (FABRIC col5)", t, cx, col);
@@ -1964,6 +2066,14 @@ public class TableParser {
                 if (BOM_DEBUG) log.debug("[BOM] word='{}' cx={} col={} -> materialSupplier", t, cx, col);
                 if (materialSupplier.length() > 0) materialSupplier.append(' ');
                 materialSupplier.append(t);
+                // Also capture into consumption/weight based on X position
+                if (cx < consumptionWeightBoundary) {
+                    if (consumption.length() > 0) consumption.append(' ');
+                    consumption.append(t);
+                } else {
+                    if (weight.length() > 0) weight.append(' ');
+                    weight.append(t);
+                }
             }
             else if (cx >= compositionMinX && hasPercentSign) {
                 // Word is past composition boundary AND contains % - likely composition data
@@ -2055,10 +2165,16 @@ public class TableParser {
             }
         }
 
+        String ma = oneLine(materialAppearance.toString());
+        String constr = oneLine(construction.toString());
+        String consump = oneLine(consumption.toString());
+        String wt = oneLine(weight.toString());
+        String sa = oneLine(supplierArticle.toString());
+
         if (BOM_DEBUG) {
-            log.debug("[BOM] FINAL: pos='{}', typ='{}', desc='{}', comp='{}'", pos, typ, desc, comp);
+            log.debug("[BOM] FINAL: pos='{}', typ='{}', desc='{}', comp='{}', ma='{}', constr='{}', consump='{}', wt='{}', sa='{}'", pos, typ, desc, comp, ma, constr, consump, wt, sa);
         }
-        return new BomLineCells(pos, plc, typ, desc, comp, ms);
+        return new BomLineCells(pos, plc, typ, desc, comp, ms, ma, constr, consump, wt, sa);
     }
 
     private static String normalizeBomComposition(String raw) {
