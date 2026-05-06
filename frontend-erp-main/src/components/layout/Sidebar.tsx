@@ -83,7 +83,7 @@ const navigation: NavItem[] = [
       { name: 'Sales/Invoicing', href: '#sales-invoicing' },
       { name: 'Collection', href: '#sales-collection' },
       { name: 'Journal Entry Management', href: '#sales-journal' },
-      { name: 'Online Order System', href: '/sales-order-prototype' },
+      { name: 'Sales Order Draft', href: '/sales-order-prototype' },
       { name: 'OCR', href: '/ocr' },
       { name: 'OCR New', href: '/ocr-new' },
     ],

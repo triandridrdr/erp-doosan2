@@ -449,51 +449,32 @@ export function SupplementaryScanPage() {
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
-          <div>
-            <div className='text-xs font-semibold text-gray-500'>SALES ORDER HEADER (DRAFT)</div>
-          </div>
-          <div className='flex gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={!data || saveDraftMutation.isPending}
-              onClick={() => saveDraftMutation.mutate()}
-            >
-              Save Draft
-            </Button>
-          </div>
+          <div className='text-sm font-semibold text-gray-900'>Sales Order Header (Draft)</div>
+          <Button type='button' variant='primary' disabled={!data || saveDraftMutation.isPending} onClick={() => saveDraftMutation.mutate()}>
+            Save Draft
+          </Button>
         </div>
-        <div className='p-6'>
+        <div className='p-6 space-y-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
           ) : !hasHeaderDraft ? (
             <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
           ) : (
-            <div className='overflow-auto'>
-              <table className='min-w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Field</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Value</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {SALES_ORDER_HEADER_FIELDS.map((field) => (
-                    <tr key={field} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 text-sm text-gray-900 align-top whitespace-nowrap'>{field}</td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top w-full'>
-                        <Input
-                          value={salesOrderHeaderDraft[field] ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
+              {SALES_ORDER_HEADER_FIELDS.map((field) => (
+                <div key={field} className='grid grid-cols-12 items-center gap-3'>
+                  <div className='col-span-4 text-sm text-gray-700'>{field}</div>
+                  <div className='col-span-8'>
+                    <Input
+                      value={salesOrderHeaderDraft[field] ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

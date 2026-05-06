@@ -13,7 +13,7 @@ import { Sidebar } from './Sidebar';
 const pagePathByRoute: Record<string, string> = {
   '/': 'Dashboard',
   '/sales': 'Sales / Other',
-  '/sales-order-prototype': 'Sales / Online Order System',
+  '/sales-order-prototype': 'Sales / Sales Order Draft',
   '/inventory': 'Inventory / Stock',
   '/accounting': 'Accounting / Journal Entry',
   '/ocr': 'Sales / OCR',
@@ -32,7 +32,7 @@ export function MainLayout() {
   const pagePath =
     pagePathByRoute[location.pathname] ||
     (location.pathname.startsWith('/sales-order-prototype/')
-      ? 'Sales / Online Order System'
+      ? 'Sales / Sales Order Draft'
       : 'Overview');
 
   return (
