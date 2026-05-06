@@ -35,6 +35,9 @@ public class TableParser {
     private static final Pattern ONLY_PUNCT = Pattern.compile("^[\\p{Punct}\\s]+$");
     private static final Pattern TOKEN_HAS_PERCENT = Pattern.compile("\\d{1,3}\\s*%");
     private static final Pattern BOM_PROD_UNITS_START = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\s*Production\\s+Units\\s+and\\s+Processing\\s+Capabilities\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BOM_YARN_SOURCE_START = Pattern.compile("\\bBill\\s+of\\s+Material\\s*:\\s*Yarn\\s+Source\\s+Details\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PRODUCT_ARTICLE_START = Pattern.compile("^\\s*Product\\s+Article\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MISCELLANEOUS_START = Pattern.compile("^\\s*Miscellaneous\\s*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern BOM_WEIGHT_STOP = Pattern.compile("\\b\\d+(?:\\.\\d+)?\\s*(g/m2|g/m|g/piece|gram/km)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CONSTRUCTION_HINT = Pattern.compile("\\b\\d{2,}x\\d{2,}\\b|\\b\\d{1,3}\\*\\d{1,3}\\b|\\b\\d{2,}\\/\\d{1,2}\\/\\d{1,2}\\b|\\bx\\d{1,3}\\/\\d{1,2}\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern UNIT_TOKEN = Pattern.compile("^(km|yd|m|g/m|g/m2|gram/km)$", Pattern.CASE_INSENSITIVE);
@@ -152,7 +155,542 @@ public class TableParser {
                     .build());
         }
 
+        OcrNewTableDto yarnSource = parseBomYarnSourceDetailsTable(lines);
+        if (yarnSource != null && yarnSource.getRows() != null && yarnSource.getRows().size() > 1) {
+            out.add(OcrNewTableDto.builder()
+                    .page(yarnSource.getPage())
+                    .index(tableIndex++)
+                    .rowCount(yarnSource.getRowCount())
+                    .columnCount(yarnSource.getColumnCount())
+                    .cells(yarnSource.getCells())
+                    .rows(yarnSource.getRows())
+                    .build());
+        }
+
+        OcrNewTableDto productArticle = parseProductArticleTable(lines);
+        if (productArticle != null && productArticle.getRows() != null && productArticle.getRows().size() > 1) {
+            out.add(OcrNewTableDto.builder()
+                    .page(productArticle.getPage())
+                    .index(tableIndex++)
+                    .rowCount(productArticle.getRowCount())
+                    .columnCount(productArticle.getColumnCount())
+                    .cells(productArticle.getCells())
+                    .rows(productArticle.getRows())
+                    .build());
+        }
+
+        OcrNewTableDto misc = parseMiscellaneousTable(lines);
+        if (misc != null && misc.getRows() != null && misc.getRows().size() > 1) {
+            out.add(OcrNewTableDto.builder()
+                    .page(misc.getPage())
+                    .index(tableIndex++)
+                    .rowCount(misc.getRowCount())
+                    .columnCount(misc.getColumnCount())
+                    .cells(misc.getCells())
+                    .rows(misc.getRows())
+                    .build());
+        }
+
         return out;
+    }
+
+    private static OcrNewTableDto parseBomYarnSourceDetailsTable(List<OcrNewLine> lines) {
+        // Special case: this section sometimes only contains a message "No Yarn Details found"
+        // which we want to keep as a single message cell rather than being split into many columns.
+        OcrNewTableDto base = parseSectionTable(
+                lines,
+                BOM_YARN_SOURCE_START,
+                PRODUCT_ARTICLE_START,
+                (txtLow) -> txtLow.contains("position") && (txtLow.contains("yarn") || txtLow.contains("fibre")),
+                7,
+                List.of(
+                        "Position",
+                        "Placement",
+                        "Type",
+                        "Material Supplier",
+                        "Fibre Composition",
+                        "Yarn Supplier",
+                        "Production Unit / Processing Capability"
+                )
+        );
+
+        if (base == null || base.getRows() == null || base.getRows().size() < 2) return base;
+        for (int i = 1; i < base.getRows().size(); i++) {
+            List<String> r = base.getRows().get(i);
+            if (r == null) continue;
+            String joined = oneLine(String.join(" ", r)).trim();
+            String low = joined.toLowerCase(Locale.ROOT);
+            if (low.contains("no yarn") && low.contains("details") && low.contains("found")) {
+                List<List<String>> rows = new ArrayList<>();
+                rows.add(base.getRows().get(0));
+                List<String> msg = new ArrayList<>();
+                for (int c = 0; c < 7; c++) msg.add(c == 0 ? "No Yarn Details found" : "");
+                rows.add(msg);
+
+                List<OcrNewTableCellDto> cells = new ArrayList<>();
+                for (int rr = 0; rr < rows.size(); rr++) {
+                    for (int cc = 0; cc < rows.get(rr).size(); cc++) {
+                        cells.add(OcrNewTableCellDto.builder()
+                                .rowIndex(rr)
+                                .columnIndex(cc)
+                                .text(rows.get(rr).get(cc))
+                                .boundingBox(OcrNewBoundingBoxDto.builder()
+                                        .left(0)
+                                        .top(0)
+                                        .width(0)
+                                        .height(0)
+                                        .build())
+                                .confidence(null)
+                                .build());
+                    }
+                }
+
+                return OcrNewTableDto.builder()
+                        .page(base.getPage())
+                        .index(base.getIndex())
+                        .rowCount(rows.size())
+                        .columnCount(7)
+                        .cells(cells)
+                        .rows(rows)
+                        .build();
+            }
+        }
+        return base;
+    }
+
+    private static OcrNewTableDto parseProductArticleTable(List<OcrNewLine> lines) {
+        return parseSectionTableWithDataStart(
+                lines,
+                PRODUCT_ARTICLE_START,
+                MISCELLANEOUS_START,
+                // Header fragments can be multi-line; we will force a single header row and start
+                // consuming data only when we see the first article number.
+                (txtLow) -> txtLow.contains("article") || txtLow.contains("colour") || txtLow.contains("appearance") || txtLow.contains("supplier") || txtLow.contains("graphical"),
+                10,
+                List.of(
+                        "Article No",
+                        "Colour Code",
+                        "Colour Name",
+                        "Graphical Appearance",
+                        "Description",
+                        "Appearance Name",
+                        "Colour Code",
+                        "Colour Name",
+                        "Colour Supplier ID",
+                        "Graphical Appearance"
+                ),
+                Pattern.compile("^\\s*\\d{3}\\b")
+        );
+    }
+
+    private static OcrNewTableDto parseMiscellaneousTable(List<OcrNewLine> lines) {
+        OcrNewTableDto t = parseSectionTableWithDataStart(
+                lines,
+                MISCELLANEOUS_START,
+                null,
+                // Header fragments are often split across multiple lines.
+                (txtLow) -> txtLow.contains("label") || txtLow.contains("code") || txtLow.contains("type") || txtLow.contains("group") || txtLow.contains("description") || txtLow.contains("information") || txtLow.contains("comments"),
+                6,
+                List.of(
+                        "H&M Label Code",
+                        "Label Type",
+                        "Label Group",
+                        "Description",
+                        "Information",
+                        "Comments"
+                ),
+                Pattern.compile("^\\s*(HM\\d+|\\d{2})\\b")
+        );
+        return normalizeMiscellaneousRows(t);
+    }
+
+    private static OcrNewTableDto normalizeMiscellaneousRows(OcrNewTableDto t) {
+        if (t == null || t.getRows() == null || t.getRows().size() < 2) return t;
+
+        List<List<String>> outRows = new ArrayList<>();
+        outRows.add(t.getRows().get(0));
+
+        for (int i = 1; i < t.getRows().size(); i++) {
+            List<String> r = t.getRows().get(i);
+            if (r == null || r.isEmpty()) continue;
+
+            String code = oneLine(r.size() > 0 && r.get(0) != null ? r.get(0) : "").trim();
+            if (code.isBlank()) continue;
+
+            String typeA = oneLine(r.size() > 1 && r.get(1) != null ? r.get(1) : "").trim();
+            String typeB = oneLine(r.size() > 2 && r.get(2) != null ? r.get(2) : "").trim();
+            String labelType = oneLine((typeA + " " + typeB).trim());
+
+            String labelGroup = oneLine(r.size() > 3 && r.get(3) != null ? r.get(3) : "").trim();
+
+            String tailA = oneLine(r.size() > 4 && r.get(4) != null ? r.get(4) : "").trim();
+            String tailB = oneLine(r.size() > 5 && r.get(5) != null ? r.get(5) : "").trim();
+            String tail = oneLine((tailA + " " + tailB).trim());
+
+            String information = "";
+            String comments = "";
+
+            // Extract comment marker if present
+            String lowTail = tail.toLowerCase(Locale.ROOT);
+            int commentIdx = lowTail.indexOf("comment:");
+            if (commentIdx >= 0) {
+                String after = tail.substring(commentIdx).trim();
+                String before = tail.substring(0, commentIdx).trim();
+
+                // In PDF, the comment belongs to the Information column.
+                // Sometimes OCR merges extra tokens after the actual comment (e.g. "MITRE FOLD").
+                java.util.regex.Matcher cm = Pattern
+                        .compile("^(?i)(comment:\\s*\\.{1,3})(?:\\s+(.*))?$")
+                        .matcher(after);
+                if (cm.find()) {
+                    information = oneLine(cm.group(1)).trim();
+                    String rest = oneLine(cm.group(2) == null ? "" : cm.group(2)).trim();
+                    tail = oneLine((before + " " + rest).trim());
+                } else {
+                    information = oneLine(after).trim();
+                    tail = oneLine(before).trim();
+                }
+            }
+
+            // Heuristic ordering: if tail starts with WOMAN <size> <rest> -> WOMAN <rest> <size>
+            // Example: "WOMAN 50x12MM WOVEN MAIN LABEL END FOLD" -> "WOMAN WOVEN MAIN LABEL END FOLD 50x12MM"
+            java.util.regex.Matcher m = Pattern
+                    .compile("^(WOMAN)\\s+([0-9]{2,3}[xX][0-9]{2,3}MM)\\s+(.+)$")
+                    .matcher(tail);
+            if (m.find()) {
+                tail = oneLine((m.group(1) + " " + m.group(3) + " " + m.group(2)).trim());
+            }
+
+            List<String> normalized = new ArrayList<>();
+            normalized.add(code);
+            normalized.add(labelType);
+            normalized.add(labelGroup);
+            normalized.add(tail);
+            normalized.add(information);
+            normalized.add(comments);
+            outRows.add(normalized);
+        }
+
+        List<OcrNewTableCellDto> outCells = new ArrayList<>();
+        for (int rr = 0; rr < outRows.size(); rr++) {
+            List<String> row = outRows.get(rr);
+            for (int cc = 0; cc < row.size(); cc++) {
+                outCells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(rr)
+                        .columnIndex(cc)
+                        .text(row.get(cc))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+        }
+
+        return OcrNewTableDto.builder()
+                .page(t.getPage())
+                .index(t.getIndex())
+                .rowCount(outRows.size())
+                .columnCount(6)
+                .cells(outCells)
+                .rows(outRows)
+                .build();
+    }
+
+    private static OcrNewTableDto parseSectionTableWithDataStart(
+            List<OcrNewLine> lines,
+            Pattern sectionStart,
+            Pattern nextSectionStart,
+            HeaderPredicate isHeaderLine,
+            int expectedCols,
+            List<String> forcedHeader,
+            Pattern dataStart
+    ) {
+        OcrNewTableDto t = parseSectionTable(lines, sectionStart, nextSectionStart, isHeaderLine, expectedCols, forcedHeader);
+        if (t == null || t.getRows() == null || t.getRows().size() < 2 || dataStart == null) return t;
+
+        // Keep header row, then merge multi-line records:
+        // - A new record starts when col[0] matches dataStart
+        // - Otherwise treat as continuation and append/merge into the current record
+        List<List<String>> rows = new ArrayList<>();
+        rows.add(t.getRows().get(0));
+
+        int firstDataIdx = -1;
+        for (int i = 1; i < t.getRows().size(); i++) {
+            List<String> r = t.getRows().get(i);
+            if (r == null || r.isEmpty()) continue;
+            String first = oneLine(r.get(0) == null ? "" : r.get(0)).trim();
+            if (dataStart.matcher(first).find()) {
+                firstDataIdx = i;
+                break;
+            }
+        }
+        if (firstDataIdx < 0) return t;
+
+        List<String> cur = null;
+        for (int i = firstDataIdx; i < t.getRows().size(); i++) {
+            List<String> r = t.getRows().get(i);
+            if (r == null || r.isEmpty()) continue;
+
+            String first = oneLine(r.get(0) == null ? "" : r.get(0)).trim();
+            boolean isNew = dataStart.matcher(first).find();
+
+            if (isNew || cur == null) {
+                cur = new ArrayList<>(r);
+                rows.add(cur);
+                continue;
+            }
+
+            // continuation line: merge cells into current row
+            int max = Math.min(cur.size(), r.size());
+            for (int c = 0; c < max; c++) {
+                String add = oneLine(r.get(c) == null ? "" : r.get(c)).trim();
+                if (add.isBlank()) continue;
+
+                String base = oneLine(cur.get(c) == null ? "" : cur.get(c)).trim();
+                if (base.isBlank()) {
+                    cur.set(c, add);
+                } else {
+                    // Avoid duplicating identical tokens
+                    if (!base.equalsIgnoreCase(add)) {
+                        cur.set(c, oneLine(base + " " + add).trim());
+                    }
+                }
+            }
+        }
+
+        List<OcrNewTableCellDto> cells = new ArrayList<>();
+        for (int rr = 0; rr < rows.size(); rr++) {
+            List<String> row = rows.get(rr);
+            for (int cc = 0; cc < row.size(); cc++) {
+                cells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(rr)
+                        .columnIndex(cc)
+                        .text(row.get(cc))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+        }
+
+        int colCount = rows.stream().mapToInt(r -> r == null ? 0 : r.size()).max().orElse(0);
+        return OcrNewTableDto.builder()
+                .page(t.getPage())
+                .index(t.getIndex())
+                .rowCount(rows.size())
+                .columnCount(colCount)
+                .cells(cells)
+                .rows(rows)
+                .build();
+    }
+
+    @FunctionalInterface
+    private interface HeaderPredicate {
+        boolean test(String lower);
+    }
+
+    private static OcrNewTableDto parseSectionTable(
+            List<OcrNewLine> lines,
+            Pattern sectionStart,
+            Pattern nextSectionStart,
+            HeaderPredicate isHeaderLine,
+            int expectedCols,
+            List<String> forcedHeader
+    ) {
+        if (lines == null || lines.isEmpty()) return null;
+
+        Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
+        List<Integer> pages = byPage.keySet().stream().sorted().toList();
+
+        boolean inSection = false;
+        Integer firstPage = null;
+        List<OcrNewLine> sectionLines = new ArrayList<>();
+
+        for (Integer page : pages) {
+            List<OcrNewLine> pageLines = byPage.get(page).stream()
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingInt(OcrNewLine::getTop))
+                    .toList();
+            for (OcrNewLine l : pageLines) {
+                String txt = oneLine(l.getText());
+                if (txt.isBlank()) continue;
+
+                if (!inSection) {
+                    if (sectionStart.matcher(txt).find()) {
+                        inSection = true;
+                        if (firstPage == null) firstPage = page;
+                    }
+                    continue;
+                }
+
+                String low = txt.toLowerCase(Locale.ROOT);
+                if (nextSectionStart != null && nextSectionStart.matcher(txt).find()) {
+                    inSection = false;
+                    break;
+                }
+                if (BOM_SECTION_ANY.matcher(txt).find() && !sectionStart.matcher(txt).find()) {
+                    inSection = false;
+                    break;
+                }
+                if (CREATED_LINE.matcher(txt).find()) {
+                    inSection = false;
+                    break;
+                }
+                if (low.contains("page") && txt.contains("/")) {
+                    inSection = false;
+                    break;
+                }
+
+                sectionLines.add(l);
+            }
+        }
+
+        if (sectionLines.isEmpty()) return null;
+
+        // Trim everything before the first header-like line to avoid title/subtitle noise.
+        int headerIdx = -1;
+        for (int i = 0; i < sectionLines.size(); i++) {
+            String t = oneLine(sectionLines.get(i).getText());
+            if (t.isBlank()) continue;
+            String low = t.toLowerCase(Locale.ROOT);
+            if (isHeaderLine != null && isHeaderLine.test(low)) {
+                headerIdx = i;
+                break;
+            }
+        }
+        List<OcrNewLine> tableLines = headerIdx >= 0 ? sectionLines.subList(headerIdx, sectionLines.size()) : sectionLines;
+        if (tableLines.size() < 2) return null;
+
+        // Column derivation in this parser must be more tolerant than the generic table detection.
+        // These sections sometimes have only 1 data row, causing each column center to appear only
+        // 1-2 times, which would be filtered out by the default minCount threshold.
+        List<Integer> colXs = deriveColumnsRelaxed(tableLines, 2);
+        if (colXs.size() < 3) {
+            colXs = deriveColumnsRelaxed(tableLines, 1);
+        }
+        if (colXs.size() < 3) {
+            // Fallback for very small/flat sections like "No Yarn Details found"
+            if (forcedHeader != null && forcedHeader.size() > 0) {
+                String firstData = "";
+                for (int i = 0; i < tableLines.size(); i++) {
+                    String t = oneLine(tableLines.get(i).getText());
+                    if (t.isBlank()) continue;
+                    String low = t.toLowerCase(Locale.ROOT);
+                    if (isHeaderLine != null && isHeaderLine.test(low)) continue;
+                    firstData = t;
+                    break;
+                }
+                List<List<String>> rows = new ArrayList<>();
+                rows.add(new ArrayList<>(forcedHeader));
+                List<String> dataRow = new ArrayList<>();
+                for (int i = 0; i < forcedHeader.size(); i++) dataRow.add(i == 0 ? firstData : "");
+                rows.add(dataRow);
+
+                List<OcrNewTableCellDto> cells = new ArrayList<>();
+                for (int r = 0; r < rows.size(); r++) {
+                    for (int c = 0; c < rows.get(r).size(); c++) {
+                        cells.add(OcrNewTableCellDto.builder()
+                                .rowIndex(r)
+                                .columnIndex(c)
+                                .text(rows.get(r).get(c))
+                                .boundingBox(OcrNewBoundingBoxDto.builder()
+                                        .left(0)
+                                        .top(0)
+                                        .width(0)
+                                        .height(0)
+                                        .build())
+                                .confidence(null)
+                                .build());
+                    }
+                }
+
+                return OcrNewTableDto.builder()
+                        .page(firstPage == null ? 1 : firstPage)
+                        .index(null)
+                        .rowCount(rows.size())
+                        .columnCount(forcedHeader.size())
+                        .cells(cells)
+                        .rows(rows)
+                        .build();
+            }
+            return null;
+        }
+
+        // If the derived columns are wildly off, still allow output but cap to a reasonable count.
+        if (forcedHeader != null && !forcedHeader.isEmpty() && colXs.size() > forcedHeader.size()) {
+            colXs = colXs.subList(0, forcedHeader.size());
+        } else if (expectedCols > 0 && colXs.size() > expectedCols) {
+            colXs = colXs.subList(0, expectedCols);
+        }
+
+        List<List<String>> rows = new ArrayList<>();
+        List<OcrNewTableCellDto> cells = new ArrayList<>();
+
+        int rowIdx = 0;
+        for (OcrNewLine line : tableLines) {
+            List<StringBuilder> rowBuilders = new ArrayList<>();
+            for (int i = 0; i < colXs.size(); i++) rowBuilders.add(new StringBuilder());
+
+            for (OcrNewWord w : line.getWords()) {
+                int cx = (w.getLeft() + w.getRight()) / 2;
+                int colIdx = nearestIndex(colXs, cx);
+                if (colIdx < 0 || colIdx >= rowBuilders.size()) continue;
+                if (rowBuilders.get(colIdx).length() > 0) rowBuilders.get(colIdx).append(' ');
+                rowBuilders.get(colIdx).append(w.getText());
+            }
+
+            List<String> row = new ArrayList<>(colXs.size());
+            for (int ci = 0; ci < colXs.size(); ci++) {
+                String cellText = oneLine(rowBuilders.get(ci).toString().trim());
+                row.add(cellText);
+            }
+
+            boolean any = row.stream().anyMatch(s -> s != null && !s.isBlank());
+            if (!any) continue;
+
+            // Replace header row text if requested
+            if (rowIdx == 0 && forcedHeader != null && forcedHeader.size() > 0) {
+                row = new ArrayList<>(forcedHeader);
+            }
+
+            rows.add(row);
+            for (int c = 0; c < row.size(); c++) {
+                cells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(rowIdx)
+                        .columnIndex(c)
+                        .text(row.get(c))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+
+            rowIdx++;
+        }
+
+        if (rows.size() < 2) return null;
+
+        int colCount = rows.stream().mapToInt(r -> r == null ? 0 : r.size()).max().orElse(0);
+        return OcrNewTableDto.builder()
+                .page(firstPage == null ? 1 : firstPage)
+                .index(null)
+                .rowCount(rows.size())
+                .columnCount(colCount)
+                .cells(cells)
+                .rows(rows)
+                .build();
     }
 
     private static OcrNewTableDto parseBomProductionUnitsTable(List<OcrNewLine> lines) {
@@ -3977,6 +4515,44 @@ public class TableParser {
             }
         }
 
+        return merged;
+    }
+
+    private static List<Integer> deriveColumnsRelaxed(List<OcrNewLine> run, int minCount) {
+        final int tol = 35;
+        Map<Integer, Integer> bins = new HashMap<>();
+
+        for (OcrNewLine line : run) {
+            for (OcrNewWord w : line.getWords()) {
+                int cx = (w.getLeft() + w.getRight()) / 2;
+                Integer key = findBinKey(bins, cx, tol);
+                if (key == null) {
+                    bins.put(cx, 1);
+                } else {
+                    bins.put(key, bins.get(key) + 1);
+                }
+            }
+        }
+
+        List<Integer> cols = bins.entrySet().stream()
+                .filter(en -> en.getValue() >= minCount)
+                .map(Map.Entry::getKey)
+                .sorted()
+                .toList();
+
+        List<Integer> merged = new ArrayList<>();
+        for (Integer c : cols) {
+            if (merged.isEmpty()) {
+                merged.add(c);
+                continue;
+            }
+            int last = merged.get(merged.size() - 1);
+            if (Math.abs(c - last) <= tol) {
+                merged.set(merged.size() - 1, (last + c) / 2);
+            } else {
+                merged.add(c);
+            }
+        }
         return merged;
     }
 

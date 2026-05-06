@@ -69,6 +69,10 @@ export function SupplementaryScanPage() {
     }>
   >([]);
 
+  const [bomYarnSourceTableRows, setBomYarnSourceTableRows] = useState<string[][]>([]);
+  const [productArticleTableRows, setProductArticleTableRows] = useState<string[][]>([]);
+  const [miscellaneousTableRows, setMiscellaneousTableRows] = useState<string[][]>([]);
+
   const [countryBreakdownDraftRows] = useState<
     Array<{
       country: string;
@@ -150,6 +154,35 @@ export function SupplementaryScanPage() {
     return h.some((x) => x.includes('production')) && h.some((x) => x.includes('processing'));
   };
 
+  const isBomYarnSourceDetailsTable = (rows?: unknown) => {
+    if (!Array.isArray(rows) || rows.length < 2) return false;
+    const header = (rows?.[0] ?? []) as any[];
+    const h = header.map((x) => (x ?? '').toString().toLowerCase());
+    return h.some((x) => x.includes('yarn')) && (h.some((x) => x.includes('fibre')) || h.some((x) => x.includes('fiber')));
+  };
+
+  const isProductArticleTable = (rows?: unknown) => {
+    if (!Array.isArray(rows) || rows.length < 2) return false;
+    const header = (rows?.[0] ?? []) as any[];
+    const h = header.map((x) => (x ?? '').toString().toLowerCase());
+    return h.some((x) => x.includes('article')) && h.some((x) => x.includes('colour'));
+  };
+
+  const isMiscellaneousTable = (rows?: unknown) => {
+    if (!Array.isArray(rows) || rows.length < 2) return false;
+    const header = (rows?.[0] ?? []) as any[];
+    const h = header.map((x) => (x ?? '').toString().toLowerCase());
+    return h.some((x) => x.includes('label')) && (h.some((x) => x.includes('code')) || h.some((x) => x.includes('group')));
+  };
+
+  const normalizeTableRows = (rows: any): string[][] => {
+    if (!Array.isArray(rows)) return [];
+    return (rows as any[]).map((r) => {
+      if (!Array.isArray(r)) return [];
+      return (r as any[]).map((c) => (c ?? '').toString());
+    });
+  };
+
   const pivotDetailRows = (backendDetail: Array<Record<string, any>>) => {
     const out: Array<{
       countryOfDestination: string;
@@ -229,6 +262,27 @@ export function SupplementaryScanPage() {
       setBomProdUnitsRows(rows);
     } else {
       setBomProdUnitsRows([]);
+    }
+
+    const yarnSourceTable = (d?.tables ?? []).find((t) => isBomYarnSourceDetailsTable((t as any).rows));
+    if ((yarnSourceTable as any)?.rows?.length) {
+      setBomYarnSourceTableRows(normalizeTableRows((yarnSourceTable as any).rows));
+    } else {
+      setBomYarnSourceTableRows([]);
+    }
+
+    const productArticleTable = (d?.tables ?? []).find((t) => isProductArticleTable((t as any).rows));
+    if ((productArticleTable as any)?.rows?.length) {
+      setProductArticleTableRows(normalizeTableRows((productArticleTable as any).rows));
+    } else {
+      setProductArticleTableRows([]);
+    }
+
+    const miscTable = (d?.tables ?? []).find((t) => isMiscellaneousTable((t as any).rows));
+    if ((miscTable as any)?.rows?.length) {
+      setMiscellaneousTableRows(normalizeTableRows((miscTable as any).rows));
+    } else {
+      setMiscellaneousTableRows([]);
     }
 
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
@@ -320,6 +374,36 @@ export function SupplementaryScanPage() {
     }
     setBomProdUnitsRows(prodUnitRows);
 
+    let yarnSourceRows: string[][] = [];
+    for (const r of out) {
+      const table = (r?.data?.tables ?? []).find((t) => isBomYarnSourceDetailsTable((t as any).rows));
+      if ((table as any)?.rows?.length) {
+        yarnSourceRows = normalizeTableRows((table as any).rows);
+        break;
+      }
+    }
+    setBomYarnSourceTableRows(yarnSourceRows);
+
+    let articleRows: string[][] = [];
+    for (const r of out) {
+      const table = (r?.data?.tables ?? []).find((t) => isProductArticleTable((t as any).rows));
+      if ((table as any)?.rows?.length) {
+        articleRows = normalizeTableRows((table as any).rows);
+        break;
+      }
+    }
+    setProductArticleTableRows(articleRows);
+
+    let miscRows: string[][] = [];
+    for (const r of out) {
+      const table = (r?.data?.tables ?? []).find((t) => isMiscellaneousTable((t as any).rows));
+      if ((table as any)?.rows?.length) {
+        miscRows = normalizeTableRows((table as any).rows);
+        break;
+      }
+    }
+    setMiscellaneousTableRows(miscRows);
+
     let detailRows: Array<{
       countryOfDestination: string;
       type: string;
@@ -408,6 +492,10 @@ export function SupplementaryScanPage() {
       setResults([]);
       setSalesOrderHeaderDraft({});
       setBomDraftRows([]);
+      setBomProdUnitsRows([]);
+      setBomYarnSourceTableRows([]);
+      setProductArticleTableRows([]);
+      setMiscellaneousTableRows([]);
       setSalesOrderDetailDraftRows([]);
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -831,6 +919,147 @@ export function SupplementaryScanPage() {
                           disabled
                         />
                       </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>Bill of Material: Yarn Source Details</div>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : bomYarnSourceTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>No BoM Yarn Source Details detected.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    {(bomYarnSourceTableRows?.[0] ?? []).map((h, i) => (
+                      <th key={i} className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {bomYarnSourceTableRows.slice(1).map((r, ridx) => (
+                    <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
+                      {r.map((c, cidx) => (
+                        <td key={cidx} className='px-3 py-2 align-top'>
+                          {String(c ?? '').length > 40 ? (
+                            <textarea
+                              className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                              value={c ?? ''}
+                              rows={2}
+                              disabled
+                            />
+                          ) : (
+                            <Input value={c ?? ''} disabled />
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>Product Article</div>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : productArticleTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>No Product Article detected.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[1600px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    {(productArticleTableRows?.[0] ?? []).map((h, i) => (
+                      <th key={i} className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {productArticleTableRows.slice(1).map((r, ridx) => (
+                    <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
+                      {r.map((c, cidx) => (
+                        <td key={cidx} className='px-3 py-2 align-top'>
+                          {String(c ?? '').length > 40 ? (
+                            <textarea
+                              className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                              value={c ?? ''}
+                              rows={2}
+                              disabled
+                            />
+                          ) : (
+                            <Input value={c ?? ''} disabled />
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>Miscellaneous</div>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : miscellaneousTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>No Miscellaneous detected.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    {(miscellaneousTableRows?.[0] ?? []).map((h, i) => (
+                      <th key={i} className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {miscellaneousTableRows.slice(1).map((r, ridx) => (
+                    <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
+                      {r.map((c, cidx) => (
+                        <td key={cidx} className='px-3 py-2 align-top'>
+                          {String(c ?? '').length > 40 ? (
+                            <textarea
+                              className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                              value={c ?? ''}
+                              rows={2}
+                              disabled
+                            />
+                          ) : (
+                            <Input value={c ?? ''} disabled />
+                          )}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
