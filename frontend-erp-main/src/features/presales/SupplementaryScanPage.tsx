@@ -57,6 +57,18 @@ export function SupplementaryScanPage() {
     }>
   >([]);
 
+  const [bomProdUnitsRows, setBomProdUnitsRows] = useState<
+    Array<{
+      position: string;
+      placement: string;
+      type: string;
+      materialSupplier: string;
+      composition: string;
+      weight: string;
+      productionUnitProcessingCapability: string;
+    }>
+  >([]);
+
   const [countryBreakdownDraftRows] = useState<
     Array<{
       country: string;
@@ -131,6 +143,13 @@ export function SupplementaryScanPage() {
     return h.some((x) => x.includes('position')) && h.some((x) => x.includes('placement'));
   };
 
+  const isBomProdUnitsTable = (rows?: unknown) => {
+    if (!Array.isArray(rows) || rows.length < 2) return false;
+    const header = (rows?.[0] ?? []) as any[];
+    const h = header.map((x) => (x ?? '').toString().toLowerCase());
+    return h.some((x) => x.includes('production')) && h.some((x) => x.includes('processing'));
+  };
+
   const pivotDetailRows = (backendDetail: Array<Record<string, any>>) => {
     const out: Array<{
       countryOfDestination: string;
@@ -196,6 +215,22 @@ export function SupplementaryScanPage() {
       setBomDraftRows([]);
     }
 
+    const prodUnitsTable = (d?.tables ?? []).find((t) => isBomProdUnitsTable((t as any).rows));
+    if ((prodUnitsTable as any)?.rows?.length) {
+      const rows = (prodUnitsTable as any).rows.slice(1).map((r: any[]) => ({
+        position: r?.[0] ?? '',
+        placement: r?.[1] ?? '',
+        type: r?.[2] ?? '',
+        materialSupplier: r?.[3] ?? '',
+        composition: r?.[4] ?? '',
+        weight: r?.[5] ?? '',
+        productionUnitProcessingCapability: r?.[6] ?? '',
+      }));
+      setBomProdUnitsRows(rows);
+    } else {
+      setBomProdUnitsRows([]);
+    }
+
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
     if (backendDetail.length > 0) {
       setSalesOrderDetailDraftRows(pivotDetailRows(backendDetail as any));
@@ -258,6 +293,32 @@ export function SupplementaryScanPage() {
       }
     }
     setBomDraftRows(bomRows);
+
+    let prodUnitRows: Array<{
+      position: string;
+      placement: string;
+      type: string;
+      materialSupplier: string;
+      composition: string;
+      weight: string;
+      productionUnitProcessingCapability: string;
+    }> = [];
+    for (const r of out) {
+      const prodTable = (r?.data?.tables ?? []).find((t) => isBomProdUnitsTable((t as any).rows));
+      if ((prodTable as any)?.rows?.length) {
+        prodUnitRows = (prodTable as any).rows.slice(1).map((row: any[]) => ({
+          position: row?.[0] ?? '',
+          placement: row?.[1] ?? '',
+          type: row?.[2] ?? '',
+          materialSupplier: row?.[3] ?? '',
+          composition: row?.[4] ?? '',
+          weight: row?.[5] ?? '',
+          productionUnitProcessingCapability: row?.[6] ?? '',
+        }));
+        break;
+      }
+    }
+    setBomProdUnitsRows(prodUnitRows);
 
     let detailRows: Array<{
       countryOfDestination: string;
@@ -698,6 +759,77 @@ export function SupplementaryScanPage() {
                         >
                           Delete
                         </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+          <div className='text-xs font-semibold text-gray-500'>Bill of Material: Production Units and Processing Capabilities</div>
+        </div>
+        <div className='p-6'>
+          {!data ? (
+            <div className='text-sm text-gray-500 italic'>No data.</div>
+          ) : bomProdUnitsRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>No BoM Production Units detected.</div>
+          ) : (
+            <div className='w-full max-h-[60vh] overflow-auto'>
+              <table className='min-w-[1700px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                <thead className='bg-gray-50 sticky top-0 z-10'>
+                  <tr>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Position</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Placement</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Type</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Material Supplier</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Weight</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Production Unit / Processing Capability</th>
+                  </tr>
+                </thead>
+                <tbody className='bg-white'>
+                  {bomProdUnitsRows.map((row, idx) => (
+                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                      <td className='px-3 py-2 align-top'>
+                        <Input value={row.position} disabled />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input value={row.placement} disabled />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input value={row.type} disabled />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.materialSupplier}
+                          rows={2}
+                          disabled
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.composition}
+                          rows={2}
+                          disabled
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input value={row.weight} disabled />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <textarea
+                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={row.productionUnitProcessingCapability}
+                          rows={2}
+                          disabled
+                        />
                       </td>
                     </tr>
                   ))}

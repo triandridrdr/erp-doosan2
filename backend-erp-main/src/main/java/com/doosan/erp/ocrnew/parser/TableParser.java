@@ -140,7 +140,203 @@ public class TableParser {
                     .build());
         }
 
+        OcrNewTableDto prodUnits = parseBomProductionUnitsTable(lines);
+        if (prodUnits != null && prodUnits.getRows() != null && prodUnits.getRows().size() > 1) {
+            out.add(OcrNewTableDto.builder()
+                    .page(prodUnits.getPage())
+                    .index(tableIndex++)
+                    .rowCount(prodUnits.getRowCount())
+                    .columnCount(prodUnits.getColumnCount())
+                    .cells(prodUnits.getCells())
+                    .rows(prodUnits.getRows())
+                    .build());
+        }
+
         return out;
+    }
+
+    private static OcrNewTableDto parseBomProductionUnitsTable(List<OcrNewLine> lines) {
+        if (lines == null || lines.isEmpty()) return null;
+
+        Map<Integer, List<OcrNewLine>> byPage = lines.stream().collect(Collectors.groupingBy(OcrNewLine::getPage));
+        List<Integer> pages = byPage.keySet().stream().sorted().toList();
+
+        List<String> sectionLines = new ArrayList<>();
+        boolean inSection = false;
+        Integer firstPage = null;
+
+        for (Integer page : pages) {
+            List<OcrNewLine> pageLines = byPage.get(page).stream()
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingInt(OcrNewLine::getTop))
+                    .toList();
+
+            for (OcrNewLine l : pageLines) {
+                String txt = oneLine(l.getText());
+                if (txt.isBlank()) continue;
+
+                if (!inSection) {
+                    if (BOM_PROD_UNITS_START.matcher(txt).find()) {
+                        inSection = true;
+                        if (firstPage == null) firstPage = page;
+                    }
+                    continue;
+                }
+
+                String low = txt.toLowerCase(Locale.ROOT);
+                if (low.contains("yarn source") || (BOM_SECTION_ANY.matcher(txt).find() && !BOM_PROD_UNITS_START.matcher(txt).find())) {
+                    inSection = false;
+                    break;
+                }
+                if (CREATED_LINE.matcher(txt).find()) {
+                    inSection = false;
+                    break;
+                }
+                if (low.contains("page") && txt.contains("/")) {
+                    inSection = false;
+                    break;
+                }
+                if (low.contains("position") && low.contains("placement") && low.contains("processing")) {
+                    continue;
+                }
+                sectionLines.add(txt);
+            }
+        }
+
+        if (sectionLines.isEmpty()) return null;
+
+        List<List<String>> rows = new ArrayList<>();
+        rows.add(List.of(
+                "Position",
+                "Placement",
+                "Type",
+                "Material Supplier",
+                "Composition",
+                "Weight",
+                "Production Unit / Processing Capability"
+        ));
+
+        StringBuilder currentRowText = null;
+        String currentPosition = null;
+        String currentPlacement = null;
+        String currentType = null;
+
+        for (String txt : sectionLines) {
+            boolean isRowStart = BOM_ROW_START.matcher(txt).find();
+            if (isRowStart) {
+                if (currentRowText != null && currentType != null) {
+                    List<String> parsed = parseProdUnitsRowToTableRow(currentPosition, currentPlacement, currentType, currentRowText.toString());
+                    if (!shouldSkipProdUnitsRow(parsed)) {
+                        rows.add(parsed);
+                    }
+                }
+
+                BomRowStart rs = parseBomRowStart(txt);
+                currentPosition = rs.position();
+                currentPlacement = rs.placement();
+                currentType = rs.type();
+                if (looksLikeBomType(currentPlacement) && !looksLikePlacement(currentPlacement)) {
+                    currentType = currentPlacement;
+                    currentPlacement = currentPosition;
+                }
+                currentRowText = new StringBuilder(txt);
+            } else if (currentRowText != null) {
+                currentRowText.append(" ").append(txt);
+            }
+        }
+        if (currentRowText != null && currentType != null) {
+            List<String> parsed = parseProdUnitsRowToTableRow(currentPosition, currentPlacement, currentType, currentRowText.toString());
+            if (!shouldSkipProdUnitsRow(parsed)) {
+                rows.add(parsed);
+            }
+        }
+
+        List<OcrNewTableCellDto> cells = new ArrayList<>();
+        for (int r = 0; r < rows.size(); r++) {
+            List<String> row = rows.get(r);
+            for (int c = 0; c < row.size(); c++) {
+                cells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(r)
+                        .columnIndex(c)
+                        .text(row.get(c))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+        }
+
+        return OcrNewTableDto.builder()
+                .page(firstPage == null ? 1 : firstPage)
+                .index(null)
+                .rowCount(rows.size())
+                .columnCount(7)
+                .cells(cells)
+                .rows(rows)
+                .build();
+    }
+
+    private static boolean shouldSkipProdUnitsRow(List<String> row) {
+        if (row == null || row.size() < 7) return true;
+        String type = oneLine(row.get(2) == null ? "" : row.get(2)).trim().toLowerCase(Locale.ROOT);
+        String prodUnit = oneLine(row.get(6) == null ? "" : row.get(6)).trim().toLowerCase(Locale.ROOT);
+        return false;
+    }
+
+    private static List<String> parseProdUnitsRowToTableRow(String position, String placement, String type, String fullText) {
+        String pos = oneLine(position == null ? "" : position);
+        String plc = oneLine(placement == null ? "" : placement);
+        String typ = oneLine(type == null ? "" : type);
+        String text = oneLine(fullText == null ? "" : fullText);
+
+        String materialSupplier = "";
+        String composition = "";
+        String weight = "";
+        String prodUnit = "";
+
+        int typeEndIdx = 0;
+        if (!typ.isBlank()) {
+            int idx = text.toLowerCase(Locale.ROOT).indexOf(typ.toLowerCase(Locale.ROOT));
+            if (idx >= 0) typeEndIdx = idx + typ.length();
+        }
+        String tail = typeEndIdx > 0 && typeEndIdx < text.length() ? text.substring(typeEndIdx).trim() : text;
+
+        Matcher pct = TOKEN_HAS_PERCENT.matcher(tail);
+        int firstPctStart = pct.find() ? pct.start() : -1;
+        if (firstPctStart > 0) {
+            materialSupplier = oneLine(tail.substring(0, firstPctStart).replaceAll("^[\\s,.:]+", "").trim());
+            tail = tail.substring(firstPctStart).trim();
+        }
+
+        Matcher wm = BOM_WEIGHT_STOP.matcher(tail);
+        int wStart = -1;
+        int wEnd = -1;
+        if (wm.find()) {
+            wStart = wm.start();
+            wEnd = wm.end();
+            weight = oneLine(tail.substring(wStart, wEnd));
+        }
+
+        if (wStart >= 0) {
+            composition = oneLine(tail.substring(0, wStart).trim());
+            prodUnit = oneLine(tail.substring(wEnd).trim());
+        } else {
+            composition = oneLine(tail);
+        }
+
+        return List.of(
+                pos,
+                plc,
+                typ,
+                materialSupplier,
+                normalizeBomComposition(composition),
+                weight,
+                prodUnit
+        );
     }
 
     private static List<OcrNewTableDto> parseBomDraftTables(List<OcrNewLine> lines) {
