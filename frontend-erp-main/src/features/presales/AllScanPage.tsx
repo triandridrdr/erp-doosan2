@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -741,6 +741,77 @@ export function AllScanPage() {
       .map((row, idx) => ({ row, idx }))
       .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
   }, [salesOrderDetailDraftRows]);
+
+  const section2AssortmentEntries = useMemo(() => {
+    return (salesOrderDetailDraftRows ?? [])
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => {
+        const t = (row?.type ?? '').toString().trim().toLowerCase();
+        if (t === 'total') return false;
+        return t === 'assortment';
+      });
+  }, [salesOrderDetailDraftRows]);
+
+  const section2SolidEntries = useMemo(() => {
+    return (salesOrderDetailDraftRows ?? [])
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => {
+        const t = (row?.type ?? '').toString().trim().toLowerCase();
+        if (t === 'total') return false;
+        return t === 'solid';
+      });
+  }, [salesOrderDetailDraftRows]);
+
+  // --- Country pagination (Section 2) ---
+  const [assortmentCountryPage, setAssortmentCountryPage] = useState(0);
+  const [solidCountryPage, setSolidCountryPage] = useState(0);
+
+  const assortmentCountries = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const { row } of section2AssortmentEntries) {
+      const c = (row.countryOfDestination ?? '').trim();
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        list.push(c);
+      }
+    }
+    return list;
+  }, [section2AssortmentEntries]);
+
+  const solidCountries = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const { row } of section2SolidEntries) {
+      const c = (row.countryOfDestination ?? '').trim();
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        list.push(c);
+      }
+    }
+    return list;
+  }, [section2SolidEntries]);
+
+  useEffect(() => {
+    setAssortmentCountryPage((p) => Math.min(Math.max(0, p), Math.max(0, assortmentCountries.length - 1)));
+  }, [assortmentCountries.length]);
+
+  useEffect(() => {
+    setSolidCountryPage((p) => Math.min(Math.max(0, p), Math.max(0, solidCountries.length - 1)));
+  }, [solidCountries.length]);
+
+  const assortmentActiveCountry = assortmentCountries[assortmentCountryPage] ?? '';
+  const solidActiveCountry = solidCountries[solidCountryPage] ?? '';
+
+  const assortmentFilteredEntries = useMemo(() => {
+    if (!assortmentActiveCountry) return section2AssortmentEntries;
+    return section2AssortmentEntries.filter(({ row }) => (row.countryOfDestination ?? '').trim() === assortmentActiveCountry);
+  }, [section2AssortmentEntries, assortmentActiveCountry]);
+
+  const solidFilteredEntries = useMemo(() => {
+    if (!solidActiveCountry) return section2SolidEntries;
+    return section2SolidEntries.filter(({ row }) => (row.countryOfDestination ?? '').trim() === solidActiveCountry);
+  }, [section2SolidEntries, solidActiveCountry]);
 
   const section2TotalByCountryRows = useMemo(() => {
     const totals = (salesOrderDetailDraftRows ?? []).filter((r) => (r?.type ?? '').toString().toLowerCase() === 'total');
@@ -2057,115 +2128,313 @@ export function AllScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>SECTION 2 – SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
-          <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='primary'
-              disabled={!data}
-              onClick={() =>
-                setSalesOrderDetailDraftRows((prev) => [
-                  ...prev,
-                  { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-                ])
-              }
-            >
-              Add row
-            </Button>
-          </div>
         </div>
         <div className='p-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2NonTotalEntries.length === 0 ? (
+          ) : section2AssortmentEntries.length === 0 && section2SolidEntries.length === 0 ? (
             <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
           ) : (
-            <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50 sticky top-0 z-10'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2NonTotalEntries.map(({ row, idx }) => (
-                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.countryOfDestination}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.type}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.color}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <SizeAutocompleteInput
-                          value={formatSizeDisplay(row.size)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={formatIdThousands(row.qty)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top whitespace-nowrap'>
-                        <Input
-                          value={formatIdThousands(row.noOfAsst ?? '')}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Button
+            <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
+              <div className='border border-gray-200 rounded-xl overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Assortment</div>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() =>
+                        setSalesOrderDetailDraftRows((prev) => [
+                          ...prev,
+                          {
+                            countryOfDestination: assortmentActiveCountry || '',
+                            type: 'Assortment',
+                            color: '',
+                            size: '',
+                            qty: '',
+                            total: '',
+                            noOfAsst: '',
+                            editable: true,
+                          },
+                        ])
+                      }
+                    >
+                      Add row
+                    </Button>
+                  </div>
+                </div>
+
+                {section2AssortmentEntries.length === 0 ? (
+                  <div className='p-4 text-sm text-gray-500 italic'>No Assortment rows.</div>
+                ) : (
+                  <>
+                    {assortmentCountries.length > 1 && (
+                      <div className='px-4 py-3 border-b border-gray-100 bg-white flex items-center gap-2'>
+                        <button
                           type='button'
-                          variant='danger'
-                          onClick={() => {
-                            setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
-                          }}
+                          disabled={assortmentCountryPage === 0}
+                          onClick={() => setAssortmentCountryPage((p) => Math.max(0, p - 1))}
+                          className='inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors'
                         >
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          <ChevronLeft className='w-4 h-4' />
+                        </button>
+                        <div className='flex items-center gap-1 overflow-x-auto'>
+                          {assortmentCountries.map((country, i) => (
+                            <button
+                              key={country}
+                              type='button'
+                              onClick={() => setAssortmentCountryPage(i)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                                i === assortmentCountryPage ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              {country}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type='button'
+                          disabled={assortmentCountryPage >= assortmentCountries.length - 1}
+                          onClick={() => setAssortmentCountryPage((p) => Math.min(assortmentCountries.length - 1, p + 1))}
+                          className='inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors'
+                        >
+                          <ChevronRight className='w-4 h-4' />
+                        </button>
+                        <span className='ml-auto text-xs text-gray-400'>
+                          {assortmentCountryPage + 1} / {assortmentCountries.length}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className='w-full max-h-[60vh] overflow-auto'>
+                      <table className='min-w-[980px] w-full border-separate border-spacing-0'>
+                        <thead className='bg-white sticky top-0 z-10'>
+                          <tr>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className='bg-white'>
+                          {assortmentFilteredEntries.map(({ row, idx }) => (
+                            <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.countryOfDestination}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
+                                    )
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.color}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <SizeAutocompleteInput
+                                  value={formatSizeDisplay(row.size)}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={formatIdThousands(row.qty)}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(e.target.value) } : r)))
+                                  }
+                                  style={{ textAlign: 'left' }}
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={formatIdThousands(row.noOfAsst ?? '')}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(e.target.value) } : r)))
+                                  }
+                                  style={{ textAlign: 'left' }}
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Button
+                                  type='button'
+                                  variant='danger'
+                                  onClick={() => {
+                                    setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className='border border-gray-200 rounded-xl overflow-hidden'>
+                <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Solid</div>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() =>
+                        setSalesOrderDetailDraftRows((prev) => [
+                          ...prev,
+                          {
+                            countryOfDestination: solidActiveCountry || '',
+                            type: 'Solid',
+                            color: '',
+                            size: '',
+                            qty: '',
+                            total: '',
+                            noOfAsst: '',
+                            editable: true,
+                          },
+                        ])
+                      }
+                    >
+                      Add row
+                    </Button>
+                  </div>
+                </div>
+
+                {section2SolidEntries.length === 0 ? (
+                  <div className='p-4 text-sm text-gray-500 italic'>No Solid rows.</div>
+                ) : (
+                  <>
+                    {solidCountries.length > 1 && (
+                      <div className='px-4 py-3 border-b border-gray-100 bg-white flex items-center gap-2'>
+                        <button
+                          type='button'
+                          disabled={solidCountryPage === 0}
+                          onClick={() => setSolidCountryPage((p) => Math.max(0, p - 1))}
+                          className='inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors'
+                        >
+                          <ChevronLeft className='w-4 h-4' />
+                        </button>
+                        <div className='flex items-center gap-1 overflow-x-auto'>
+                          {solidCountries.map((country, i) => (
+                            <button
+                              key={country}
+                              type='button'
+                              onClick={() => setSolidCountryPage(i)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                                i === solidCountryPage ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              {country}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type='button'
+                          disabled={solidCountryPage >= solidCountries.length - 1}
+                          onClick={() => setSolidCountryPage((p) => Math.min(solidCountries.length - 1, p + 1))}
+                          className='inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors'
+                        >
+                          <ChevronRight className='w-4 h-4' />
+                        </button>
+                        <span className='ml-auto text-xs text-gray-400'>
+                          {solidCountryPage + 1} / {solidCountries.length}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className='w-full max-h-[60vh] overflow-auto'>
+                      <table className='min-w-[980px] w-full border-separate border-spacing-0'>
+                        <thead className='bg-white sticky top-0 z-10'>
+                          <tr>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className='bg-white'>
+                          {solidFilteredEntries.map(({ row, idx }) => (
+                            <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.countryOfDestination}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
+                                    )
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.color}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <SizeAutocompleteInput
+                                  value={formatSizeDisplay(row.size)}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={formatIdThousands(row.qty)}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(e.target.value) } : r)))
+                                  }
+                                  style={{ textAlign: 'left' }}
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={formatIdThousands(row.noOfAsst ?? '')}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(e.target.value) } : r)))
+                                  }
+                                  style={{ textAlign: 'left' }}
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Button
+                                  type='button'
+                                  variant='danger'
+                                  onClick={() => {
+                                    setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
