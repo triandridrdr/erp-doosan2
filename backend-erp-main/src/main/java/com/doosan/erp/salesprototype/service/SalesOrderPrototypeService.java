@@ -78,11 +78,34 @@ public class SalesOrderPrototypeService {
             Object ffObj = m.get("formFields");
             if (ffObj instanceof Map) {
                 Map<?, ?> ff = (Map<?, ?>) ffObj;
+                // Try multiple possible keys for SO number
                 Object so = ff.get("SO Number");
-                if (so != null) return so.toString();
+                if (so != null && !so.toString().isBlank()) return so.toString().trim();
+                so = ff.get("Order No");
+                if (so != null && !so.toString().isBlank()) return so.toString().trim();
+                so = ff.get("Purchase Order No");
+                if (so != null && !so.toString().isBlank()) return so.toString().trim();
+                so = ff.get("SO");
+                if (so != null && !so.toString().isBlank()) return so.toString().trim();
             }
             Object direct = m.get("salesOrderNumber");
-            if (direct != null) return direct.toString();
+            if (direct != null && !direct.toString().isBlank()) return direct.toString().trim();
+
+            // Fallback: extract from analyzedFileName (format: SONUMBER_DocumentType_...)
+            Object fnObj = m.get("analyzedFileName");
+            if (fnObj != null) {
+                String fn = fnObj.toString().trim();
+                // Extract leading digits or digits-with-dash before the first underscore
+                int idx = fn.indexOf('_');
+                if (idx > 0) {
+                    String prefix = fn.substring(0, idx);
+                    if (prefix.matches("\\d+(-\\d+)?")) {
+                        // Use just the base number (before dash) as SO number
+                        int dashIdx = prefix.indexOf('-');
+                        return dashIdx > 0 ? prefix.substring(0, dashIdx) : prefix;
+                    }
+                }
+            }
         }
         return null;
     }
