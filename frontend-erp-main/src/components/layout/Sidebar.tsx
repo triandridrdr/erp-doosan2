@@ -46,11 +46,11 @@ const navigation: NavItem[] = [
         name: 'Sales Order Scan',
         href: '#presales-sos',
         children: [
+          { name: 'All', href: '/presales/all-scan' },
           { name: 'Purchase Order', href: '/presales/purchase-order-scan' },
-          { name: 'Supplementary', href: '/presales/supplementary-scan' },
           { name: 'Size Per Colour Breakdown', href: '/presales/size-per-colour-breakdown-scan' },
           { name: 'Total Country Breakdown', href: '/presales/total-country-breakdown-scan' },
-          { name: 'All', href: '/presales/all-scan' },
+          { name: 'Supplementary', href: '/presales/supplementary-scan' },
         ],
       },
     ],
@@ -84,8 +84,6 @@ const navigation: NavItem[] = [
       { name: 'Collection', href: '#sales-collection' },
       { name: 'Journal Entry Management', href: '#sales-journal' },
       { name: 'Sales Order Draft', href: '/sales-order-prototype' },
-      { name: 'OCR', href: '/ocr' },
-      { name: 'OCR New', href: '/ocr-new' },
     ],
   },
   {
