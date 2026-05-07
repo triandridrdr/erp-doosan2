@@ -835,7 +835,7 @@ export function AllScanPage() {
           <Button
             type='button'
             variant='primary'
-            disabled={!backendCountryBreakdown}
+            disabled={!data || !backendCountryBreakdown}
             onClick={() => {
               setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', countryOfDestination: '', total: '', editable: true }]);
             }}

@@ -940,7 +940,7 @@ export function OcrNewPage() {
           <Button
             type='button'
             variant='primary'
-            disabled={!backendCountryBreakdown}
+            disabled={!data || !backendCountryBreakdown}
             onClick={() => {
               setCountryBreakdownDraftRows((prev) => [
                 ...prev,
@@ -1039,6 +1039,7 @@ export function OcrNewPage() {
           <Button
             type='button'
             variant='primary'
+            disabled={!data}
             onClick={() => {
               setSection2cDraftRows((prev) => [...(prev ?? []), { article: '', size: '', qty: '', editable: true }]);
             }}

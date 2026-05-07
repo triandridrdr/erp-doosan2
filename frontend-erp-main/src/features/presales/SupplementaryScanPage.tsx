@@ -113,6 +113,11 @@ export function SupplementaryScanPage() {
     }>
   >([]);
 
+  const yarnSourceNoDetails = useMemo(() => {
+    const v = (bomYarnSourceTableRows?.[1]?.[0] ?? '').toString().trim().toLowerCase();
+    return v.length === 0 || v === 'no yarn details found';
+  }, [bomYarnSourceTableRows]);
+
   const appendLog = (_msg: string) => {};
 
   const logBackendSection2DetailRows = (fileName: string, d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
@@ -860,6 +865,19 @@ export function SupplementaryScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>Bill of Material: Production Units and Processing Capabilities</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data}
+            onClick={() => {
+              setBomProdUnitsRows((prev) => [
+                ...prev,
+                { position: '', placement: '', type: '', materialSupplier: '', composition: '', weight: '', productionUnitProcessingCapability: '' },
+              ]);
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
@@ -878,26 +896,48 @@ export function SupplementaryScanPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Composition</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Weight</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Production Unit / Processing Capability</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
                   {bomProdUnitsRows.map((row, idx) => (
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
                       <td className='px-3 py-2 align-top'>
-                        <Input value={row.position} disabled />
+                        <Input
+                          value={row.position}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, position: v } : r)));
+                          }}
+                        />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input value={row.placement} disabled />
+                        <Input
+                          value={row.placement}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, placement: v } : r)));
+                          }}
+                        />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input value={row.type} disabled />
+                        <Input
+                          value={row.type}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
+                          }}
+                        />
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <textarea
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.materialSupplier}
                           rows={2}
-                          disabled
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
+                          }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
@@ -905,19 +945,42 @@ export function SupplementaryScanPage() {
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.composition}
                           rows={2}
-                          disabled
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
+                          }}
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input value={row.weight} disabled />
+                        <Input
+                          value={row.weight}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, weight: v } : r)));
+                          }}
+                        />
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <textarea
                           className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                           value={row.productionUnitProcessingCapability}
                           rows={2}
-                          disabled
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, productionUnitProcessingCapability: v } : r)));
+                          }}
                         />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setBomProdUnitsRows((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -931,6 +994,21 @@ export function SupplementaryScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>Bill of Material: Yarn Source Details</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data || yarnSourceNoDetails || (bomYarnSourceTableRows?.[0] ?? []).length === 0}
+            onClick={() => {
+              const headerLen = (bomYarnSourceTableRows?.[0] ?? []).length;
+              setBomYarnSourceTableRows((prev) => {
+                const next = (prev ?? []).map((row) => [...row]);
+                next.push(Array.from({ length: headerLen }, () => ''));
+                return next;
+              });
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
@@ -947,6 +1025,7 @@ export function SupplementaryScanPage() {
                         {h}
                       </th>
                     ))}
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -954,18 +1033,57 @@ export function SupplementaryScanPage() {
                     <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
                       {r.map((c, cidx) => (
                         <td key={cidx} className='px-3 py-2 align-top'>
-                          {String(c ?? '').length > 40 ? (
+                          {yarnSourceNoDetails ? (
+                            <div className='text-sm text-gray-700 whitespace-pre-wrap'>{c ?? ''}</div>
+                          ) : String(c ?? '').length > 40 ? (
                             <textarea
                               className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                               value={c ?? ''}
                               rows={2}
-                              disabled
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setBomYarnSourceTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
                             />
                           ) : (
-                            <Input value={c ?? ''} disabled />
+                            <Input
+                              value={c ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setBomYarnSourceTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
+                            />
                           )}
                         </td>
                       ))}
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          disabled={yarnSourceNoDetails}
+                          onClick={() => {
+                            setBomYarnSourceTableRows((prev) => {
+                              const next = (prev ?? []).map((row) => [...row]);
+                              next.splice(ridx + 1, 1);
+                              return next;
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -978,6 +1096,21 @@ export function SupplementaryScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>Product Article</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data || (productArticleTableRows?.[0] ?? []).length === 0}
+            onClick={() => {
+              const headerLen = (productArticleTableRows?.[0] ?? []).length;
+              setProductArticleTableRows((prev) => {
+                const next = (prev ?? []).map((row) => [...row]);
+                next.push(Array.from({ length: headerLen }, () => ''));
+                return next;
+              });
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
@@ -994,6 +1127,7 @@ export function SupplementaryScanPage() {
                         {h}
                       </th>
                     ))}
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -1006,13 +1140,49 @@ export function SupplementaryScanPage() {
                               className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                               value={c ?? ''}
                               rows={2}
-                              disabled
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setProductArticleTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
                             />
                           ) : (
-                            <Input value={c ?? ''} disabled />
+                            <Input
+                              value={c ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setProductArticleTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
+                            />
                           )}
                         </td>
                       ))}
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setProductArticleTableRows((prev) => {
+                              const next = (prev ?? []).map((row) => [...row]);
+                              next.splice(ridx + 1, 1);
+                              return next;
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1025,6 +1195,21 @@ export function SupplementaryScanPage() {
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>Miscellaneous</div>
+          <Button
+            type='button'
+            variant='primary'
+            disabled={!data || (miscellaneousTableRows?.[0] ?? []).length === 0}
+            onClick={() => {
+              const headerLen = (miscellaneousTableRows?.[0] ?? []).length;
+              setMiscellaneousTableRows((prev) => {
+                const next = (prev ?? []).map((row) => [...row]);
+                next.push(Array.from({ length: headerLen }, () => ''));
+                return next;
+              });
+            }}
+          >
+            Add row
+          </Button>
         </div>
         <div className='p-6'>
           {!data ? (
@@ -1041,6 +1226,7 @@ export function SupplementaryScanPage() {
                         {h}
                       </th>
                     ))}
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
@@ -1053,13 +1239,49 @@ export function SupplementaryScanPage() {
                               className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                               value={c ?? ''}
                               rows={2}
-                              disabled
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMiscellaneousTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
                             />
                           ) : (
-                            <Input value={c ?? ''} disabled />
+                            <Input
+                              value={c ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMiscellaneousTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
+                            />
                           )}
                         </td>
                       ))}
+                      <td className='px-3 py-2 align-top'>
+                        <Button
+                          type='button'
+                          variant='danger'
+                          onClick={() => {
+                            setMiscellaneousTableRows((prev) => {
+                              const next = (prev ?? []).map((row) => [...row]);
+                              next.splice(ridx + 1, 1);
+                              return next;
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

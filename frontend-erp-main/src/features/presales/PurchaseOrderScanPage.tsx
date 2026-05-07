@@ -909,7 +909,21 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Time of Delivery</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setTimeOfDeliveryRows((prev) => [...(prev ?? []), { timeOfDelivery: '', planningMarkets: '', quantity: '', percentTotalQty: '' }]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-[900px] w-full'>
                   <thead className='bg-gray-50'>
@@ -918,6 +932,7 @@ useEffect(() => {
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -936,11 +951,23 @@ useEffect(() => {
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input value={row.percentTotalQty ?? ''} onChange={() => {}} disabled />
                           </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                setTimeOfDeliveryRows((prev) => (prev ?? []).filter((_, i) => i !== rIdx));
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={5} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>
@@ -951,7 +978,24 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setQuantityPerArticleRows((prev) => [
+                        ...(prev ?? []),
+                        { articleNo: '', hmColourCode: '', ptArticleNumber: '', colour: '', optionNo: '', cost: '', qtyArticle: '' },
+                      ]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-[900px] w-full'>
                   <thead className='bg-gray-50'>
@@ -963,6 +1007,7 @@ useEffect(() => {
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -990,11 +1035,25 @@ useEffect(() => {
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input value={row.qtyArticle ?? ''} onChange={() => {}} disabled />
                           </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>
@@ -1005,13 +1064,28 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setInvoiceAvgPriceRows((prev) => [...(prev ?? []), { invoiceAveragePrice: '', country: '' }]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-full w-full'>
                   <thead className='bg-gray-50'>
                     <tr>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1024,11 +1098,25 @@ useEffect(() => {
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input value={row.country ?? ''} onChange={() => {}} disabled />
                           </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>
@@ -1057,7 +1145,21 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Time of Delivery</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setTimeOfDeliveryRows((prev) => [...(prev ?? []), { timeOfDelivery: '', planningMarkets: '', quantity: '', percentTotalQty: '' }]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-[900px] w-full'>
                   <thead className='bg-gray-50'>
@@ -1066,6 +1168,7 @@ useEffect(() => {
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1084,11 +1187,23 @@ useEffect(() => {
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
                           </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                setTimeOfDeliveryRows((prev) => (prev ?? []).filter((_, i) => i !== rIdx));
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={5} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>

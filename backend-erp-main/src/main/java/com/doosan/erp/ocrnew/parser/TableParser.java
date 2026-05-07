@@ -259,14 +259,14 @@ public class TableParser {
     }
 
     private static OcrNewTableDto parseProductArticleTable(List<OcrNewLine> lines) {
-        return parseSectionTableWithDataStart(
+        OcrNewTableDto t = parseSectionTableWithDataStart(
                 lines,
                 PRODUCT_ARTICLE_START,
                 MISCELLANEOUS_START,
                 // Header fragments can be multi-line; we will force a single header row and start
                 // consuming data only when we see the first article number.
                 (txtLow) -> txtLow.contains("article") || txtLow.contains("colour") || txtLow.contains("appearance") || txtLow.contains("supplier") || txtLow.contains("graphical"),
-                10,
+                11,
                 List.of(
                         "Article No",
                         "Colour Code",
@@ -276,11 +276,132 @@ public class TableParser {
                         "Appearance Name",
                         "Colour Code",
                         "Colour Name",
+                        "Colour Supplier",
                         "Colour Supplier ID",
                         "Graphical Appearance"
                 ),
                 Pattern.compile("^\\s*\\d{3}\\b")
         );
+
+        return normalizeProductArticleRows(t);
+    }
+
+    private static OcrNewTableDto normalizeProductArticleRows(OcrNewTableDto t) {
+        if (t == null || t.getRows() == null || t.getRows().size() < 2) return t;
+
+        final Pattern graphicalWord = Pattern.compile("(?i)\\bsolid\\b");
+        final Pattern supplierIdPat = Pattern.compile("(?i)\\b\\d{2}-\\d{4}\\s*TCX\\b");
+        final Pattern supplierHint = Pattern.compile("(?i)\\bpantone\\b|\\bfashion\\b|\\bcotton\\b|\\bcolors\\b");
+
+        List<List<String>> outRows = new ArrayList<>();
+        outRows.add(t.getRows().get(0));
+
+        for (int i = 1; i < t.getRows().size(); i++) {
+            List<String> r = t.getRows().get(i);
+            if (r == null || r.isEmpty()) continue;
+
+            // Ensure fixed width 11 columns
+            List<String> row = new ArrayList<>();
+            for (int c = 0; c < 11; c++) row.add(oneLine(r.size() > c && r.get(c) != null ? r.get(c) : "").trim());
+
+            // Left side: Colour Name can be split across col[2] and col[3].
+            // In our OCR output, col[4] often contains "Solid <desc>", so shift accordingly.
+            String leftColourNameA = row.get(2);
+            String leftColourNameB = row.get(3);
+            String leftGraphical = row.get(3);
+            String leftDesc = row.get(4);
+
+            if (!leftColourNameB.isBlank() && !graphicalWord.matcher(leftColourNameB).find()) {
+                // If the next cell is not a graphical appearance keyword, treat it as part of the colour name.
+                leftColourNameA = oneLine((leftColourNameA + " " + leftColourNameB).trim());
+                leftGraphical = "";
+            }
+
+            // If description begins with graphical appearance (e.g., "Solid green"), split it.
+            Matcher mLeftDesc = Pattern.compile("(?i)^\\s*(solid)\\s+(.*)$").matcher(leftDesc);
+            if (mLeftDesc.find()) {
+                leftGraphical = oneLine(mLeftDesc.group(1)).trim();
+                leftDesc = oneLine(mLeftDesc.group(2)).trim();
+            } else if (graphicalWord.matcher(leftGraphical).find()) {
+                // Normalize to a clean "Solid"
+                leftGraphical = "Solid";
+            }
+
+            // Right side: Colour Name can be split, and the remaining tail carries supplier/id/graphical.
+            String rightColourName = row.get(7);
+            String c8 = row.get(8);
+            String c9 = row.get(9);
+            String c10 = row.get(10);
+
+            boolean c8LooksLikeSupplier = supplierHint.matcher(c8).find() || supplierIdPat.matcher(c8).find();
+            boolean c8LooksLikeName = !c8.isBlank() && !c8LooksLikeSupplier && !graphicalWord.matcher(c8).find();
+            if (c8LooksLikeName && (supplierHint.matcher(c9).find() || supplierHint.matcher(c10).find() || c9.isBlank())) {
+                // Treat col[8] as continuation of Colour Name
+                rightColourName = oneLine((rightColourName + " " + c8).trim());
+                c8 = "";
+            }
+
+            // Build supplier tail from whatever remains in c8/c9/c10
+            String mergedTail = oneLine((c8 + " " + c9 + " " + c10).trim());
+            String colourSupplierId = "";
+            Matcher idM = supplierIdPat.matcher(mergedTail);
+            if (idM.find()) {
+                colourSupplierId = oneLine(idM.group()).trim();
+                mergedTail = oneLine((mergedTail.substring(0, idM.start()) + " " + mergedTail.substring(idM.end())).trim());
+            }
+
+            String rightGraphical = "";
+            Matcher rightGm = Pattern.compile("(?i)^(.*?)(\\bsolid\\b)(.*)$").matcher(mergedTail);
+            if (rightGm.find()) {
+                rightGraphical = "Solid";
+                mergedTail = oneLine((rightGm.group(1) + " " + rightGm.group(3)).trim());
+            }
+
+            String colourSupplier = mergedTail;
+
+            List<String> normalized = new ArrayList<>();
+            normalized.add(row.get(0));
+            normalized.add(row.get(1));
+            normalized.add(leftColourNameA);
+            normalized.add(leftGraphical);
+            normalized.add(leftDesc);
+            normalized.add(row.get(5));
+            normalized.add(row.get(6));
+            normalized.add(rightColourName);
+            normalized.add(colourSupplier);
+            normalized.add(colourSupplierId);
+            normalized.add(rightGraphical.isBlank() ? row.get(10) : rightGraphical);
+
+            outRows.add(normalized);
+        }
+
+        List<OcrNewTableCellDto> outCells = new ArrayList<>();
+        for (int rr = 0; rr < outRows.size(); rr++) {
+            List<String> row = outRows.get(rr);
+            for (int cc = 0; cc < row.size(); cc++) {
+                outCells.add(OcrNewTableCellDto.builder()
+                        .rowIndex(rr)
+                        .columnIndex(cc)
+                        .text(row.get(cc))
+                        .boundingBox(OcrNewBoundingBoxDto.builder()
+                                .left(0)
+                                .top(0)
+                                .width(0)
+                                .height(0)
+                                .build())
+                        .confidence(null)
+                        .build());
+            }
+        }
+
+        return OcrNewTableDto.builder()
+                .page(t.getPage())
+                .index(t.getIndex())
+                .rowCount(outRows.size())
+                .columnCount(11)
+                .cells(outCells)
+                .rows(outRows)
+                .build();
     }
 
     private static OcrNewTableDto parseMiscellaneousTable(List<OcrNewLine> lines) {

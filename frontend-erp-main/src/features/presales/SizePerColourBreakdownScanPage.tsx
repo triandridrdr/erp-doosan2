@@ -381,19 +381,33 @@ export function SizePerColourBreakdownScanPage() {
               <div className='border border-gray-200 rounded-xl overflow-hidden'>
                 <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
                   <div className='text-sm font-semibold text-gray-900'>Assortment</div>
-                  <Button
-                    type='button'
-                    variant='primary'
-                    disabled={!data}
-                    onClick={() =>
-                      setSalesOrderDetailDraftRows((prev) => [
-                        ...prev,
-                        { countryOfDestination: assortmentActiveCountry || '', type: 'Assortment', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-                      ])
-                    }
-                  >
-                    Add row
-                  </Button>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='danger'
+                      disabled={!data || assortmentCountries.length === 0}
+                      onClick={() => {
+                        setSalesOrderDetailDraftRows((prev) =>
+                          (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'assortment'),
+                        );
+                      }}
+                    >
+                      Delete table
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() =>
+                        setSalesOrderDetailDraftRows((prev) => [
+                          ...prev,
+                          { countryOfDestination: assortmentActiveCountry || '', type: 'Assortment', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                        ])
+                      }
+                    >
+                      Add row
+                    </Button>
+                  </div>
                 </div>
 
                 {section2AssortmentEntries.length === 0 ? (
@@ -495,19 +509,33 @@ export function SizePerColourBreakdownScanPage() {
               <div className='border border-gray-200 rounded-xl overflow-hidden'>
                 <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
                   <div className='text-sm font-semibold text-gray-900'>Solid</div>
-                  <Button
-                    type='button'
-                    variant='primary'
-                    disabled={!data}
-                    onClick={() =>
-                      setSalesOrderDetailDraftRows((prev) => [
-                        ...prev,
-                        { countryOfDestination: solidActiveCountry || '', type: 'Solid', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
-                      ])
-                    }
-                  >
-                    Add row
-                  </Button>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='danger'
+                      disabled={!data || solidCountries.length === 0}
+                      onClick={() => {
+                        setSalesOrderDetailDraftRows((prev) =>
+                          (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'solid'),
+                        );
+                      }}
+                    >
+                      Delete table
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() =>
+                        setSalesOrderDetailDraftRows((prev) => [
+                          ...prev,
+                          { countryOfDestination: solidActiveCountry || '', type: 'Solid', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                        ])
+                      }
+                    >
+                      Add row
+                    </Button>
+                  </div>
                 </div>
 
                 {section2SolidEntries.length === 0 ? (
