@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
+import { salesOrderApi } from '../salesOrder/api';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 
@@ -518,13 +518,17 @@ export function SupplementaryScanPage() {
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
         bomDraftRows,
+        bomProdUnitsRows: bomProdUnitsRows,
+        bomYarnSourceTableRows: bomYarnSourceTableRows,
+        productArticleTableRows: productArticleTableRows,
+        miscellaneousTableRows: miscellaneousTableRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         totalCountryBreakdown: countryBreakdownDraftRows,
         section2cColourSizeBreakdown: section2cDraftRows,
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.createOrMerge(payload);
+      return salesOrderApi.saveDraft(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;

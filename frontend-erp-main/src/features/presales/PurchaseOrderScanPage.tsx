@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
+import { salesOrderApi } from '../salesOrder/api';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 
@@ -471,19 +471,36 @@ const isPending = analyzeMutation.isPending;
 const saveDraftMutation = useMutation({
   mutationFn: async () => {
     if (!data) throw new Error('No data.');
+    // Build termsOfDeliveryRows from page-keyed draft
+    const termsOfDeliveryRows = Object.entries(termsOfDeliveryByPageDraft)
+      .filter(([, v]) => v && v.trim().length > 0)
+      .map(([page, v]) => ({ page: Number(page), termsOfDelivery: v }));
+
+    // Build salesSampleRows from articles + page-keyed drafts
+    const salesSampleRows = salesSampleArticleRows.map((row) => ({
+      ...row,
+      salesSampleTerms: salesSampleTimeOfDeliveryByPageDraft[Number(row.page)] ?? '',
+      destinationStudioAddress: salesSampleDestinationStudioAddressByPageDraft[Number(row.page)] ?? '',
+    }));
+
     const payload = {
       documentType: 'purchase-order',
       source: 'presales-purchase-order',
       analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
       formFields: salesOrderHeaderDraft,
       bomDraftRows,
+      quantityPerArticleRows,
+      timeOfDeliveryRows,
+      invoiceAvgPriceRows,
+      termsOfDeliveryRows,
+      salesSampleRows,
       salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
       totalCountryBreakdown: countryBreakdownDraftRows,
       section2cColourSizeBreakdown: section2cDraftRows,
       section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
       raw: data,
     };
-    return salesOrderPrototypeApi.createOrMerge(payload);
+    return salesOrderApi.saveDraft(payload);
   },
   onSuccess: (res) => {
     const soId = (res as any)?.data?.id;

@@ -118,8 +118,16 @@ public class SalesOrderPrototypeService {
                 throw new IllegalArgumentException("SO Number not found in payload");
             }
 
-            // Find existing by SO Number
-            Optional<SalesOrderPrototype> existingOpt = repository.findBySalesOrderNumber(soNumber);
+            // Find existing by SO Number (handle duplicates by picking latest)
+            List<SalesOrderPrototype> existing = repository.findAllBySalesOrderNumber(soNumber);
+            Optional<SalesOrderPrototype> existingOpt = existing.stream()
+                    .sorted((a, b) -> {
+                        if (a.getUpdatedAt() == null && b.getUpdatedAt() == null) return 0;
+                        if (a.getUpdatedAt() == null) return 1;
+                        if (b.getUpdatedAt() == null) return -1;
+                        return b.getUpdatedAt().compareTo(a.getUpdatedAt());
+                    })
+                    .findFirst();
 
             SalesOrderPrototype entity;
             boolean isNew = false;

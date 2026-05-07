@@ -21,52 +21,52 @@ public class SoHeader extends BaseEntity {
     @Column(name = "workflow_status", nullable = false, length = 32)
     private SoWorkflowStatus workflowStatus = SoWorkflowStatus.DRAFT_OCR;
 
-    @Column(name = "order_date", length = 64)
+    @Column(name = "order_date", length = 255)
     private String orderDate;
 
-    @Column(name = "season", length = 64)
+    @Column(name = "season", length = 255)
     private String season;
 
-    @Column(name = "supplier_code", length = 64)
+    @Column(name = "supplier_code", length = 255)
     private String supplierCode;
 
-    @Column(name = "supplier_name", length = 128)
+    @Column(name = "supplier_name", length = 255)
     private String supplierName;
 
-    @Column(name = "product_no", length = 64)
+    @Column(name = "product_no", length = 255)
     private String productNo;
 
-    @Column(name = "product_name", length = 128)
+    @Column(name = "product_name", length = 255)
     private String productName;
 
     @Column(name = "product_desc", columnDefinition = "TEXT")
     private String productDesc;
 
-    @Column(name = "product_type", length = 64)
+    @Column(name = "product_type", length = 255)
     private String productType;
 
-    @Column(name = "option_no", length = 64)
+    @Column(name = "option_no", length = 255)
     private String optionNo;
 
-    @Column(name = "development_no", length = 64)
+    @Column(name = "development_no", length = 255)
     private String developmentNo;
 
-    @Column(name = "customer_group", length = 64)
+    @Column(name = "customer_group", length = 255)
     private String customerGroup;
 
-    @Column(name = "type_of_construction", length = 128)
+    @Column(name = "type_of_construction", length = 255)
     private String typeOfConstruction;
 
-    @Column(name = "country_of_production", length = 64)
+    @Column(name = "country_of_production", length = 255)
     private String countryOfProduction;
 
-    @Column(name = "country_of_origin", length = 64)
+    @Column(name = "country_of_origin", length = 255)
     private String countryOfOrigin;
 
-    @Column(name = "country_of_delivery", length = 64)
+    @Column(name = "country_of_delivery", length = 255)
     private String countryOfDelivery;
 
-    @Column(name = "terms_of_payment", length = 128)
+    @Column(name = "terms_of_payment", length = 255)
     private String termsOfPayment;
 
     @Column(name = "terms_of_delivery", columnDefinition = "TEXT")
@@ -75,10 +75,10 @@ public class SoHeader extends BaseEntity {
     @Column(name = "no_of_pieces", length = 32)
     private String noOfPieces;
 
-    @Column(name = "sales_mode", length = 64)
+    @Column(name = "sales_mode", length = 255)
     private String salesMode;
 
-    @Column(name = "pt_prod_no", length = 64)
+    @Column(name = "pt_prod_no", length = 255)
     private String ptProdNo;
 
     @Column(name = "revision", nullable = false)

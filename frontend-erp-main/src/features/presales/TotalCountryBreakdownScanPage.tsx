@@ -9,7 +9,7 @@ import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
-import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
+import { salesOrderApi } from '../salesOrder/api';
 
 const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
@@ -165,7 +165,7 @@ export function TotalCountryBreakdownScanPage() {
         section2cColourSizeBreakdown: section2cDraftRows,
         raw: data,
       };
-      return salesOrderPrototypeApi.createOrMerge(payload);
+      return salesOrderApi.saveDraft(payload);
     },
     onSuccess: (res) => {
       const soId = (res as any)?.data?.id;

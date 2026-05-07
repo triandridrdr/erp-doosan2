@@ -95,8 +95,61 @@ public class SoScanService {
             scan.getBomItems().add(bom);
         }
 
+        // BOM Production Units
+        List<Map<String, Object>> puRows = getListOfMaps(payload, "bomProdUnitsRows");
+        for (int i = 0; i < puRows.size(); i++) {
+            Map<String, Object> row = puRows.get(i);
+            SoSupplementaryBomProdUnit pu = new SoSupplementaryBomProdUnit();
+            pu.setScan(scan);
+            pu.setSoHeader(header);
+            pu.setSortOrder(i);
+            pu.setPosition(str(row.get("position")));
+            pu.setPlacement(str(row.get("placement")));
+            pu.setType(str(row.get("type")));
+            pu.setMaterialSupplier(str(row.get("materialSupplier")));
+            pu.setComposition(str(row.get("composition")));
+            pu.setWeight(str(row.get("weight")));
+            pu.setProductionUnitProcessingCapability(str(row.get("productionUnitProcessingCapability")));
+            scan.getProdUnits().add(pu);
+        }
+
+        // Yarn Source (stored as JSON row arrays)
+        List<?> yarnRows = getListRaw(payload, "bomYarnSourceTableRows");
+        for (int i = 0; i < yarnRows.size(); i++) {
+            SoSupplementaryYarnSource ys = new SoSupplementaryYarnSource();
+            ys.setScan(scan);
+            ys.setSoHeader(header);
+            ys.setSortOrder(i);
+            ys.setRowData(toJson(yarnRows.get(i)));
+            scan.getYarnSources().add(ys);
+        }
+
+        // Product Article (stored as JSON row arrays)
+        List<?> paRows = getListRaw(payload, "productArticleTableRows");
+        for (int i = 0; i < paRows.size(); i++) {
+            SoSupplementaryProductArticle pa = new SoSupplementaryProductArticle();
+            pa.setScan(scan);
+            pa.setSoHeader(header);
+            pa.setSortOrder(i);
+            pa.setRowData(toJson(paRows.get(i)));
+            scan.getProductArticles().add(pa);
+        }
+
+        // Miscellaneous (stored as JSON row arrays)
+        List<?> miscRows = getListRaw(payload, "miscellaneousTableRows");
+        for (int i = 0; i < miscRows.size(); i++) {
+            SoSupplementaryMiscellaneous misc = new SoSupplementaryMiscellaneous();
+            misc.setScan(scan);
+            misc.setSoHeader(header);
+            misc.setSortOrder(i);
+            misc.setRowData(toJson(miscRows.get(i)));
+            scan.getMiscellaneous().add(misc);
+        }
+
         scan = scanSuppRepo.save(scan);
-        log.info("[SUPP_SAVE] SO={} scanId={} rev={} bom={}", header.getSoNumber(), scan.getId(), nextRevision, bomRows.size());
+        log.info("[SUPP_SAVE] SO={} scanId={} rev={} bom={} pu={} yarn={} pa={} misc={}",
+                header.getSoNumber(), scan.getId(), nextRevision,
+                bomRows.size(), puRows.size(), yarnRows.size(), paRows.size(), miscRows.size());
 
         return SaveDraftResponse.builder()
                 .soHeaderId(header.getId())
@@ -119,27 +172,8 @@ public class SoScanService {
         scan.setRevision(nextRevision);
         scan.setOcrRawJsonb(toJson(payload.get("raw")));
 
-        // BOM items (simple 6-col variant from PO)
-        List<Map<String, Object>> bomRows = getListOfMaps(payload, "bomDraftRows");
-        // PO uses simple BOM stored as SoPoItem-adjacent data — we store in supplementary_bom with scan_id=null approach
-        // Actually for PO we store quantity-per-article as SoPoItem
-
-        // Quantity per Article → SoPoItem
-        List<Map<String, Object>> sizeRows = getListOfMaps(payload, "salesOrderDetailSizeBreakdown");
-        // These are stored in the size breakdown scan, but from PO context we persist them as PO items if present
-
-        // Time of Delivery
-        List<Map<String, Object>> todRows = getListOfMaps(payload, "purchaseOrderTimeOfDelivery");
-        // Invoice Avg Price
-        List<Map<String, Object>> iapRows = getListOfMaps(payload, "purchaseOrderInvoiceAvgPrice");
-
-        // PO Items from quantityPerArticle in raw data
-        Object rawObj = payload.get("raw");
-        List<Map<String, Object>> qpaRows = List.of();
-        if (rawObj instanceof Map<?, ?> rawMap) {
-            qpaRows = getListOfMapsFromObj(rawMap.get("purchaseOrderQuantityPerArticle"));
-        }
-
+        // PO Items (Quantity per Article) - from payload directly
+        List<Map<String, Object>> qpaRows = getListOfMaps(payload, "quantityPerArticleRows");
         for (int i = 0; i < qpaRows.size(); i++) {
             Map<String, Object> row = qpaRows.get(i);
             SoPoItem item = new SoPoItem();
@@ -157,6 +191,8 @@ public class SoScanService {
             scan.getItems().add(item);
         }
 
+        // Time of Delivery
+        List<Map<String, Object>> todRows = getListOfMaps(payload, "timeOfDeliveryRows");
         for (int i = 0; i < todRows.size(); i++) {
             Map<String, Object> row = todRows.get(i);
             SoPoTimeOfDelivery tod = new SoPoTimeOfDelivery();
@@ -171,6 +207,8 @@ public class SoScanService {
             scan.getTimeOfDeliveries().add(tod);
         }
 
+        // Invoice Avg Price
+        List<Map<String, Object>> iapRows = getListOfMaps(payload, "invoiceAvgPriceRows");
         for (int i = 0; i < iapRows.size(); i++) {
             Map<String, Object> row = iapRows.get(i);
             SoPoInvoiceAvgPrice iap = new SoPoInvoiceAvgPrice();
@@ -183,10 +221,46 @@ public class SoScanService {
             scan.getInvoiceAvgPrices().add(iap);
         }
 
+        // Terms of Delivery (per page)
+        List<Map<String, Object>> termsRows = getListOfMaps(payload, "termsOfDeliveryRows");
+        for (var row : termsRows) {
+            SoPoTermsOfDelivery terms = new SoPoTermsOfDelivery();
+            terms.setScan(scan);
+            terms.setSoHeader(header);
+            Integer page = toInt(row.get("page"));
+            terms.setPageNumber(page != null ? page : 1);
+            terms.setTermsOfDelivery(str(row.get("termsOfDelivery")));
+            scan.getTermsOfDeliveries().add(terms);
+        }
+
+        // Sales Samples
+        List<Map<String, Object>> ssRows = getListOfMaps(payload, "salesSampleRows");
+        for (int i = 0; i < ssRows.size(); i++) {
+            Map<String, Object> row = ssRows.get(i);
+            SoPoSalesSample ss = new SoPoSalesSample();
+            ss.setScan(scan);
+            ss.setSoHeader(header);
+            ss.setSortOrder(i);
+            ss.setPageNumber(toInt(row.get("page")));
+            ss.setArticleNo(str(row.get("articleNo")));
+            ss.setHmColourCode(str(row.get("hmColourCode")));
+            ss.setPtArticleNumber(str(row.get("ptArticleNumber")));
+            ss.setColour(str(row.get("colour")));
+            ss.setSize(str(row.get("size")));
+            ss.setQty(str(row.get("qty")));
+            ss.setTimeOfDelivery(str(row.get("timeOfDelivery")));
+            ss.setDestinationStudio(str(row.get("destinationStudio")));
+            ss.setSalesSampleTerms(str(row.get("salesSampleTerms")));
+            ss.setDestinationStudioAddress(str(row.get("destinationStudioAddress")));
+            scan.getSalesSamples().add(ss);
+        }
+
         scan = scanPoRepo.save(scan);
-        log.info("[PO_SAVE] SO={} scanId={} rev={} items={} tod={} iap={}",
+        log.info("[PO_SAVE] SO={} scanId={} rev={} items={} tod={} iap={} terms={} samples={}",
                 header.getSoNumber(), scan.getId(), nextRevision,
-                scan.getItems().size(), scan.getTimeOfDeliveries().size(), scan.getInvoiceAvgPrices().size());
+                scan.getItems().size(), scan.getTimeOfDeliveries().size(),
+                scan.getInvoiceAvgPrices().size(), scan.getTermsOfDeliveries().size(),
+                scan.getSalesSamples().size());
 
         return SaveDraftResponse.builder()
                 .soHeaderId(header.getId())
@@ -402,11 +476,28 @@ public class SoScanService {
     private String extractSoNumber(Map<String, Object> payload) {
         Object ffObj = payload.get("formFields");
         if (ffObj instanceof Map<?, ?> ff) {
-            Object so = ff.get("SO Number");
-            if (so == null) so = ff.get("Order No");
-            if (so != null) {
-                String v = so.toString().trim();
-                if (!v.isEmpty()) return v;
+            for (String key : List.of("SO Number", "Order No", "Purchase Order No", "SO")) {
+                Object so = ff.get(key);
+                if (so != null && !so.toString().trim().isEmpty()) {
+                    return so.toString().trim();
+                }
+            }
+        }
+        Object direct = payload.get("salesOrderNumber");
+        if (direct != null && !direct.toString().trim().isEmpty()) {
+            return direct.toString().trim();
+        }
+        // Fallback: extract from analyzedFileName (format: SONUMBER_DocumentType_...)
+        Object fnObj = payload.get("analyzedFileName");
+        if (fnObj != null) {
+            String fn = fnObj.toString().trim();
+            int idx = fn.indexOf('_');
+            if (idx > 0) {
+                String prefix = fn.substring(0, idx);
+                if (prefix.matches("\\d+(-\\d+)?")) {
+                    int dashIdx = prefix.indexOf('-');
+                    return dashIdx > 0 ? prefix.substring(0, dashIdx) : prefix;
+                }
             }
         }
         return null;
@@ -462,6 +553,14 @@ public class SoScanService {
     private List<Map<String, Object>> getListOfMapsFromObj(Object obj) {
         if (obj instanceof List<?> list) {
             return (List<Map<String, Object>>) (List<?>) list;
+        }
+        return List.of();
+    }
+
+    private List<?> getListRaw(Map<String, Object> payload, String key) {
+        Object obj = payload.get(key);
+        if (obj instanceof List<?> list) {
+            return list;
         }
         return List.of();
     }
