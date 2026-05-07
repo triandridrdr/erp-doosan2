@@ -720,17 +720,6 @@ useEffect(() => {
 
   const fileNameValue = results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '';
 
-  const activePageTables = useMemo(() => {
-    return (data?.tables ?? []).filter((t) => Number(t?.page ?? 0) === activePage);
-  }, [data?.tables, activePage]);
-
-  const placeholderRowCount = useMemo(() => {
-    // Use detected table rowCount on the active page as a best-effort proxy for how many lines/rows exist in the PDF.
-    // Keep at least 1 row.
-    const maxRows = activePageTables.reduce((acc, t) => Math.max(acc, Math.max(0, Number(t?.rowCount ?? 0) - 1)), 0);
-    return Math.max(1, maxRows);
-  }, [activePageTables]);
-
   const headerFormFields = useMemo(() => {
     return [
       { key: 'Order No', label: 'Order No' },
@@ -906,75 +895,6 @@ useEffect(() => {
                 value={termsOfDeliveryForPage1}
                 readOnly
               />
-            </div>
-
-            <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
-                <div className='text-sm font-semibold text-gray-900'>Time of Delivery</div>
-                <div className='flex items-center gap-2'>
-                  <Button
-                    type='button'
-                    variant='primary'
-                    disabled={!data}
-                    onClick={() => {
-                      setTimeOfDeliveryRows((prev) => [...(prev ?? []), { timeOfDelivery: '', planningMarkets: '', quantity: '', percentTotalQty: '' }]);
-                    }}
-                  >
-                    Add row
-                  </Button>
-                </div>
-              </div>
-              <div className='overflow-auto'>
-                <table className='min-w-[900px] w-full'>
-                  <thead className='bg-gray-50'>
-                    <tr>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {timeOfDeliveryRows.length > 0 ? (
-                      timeOfDeliveryRows.map((row, rIdx) => (
-                        <tr key={rIdx}>
-                          <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} disabled />
-                          </td>
-                          <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.planningMarkets ?? ''} onChange={() => {}} disabled />
-                          </td>
-                          <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.quantity ?? ''} onChange={() => {}} disabled />
-                          </td>
-                          <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.percentTotalQty ?? ''} onChange={() => {}} disabled />
-                          </td>
-                          <td className='px-3 py-2 border-b border-gray-100'>
-                            <Button
-                              type='button'
-                              variant='danger'
-                              disabled={!data}
-                              onClick={() => {
-                                setTimeOfDeliveryRows((prev) => (prev ?? []).filter((_, i) => i !== rIdx));
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={5} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
-                          No data
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
@@ -1214,7 +1134,33 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setQuantityPerArticleRows((prev) => [
+                        ...(prev ?? []),
+                        {
+                          page: String(activePage),
+                          articleNo: '',
+                          hmColourCode: '',
+                          ptArticleNumber: '',
+                          colour: '',
+                          optionNo: '',
+                          cost: '',
+                          qtyArticle: '',
+                        },
+                      ]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-[900px] w-full'>
                   <thead className='bg-gray-50'>
@@ -1226,6 +1172,7 @@ useEffect(() => {
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1233,31 +1180,115 @@ useEffect(() => {
                       quantityPerArticleRowsForActivePage.map((row, rIdx) => (
                         <tr key={rIdx}>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.articleNo ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.hmColourCode ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.ptArticleNumber ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.colour ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.colour ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.optionNo ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.optionNo ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.cost ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.cost ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, cost: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.qtyArticle ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qtyArticle: v } : x))
+                                );
+                              }}
+                            />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                              }}
+                            >
+                              Delete
+                            </Button>
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>
@@ -1268,13 +1299,35 @@ useEffect(() => {
             </div>
 
             <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-              <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+              <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={!data}
+                    onClick={() => {
+                      setInvoiceAvgPriceRows((prev) => [
+                        ...(prev ?? []),
+                        {
+                          page: String(activePage),
+                          invoiceAveragePrice: '',
+                          country: '',
+                        },
+                      ]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
               <div className='overflow-auto'>
                 <table className='min-w-full w-full'>
                   <thead className='bg-gray-50'>
                     <tr>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1282,16 +1335,50 @@ useEffect(() => {
                       invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
                         <tr key={rIdx}>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.invoiceAveragePrice ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setInvoiceAvgPriceRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, invoiceAveragePrice: v } : x))
+                                );
+                              }}
+                            />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.country ?? ''} onChange={() => {}} />
+                            <Input
+                              value={row.country ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                setInvoiceAvgPriceRows((prev) =>
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, country: v } : x))
+                                );
+                              }}
+                            />
+                          </td>
+                          <td className='px-3 py-2 border-b border-gray-100'>
+                            <Button
+                              type='button'
+                              variant='danger'
+                              disabled={!data}
+                              onClick={() => {
+                                const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                              }}
+                            >
+                              Delete
+                            </Button>
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                        <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                           No data
                         </td>
                       </tr>
@@ -1341,49 +1428,33 @@ useEffect(() => {
               </div>
 
               <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Time of Delivery</div>
-                <div className='overflow-auto'>
-                  <table className='min-w-[900px] w-full'>
-                    <thead className='bg-gray-50'>
-                      <tr>
-                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
-                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
-                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
-                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {timeOfDeliveryRows.length > 0 ? (
-                        timeOfDeliveryRows.map((row, rIdx) => (
-                          <tr key={rIdx}>
-                            <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
-                            </td>
-                            <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
-                            </td>
-                            <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.quantity ?? ''} onChange={() => {}} />
-                            </td>
-                            <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
-                            No data
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                  <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() => {
+                        setQuantityPerArticleRows((prev) => [
+                          ...(prev ?? []),
+                          {
+                            page: String(activePage),
+                            articleNo: '',
+                            hmColourCode: '',
+                            ptArticleNumber: '',
+                            colour: '',
+                            optionNo: '',
+                            cost: '',
+                            qtyArticle: '',
+                          },
+                        ]);
+                      }}
+                    >
+                      Add row
+                    </Button>
+                  </div>
                 </div>
-              </div>
-
-              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Quantity per Article</div>
                 <div className='overflow-auto'>
                   <table className='min-w-[900px] w-full'>
                     <thead className='bg-gray-50'>
@@ -1395,6 +1466,7 @@ useEffect(() => {
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1402,31 +1474,115 @@ useEffect(() => {
                         quantityPerArticleRowsForActivePage.map((row, rIdx) => (
                           <tr key={rIdx}>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.articleNo ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.hmColourCode ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.ptArticleNumber ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.colour ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.colour ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.optionNo ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.optionNo ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.cost ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.cost ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, cost: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.qtyArticle ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.qtyArticle ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qtyArticle: v } : x))
+                                  );
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                disabled={!data}
+                                onClick={() => {
+                                  const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                  const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                }}
+                              >
+                                Delete
+                              </Button>
                             </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={7} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                          <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                             No data
                           </td>
                         </tr>
@@ -1437,13 +1593,35 @@ useEffect(() => {
               </div>
 
               <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
-                <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                  <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='primary'
+                      disabled={!data}
+                      onClick={() => {
+                        setInvoiceAvgPriceRows((prev) => [
+                          ...(prev ?? []),
+                          {
+                            page: String(activePage),
+                            invoiceAveragePrice: '',
+                            country: '',
+                          },
+                        ]);
+                      }}
+                    >
+                      Add row
+                    </Button>
+                  </div>
+                </div>
                 <div className='overflow-auto'>
                   <table className='min-w-full w-full'>
                     <thead className='bg-gray-50'>
                       <tr>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1451,16 +1629,50 @@ useEffect(() => {
                         invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
                           <tr key={rIdx}>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.invoiceAveragePrice ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setInvoiceAvgPriceRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, invoiceAveragePrice: v } : x))
+                                  );
+                                }}
+                              />
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
-                              <Input value={row.country ?? ''} onChange={() => {}} />
+                              <Input
+                                value={row.country ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                  const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setInvoiceAvgPriceRows((prev) =>
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, country: v } : x))
+                                  );
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 border-b border-gray-100'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                disabled={!data}
+                                onClick={() => {
+                                  const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                  const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                  setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                }}
+                              >
+                                Delete
+                              </Button>
                             </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={2} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                          <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                             No data
                           </td>
                         </tr>
@@ -1504,7 +1716,34 @@ useEffect(() => {
             <Input value={salesSampleTimeOfDeliveryForActivePage} onChange={() => {}} />
           </div>
           <div className='bg-gray-50 rounded-xl border border-gray-200 overflow-hidden'>
-            <div className='px-4 py-3 border-b border-gray-200 text-sm font-semibold text-gray-900'>Articles</div>
+            <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+              <div className='text-sm font-semibold text-gray-900'>Articles</div>
+              <div className='flex items-center gap-2'>
+                <Button
+                  type='button'
+                  variant='primary'
+                  disabled={!data}
+                  onClick={() => {
+                    setSalesSampleArticleRows((prev) => [
+                      ...(prev ?? []),
+                      {
+                        page: String(activePage),
+                        articleNo: '',
+                        hmColourCode: '',
+                        ptArticleNumber: '',
+                        colour: '',
+                        size: '',
+                        qty: '',
+                        tod: '',
+                        destinationStudio: '',
+                      },
+                    ]);
+                  }}
+                >
+                  Add row
+                </Button>
+              </div>
+            </div>
             <div className='overflow-auto'>
               <table className='min-w-[900px] w-full'>
                 <thead className='bg-white'>
@@ -1517,6 +1756,7 @@ useEffect(() => {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>TOD</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Destination Studio</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1524,34 +1764,128 @@ useEffect(() => {
                     salesSampleArticlesRowsForActivePage.map((row, rIdx) => (
                       <tr key={rIdx}>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.articleNo ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.articleNo ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.hmColourCode ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.hmColourCode ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.ptArticleNumber ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.colour ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.colour ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.size ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.size ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, size: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.qty ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.qty ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qty: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.tod ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.tod ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, tod: v } : x))
+                              );
+                            }}
+                          />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input value={row.destinationStudio ?? ''} onChange={() => {}} />
+                          <Input
+                            value={row.destinationStudio ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) =>
+                                (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, destinationStudio: v } : x))
+                              );
+                            }}
+                          />
+                        </td>
+                        <td className='px-3 py-2 border-b border-gray-100'>
+                          <Button
+                            type='button'
+                            variant='danger'
+                            disabled={!data}
+                            onClick={() => {
+                              const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                              const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                              setSalesSampleArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                            }}
+                          >
+                            Delete
+                          </Button>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                      <td colSpan={9} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
                         No data
                       </td>
                     </tr>
