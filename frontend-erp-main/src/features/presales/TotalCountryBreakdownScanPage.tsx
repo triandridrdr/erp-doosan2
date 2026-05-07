@@ -293,16 +293,6 @@ export function TotalCountryBreakdownScanPage() {
           <div className='flex items-center gap-2'>
             <Button
               type='button'
-              variant='danger'
-              disabled={!data || countryBreakdownDraftRows.length === 0}
-              onClick={() => {
-                setCountryBreakdownDraftRows([]);
-              }}
-            >
-              Delete table
-            </Button>
-            <Button
-              type='button'
               variant='primary'
               disabled={!data}
               onClick={() => {
@@ -371,16 +361,6 @@ export function TotalCountryBreakdownScanPage() {
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
           <div className='text-xs font-semibold text-gray-500'>COLOUR / SIZE BREAKDOWN</div>
           <div className='flex items-center gap-2'>
-            <Button
-              type='button'
-              variant='danger'
-              disabled={!data || section2cDraftRows.length === 0}
-              onClick={() => {
-                setSection2cDraftRows([]);
-              }}
-            >
-              Delete table
-            </Button>
             <Button
               type='button'
               variant='primary'

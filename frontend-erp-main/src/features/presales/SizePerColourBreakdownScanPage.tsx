@@ -384,18 +384,6 @@ export function SizePerColourBreakdownScanPage() {
                   <div className='flex items-center gap-2'>
                     <Button
                       type='button'
-                      variant='danger'
-                      disabled={!data || assortmentCountries.length === 0}
-                      onClick={() => {
-                        setSalesOrderDetailDraftRows((prev) =>
-                          (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'assortment'),
-                        );
-                      }}
-                    >
-                      Delete table
-                    </Button>
-                    <Button
-                      type='button'
                       variant='primary'
                       disabled={!data}
                       onClick={() =>
@@ -510,18 +498,6 @@ export function SizePerColourBreakdownScanPage() {
                 <div className='px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-4'>
                   <div className='text-sm font-semibold text-gray-900'>Solid</div>
                   <div className='flex items-center gap-2'>
-                    <Button
-                      type='button'
-                      variant='danger'
-                      disabled={!data || solidCountries.length === 0}
-                      onClick={() => {
-                        setSalesOrderDetailDraftRows((prev) =>
-                          (prev ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() !== 'solid'),
-                        );
-                      }}
-                    >
-                      Delete table
-                    </Button>
                     <Button
                       type='button'
                       variant='primary'
