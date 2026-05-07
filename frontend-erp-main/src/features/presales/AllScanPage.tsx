@@ -11,6 +11,39 @@ import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
 
+const pickFirstNonBlank = (vals: Array<unknown>) => {
+  for (const v of vals) {
+    const t = (v ?? '').toString().trim();
+    if (t.length > 0) return t;
+  }
+  return '';
+};
+
+const hydratePoHeaderDraftFromFormFields = (ff: Record<string, any>) => {
+  const next: Record<string, string> = {};
+  next['Order No'] = pickFirstNonBlank([ff['Order No'], ff['SO Number'], ff['SO'], ff['Purchase Order No']]);
+  next['PT Prod No'] = pickFirstNonBlank([ff['PT Prod No'], ff['PT Prod No:'], ff['PT Product No']]);
+  next['Order Date'] = pickFirstNonBlank([ff['Date of Order'], ff['Order Date'], ff['Date (ISO)'], ff['Date']]);
+  next['Supplier Code'] = pickFirstNonBlank([ff['Supplier Code']]);
+  next['Option No'] = pickFirstNonBlank([ff['Option No'], ff['Option']]);
+  next['Development No'] = pickFirstNonBlank([ff['Development No']]);
+  next['Product No'] = pickFirstNonBlank([ff['Product No'], ff['Article / Product No'], ff['Article No']]);
+  next['Product Name'] = pickFirstNonBlank([ff['Product Name']]);
+  next['Product Desc'] = pickFirstNonBlank([ff['Product Description'], ff['Product Desc']]);
+  next['Season'] = pickFirstNonBlank([ff['Season']]);
+  next['Customer Group'] = pickFirstNonBlank([ff['Customs Customer Group'], ff['Customer Group']]);
+  next['Type of Construct'] = pickFirstNonBlank([ff['Type of Construction'], ff['Type of Construct']]);
+
+  next['Country of Production'] = pickFirstNonBlank([ff['Country of Production']]);
+  next['Country of Bakery'] = pickFirstNonBlank([ff['Country of Delivery'], ff['Country of Bakery']]);
+  next['Country of Origin'] = pickFirstNonBlank([ff['Country of Origin']]);
+  next['Term of Payment'] = pickFirstNonBlank([ff['Terms of Payment'], ff['Term of Payment']]);
+  next['No of Pieces'] = pickFirstNonBlank([ff['No of Pieces'], ff['No Pieces']]);
+  next['Sales Models'] = pickFirstNonBlank([ff['Sales Mode'], ff['Sales Models']]);
+  next['Terms of Delivery'] = pickFirstNonBlank([ff['Terms of Delivery']]);
+  return next;
+};
+
 const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
   'Date (ISO)',
@@ -27,6 +60,30 @@ const SALES_ORDER_HEADER_FIELDS = [
   'Time of Delivery',
 ] as const;
 
+const PURCHASE_ORDER_HEADER_FIELDS = [
+  { key: 'Order No', label: 'Order No' },
+  { key: 'PT Prod No', label: 'PT Prod No' },
+  { key: 'Order Date', label: 'Order Date' },
+  { key: 'Supplier Code', label: 'Supplier Code' },
+  { key: 'Option No', label: 'Option No' },
+  { key: 'Development No', label: 'Development No' },
+  { key: 'Product No', label: 'Product No' },
+  { key: 'Product Name', label: 'Product Name' },
+  { key: 'Product Desc', label: 'Product Desc' },
+  { key: 'Season', label: 'Season' },
+  { key: 'Customer Group', label: 'Customer Group' },
+  { key: 'Type of Construct', label: 'Type of Construct' },
+] as const;
+
+const PURCHASE_ORDER_META_FIELDS = [
+  { key: 'Country of Production', label: 'Country of Production' },
+  { key: 'Country of Bakery', label: 'Country of Bakery' },
+  { key: 'Country of Origin', label: 'Country of Origin' },
+  { key: 'Term of Payment', label: 'Term of Payment' },
+  { key: 'No of Pieces', label: 'No of Pieces' },
+  { key: 'Sales Models', label: 'Sales Models' },
+] as const;
+
 export function AllScanPage() {
   const navigate = useNavigate();
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -38,6 +95,26 @@ export function AllScanPage() {
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Draft updated.');
   const [lastSavedId, setLastSavedId] = useState<number | null>(null);
+
+  const pageCount = Math.max(1, Number(data?.pageCount ?? 1));
+  const [activePage, setActivePage] = useState<number>(1);
+
+  const [timeOfDeliveryRows, setTimeOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
+  const [quantityPerArticleRows, setQuantityPerArticleRows] = useState<Array<Record<string, string>>>([]);
+  const [invoiceAvgPriceRows, setInvoiceAvgPriceRows] = useState<Array<Record<string, string>>>([]);
+
+  const [termsOfDeliveryByPageDraft, setTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+
+  const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
+
+  const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleDestinationStudioAddressByPageDraft, setSalesSampleDestinationStudioAddressByPageDraft] = useState<Record<number, string>>({});
+
+  const [salesSampleArticleRows, setSalesSampleArticleRows] = useState<Array<Record<string, string>>>([]);
+
+  useEffect(() => {
+    setActivePage((p) => Math.min(Math.max(1, p), pageCount));
+  }, [pageCount]);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<
@@ -118,11 +195,55 @@ export function AllScanPage() {
 
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
-    const next: Record<string, string> = {};
+    const next: Record<string, string> = hydratePoHeaderDraftFromFormFields(ff);
     for (const f of SALES_ORDER_HEADER_FIELDS) {
-      next[f] = ff[f] ?? '';
+      if ((next[f] ?? '').toString().trim().length > 0) continue;
+      next[f] = (ff[f] ?? '').toString();
     }
     setSalesOrderHeaderDraft(next);
+
+    setActivePage(1);
+    setTimeOfDeliveryRows(d?.purchaseOrderTimeOfDelivery ?? []);
+    setQuantityPerArticleRows(d?.purchaseOrderQuantityPerArticle ?? []);
+    setInvoiceAvgPriceRows(d?.purchaseOrderInvoiceAvgPrice ?? []);
+
+    const nextTerms: Record<number, string> = {};
+    for (const r of d?.purchaseOrderTermsOfDelivery ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.termsOfDelivery ?? '').toString();
+      if (v.trim().length > 0) nextTerms[p] = v;
+    }
+    setTermsOfDeliveryByPageDraft(nextTerms);
+
+    const nextSalesSampleTerms: Record<number, string> = {};
+    for (const r of d?.salesSampleTermsByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.salesSampleTerms ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleTerms[p] = v;
+    }
+    setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
+
+    const nextSalesSampleTod: Record<number, string> = {};
+    for (const r of d?.salesSampleTimeOfDeliveryByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.timeOfDelivery ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleTod[p] = v;
+    }
+    setSalesSampleTimeOfDeliveryByPageDraft(nextSalesSampleTod);
+
+    const nextSalesSampleDest: Record<number, string> = {};
+    for (const r of d?.salesSampleDestinationStudioAddressByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.destinationStudioAddress ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleDest[p] = v;
+    }
+    setSalesSampleDestinationStudioAddressByPageDraft(nextSalesSampleDest);
+
+    setSalesSampleArticleRows(d?.salesSampleArticlesByPage ?? []);
 
     const bomTable = (d?.tables ?? []).find((t) => isBomDraftTable((t as any).rows));
     if ((bomTable as any)?.rows?.length) {
@@ -168,19 +289,85 @@ export function AllScanPage() {
   };
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
-    const mergedHeader: Record<string, string> = {};
-    for (const f of SALES_ORDER_HEADER_FIELDS) {
-      let v = '';
-      for (const r of out) {
-        const cand = (r?.data?.formFields?.[f] ?? '').toString().trim();
-        if (cand) {
-          v = cand;
-          break;
+    const mergedFf: Record<string, any> = {};
+    for (const r of out) {
+      const ff = r?.data?.formFields ?? {};
+      for (const [k, v] of Object.entries(ff)) {
+        const t = (v ?? '').toString().trim();
+        if (t.length > 0 && (mergedFf[k] ?? '').toString().trim().length === 0) {
+          mergedFf[k] = t;
         }
       }
-      mergedHeader[f] = v;
     }
-    setSalesOrderHeaderDraft(mergedHeader);
+
+    const next: Record<string, string> = hydratePoHeaderDraftFromFormFields(mergedFf);
+    for (const f of SALES_ORDER_HEADER_FIELDS) {
+      if ((next[f] ?? '').toString().trim().length > 0) continue;
+      next[f] = (mergedFf[f] ?? '').toString();
+    }
+    setSalesOrderHeaderDraft(next);
+
+    setActivePage(1);
+    const mergedTimeOfDelivery: any[] = [];
+    const mergedQuantityPerArticle: any[] = [];
+    const mergedInvoiceAvgPrice: any[] = [];
+    const mergedSalesSampleArticles: any[] = [];
+    const nextTerms: Record<number, string> = {};
+    const nextSalesSampleTerms: Record<number, string> = {};
+    const nextSalesSampleTod: Record<number, string> = {};
+    const nextSalesSampleDest: Record<number, string> = {};
+
+    for (const r of out) {
+      const d = r?.data;
+      if (!d) continue;
+
+      mergedTimeOfDelivery.push(...(d?.purchaseOrderTimeOfDelivery ?? []));
+      mergedQuantityPerArticle.push(...(d?.purchaseOrderQuantityPerArticle ?? []));
+      mergedInvoiceAvgPrice.push(...(d?.purchaseOrderInvoiceAvgPrice ?? []));
+      mergedSalesSampleArticles.push(...(d?.salesSampleArticlesByPage ?? []));
+
+      for (const tod of d?.purchaseOrderTermsOfDelivery ?? []) {
+        const p = Number((tod?.page ?? '').toString().trim());
+        if (!Number.isFinite(p) || p <= 0) continue;
+        const v = (tod?.termsOfDelivery ?? '').toString();
+        if (v.trim().length > 0 && (nextTerms[p] ?? '').toString().trim().length === 0) nextTerms[p] = v;
+      }
+
+      for (const ss of d?.salesSampleTermsByPage ?? []) {
+        const p = Number((ss?.page ?? '').toString().trim());
+        if (!Number.isFinite(p) || p <= 0) continue;
+        const v = (ss?.salesSampleTerms ?? '').toString();
+        if (v.trim().length > 0 && (nextSalesSampleTerms[p] ?? '').toString().trim().length === 0) nextSalesSampleTerms[p] = v;
+      }
+
+      for (const ss of d?.salesSampleTimeOfDeliveryByPage ?? []) {
+        const p = Number((ss?.page ?? '').toString().trim());
+        if (!Number.isFinite(p) || p <= 0) continue;
+        const v = (ss?.timeOfDelivery ?? '').toString();
+        if (v.trim().length > 0 && (nextSalesSampleTod[p] ?? '').toString().trim().length === 0) nextSalesSampleTod[p] = v;
+      }
+
+      for (const ss of d?.salesSampleDestinationStudioAddressByPage ?? []) {
+        const p = Number((ss?.page ?? '').toString().trim());
+        if (!Number.isFinite(p) || p <= 0) continue;
+        const v = (ss?.destinationStudioAddress ?? '').toString();
+        if (v.trim().length > 0 && (nextSalesSampleDest[p] ?? '').toString().trim().length === 0) nextSalesSampleDest[p] = v;
+      }
+    }
+
+    setTimeOfDeliveryRows(mergedTimeOfDelivery);
+    setQuantityPerArticleRows(mergedQuantityPerArticle);
+    setInvoiceAvgPriceRows(mergedInvoiceAvgPrice);
+
+    setTermsOfDeliveryByPageDraft(nextTerms);
+
+    setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
+
+    setSalesSampleTimeOfDeliveryByPageDraft(nextSalesSampleTod);
+
+    setSalesSampleDestinationStudioAddressByPageDraft(nextSalesSampleDest);
+
+    setSalesSampleArticleRows(mergedSalesSampleArticles);
 
     let bomRows: Array<{ position: string; placement: string; type: string; description: string; composition: string; materialSupplier: string }> = [];
     for (const r of out) {
@@ -497,11 +684,20 @@ export function AllScanPage() {
       setError(e.message);
       setData(null);
       setResults([]);
+      setActivePage(1);
       setSalesOrderHeaderDraft({});
       setBomDraftRows([]);
       setSalesOrderDetailDraftRows([]);
       setCountryBreakdownDraftRows([]);
       setSection2cDraftRows([]);
+      setTimeOfDeliveryRows([]);
+      setQuantityPerArticleRows([]);
+      setInvoiceAvgPriceRows([]);
+      setTermsOfDeliveryByPageDraft({});
+      setSalesSampleTermsByPageDraft({});
+      setSalesSampleTimeOfDeliveryByPageDraft({});
+      setSalesSampleDestinationStudioAddressByPageDraft({});
+      setSalesSampleArticleRows([]);
       setMultiFileLogs([]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
@@ -540,10 +736,6 @@ export function AllScanPage() {
     },
   });
 
-  const hasHeaderDraft = useMemo(() => {
-    return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
-  }, [salesOrderHeaderDraft]);
-
   const section2NonTotalEntries = useMemo(() => {
     return (salesOrderDetailDraftRows ?? [])
       .map((row, idx) => ({ row, idx }))
@@ -551,7 +743,7 @@ export function AllScanPage() {
   }, [salesOrderDetailDraftRows]);
 
   const section2TotalByCountryRows = useMemo(() => {
-    const totals = (salesOrderDetailDraftRows ?? []).filter((r) => (r?.type ?? '').toString().trim().toLowerCase() === 'total');
+    const totals = (salesOrderDetailDraftRows ?? []).filter((r) => (r?.type ?? '').toString().toLowerCase() === 'total');
     if (totals.length === 0) return [];
 
     const byCountry = new Map<string, number>();
@@ -589,6 +781,101 @@ export function AllScanPage() {
     }
     return m;
   }, [section2TotalByCountryRows]);
+
+  const headerFormFields = useMemo(() => {
+    return PURCHASE_ORDER_HEADER_FIELDS;
+  }, []);
+
+  const poMetaFields = useMemo(() => {
+    return PURCHASE_ORDER_META_FIELDS;
+  }, []);
+
+  const termsOfDeliveryForActivePage = useMemo(() => {
+    return (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+  }, [activePage, termsOfDeliveryByPageDraft]);
+
+  const salesSampleTermsForActivePage = useMemo(() => {
+    const direct = (salesSampleTermsByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+    for (const p of Object.keys(salesSampleTermsByPageDraft ?? {})) {
+      const v = (salesSampleTermsByPageDraft as any)?.[p];
+      const t = (v ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleTermsByPageDraft]);
+
+  const salesSampleTimeOfDeliveryForActivePage = useMemo(() => {
+    const direct = (salesSampleTimeOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+
+    const pages = Object.keys(salesSampleTimeOfDeliveryByPageDraft ?? {})
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x))
+      .sort((a, b) => a - b);
+    for (const p of pages) {
+      const t = (salesSampleTimeOfDeliveryByPageDraft?.[p] ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleTimeOfDeliveryByPageDraft]);
+
+  const salesSampleDestinationStudioAddressForActivePage = useMemo(() => {
+    const direct = (salesSampleDestinationStudioAddressByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+
+    const pages = Object.keys(salesSampleDestinationStudioAddressByPageDraft ?? {})
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x))
+      .sort((a, b) => a - b);
+    for (const p of pages) {
+      const t = (salesSampleDestinationStudioAddressByPageDraft?.[p] ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleDestinationStudioAddressByPageDraft]);
+
+  const salesSampleArticlesRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    const direct = (salesSampleArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+    if (direct.length > 0) return direct;
+
+    const pages = (salesSampleArticleRows ?? []).map((r) => Number((r?.page ?? '1').toString())).filter((x) => Number.isFinite(x));
+    const maxPage = pages.length > 0 ? Math.max(...pages) : 0;
+    if (maxPage <= 0) return [];
+    return (salesSampleArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === String(maxPage));
+  }, [activePage, salesSampleArticleRows]);
+
+  const quantityPerArticleRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+  }, [activePage, quantityPerArticleRows]);
+
+  const invoiceAvgPriceRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (invoiceAvgPriceRows ?? []).filter((r) => {
+      const rp = (r?.page ?? '1').toString();
+      if (rp === p) return true;
+
+      if (p !== '1') return false;
+      return rp.trim() === '';
+    });
+  }, [activePage, invoiceAvgPriceRows]);
+
+  const termsOfDeliveryForPage1 = useMemo(() => {
+    return (termsOfDeliveryByPageDraft?.[1] ?? '').toString();
+  }, [termsOfDeliveryByPageDraft]);
+
+  const quantityPerArticleRowsForPage1 = useMemo(() => {
+    return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === '1');
+  }, [quantityPerArticleRows]);
+
+  const invoiceAvgPriceRowsForPage1 = useMemo(() => {
+    return (invoiceAvgPriceRows ?? []).filter((r) => {
+      const rp = (r?.page ?? '1').toString();
+      return rp === '1' || rp.trim() === '';
+    });
+  }, [invoiceAvgPriceRows]);
 
   useEffect(() => {
     if (results.length <= 1) return;
@@ -632,10 +919,19 @@ export function AllScanPage() {
                 setResults([]);
                 setError(null);
                 setMultiFileLogs([]);
+                setActivePage(1);
                 setSalesOrderHeaderDraft({});
                 setBomDraftRows([]);
                 setSalesOrderDetailDraftRows([]);
                 setCountryBreakdownDraftRows([]);
+                setTimeOfDeliveryRows([]);
+                setQuantityPerArticleRows([]);
+                setInvoiceAvgPriceRows([]);
+                setTermsOfDeliveryByPageDraft({});
+                setSalesSampleTermsByPageDraft({});
+                setSalesSampleTimeOfDeliveryByPageDraft({});
+                setSalesSampleDestinationStudioAddressByPageDraft({});
+                setSalesSampleArticleRows([]);
               }}
             />
           </div>
@@ -692,19 +988,1068 @@ export function AllScanPage() {
         <div className='p-6 space-y-6'>
           {!data ? (
             <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : !hasHeaderDraft ? (
-            <div className='text-sm text-gray-500 italic'>No header fields detected.</div>
           ) : (
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
-              {SALES_ORDER_HEADER_FIELDS.map((field) => (
-                <div key={field} className='grid grid-cols-12 items-center gap-3'>
-                  <div className='col-span-4 text-sm text-gray-700'>{field}</div>
-                  <div className='col-span-8'>
-                    <Input value={salesOrderHeaderDraft[field] ?? ''} onChange={(e) => setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: e.target.value }))} />
+            <>
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
+                {headerFormFields.map((f) => (
+                  <div key={f.key} className='grid grid-cols-12 items-center gap-3'>
+                    <div className='col-span-4 text-sm text-gray-700'>{f.label}</div>
+                    <div className='col-span-8'>
+                      <Input
+                        value={salesOrderHeaderDraft[f.key] ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSalesOrderHeaderDraft((prev) => ({ ...prev, [f.key]: v }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
+                {poMetaFields.map((f) => (
+                  <div key={f.key} className='grid grid-cols-12 items-center gap-3'>
+                    <div className='col-span-4 text-sm text-gray-700'>{f.label}</div>
+                    <div className='col-span-8'>
+                      <Input
+                        value={salesOrderHeaderDraft[f.key] ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSalesOrderHeaderDraft((prev) => ({ ...prev, [f.key]: v }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {activePage !== 1 ? (
+                <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                  <div className='p-6 space-y-6 bg-gray-50'>
+                    <div className='bg-white rounded-xl border border-gray-200 p-4'>
+                      <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+                      <textarea
+                        className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                        value={termsOfDeliveryForPage1}
+                        readOnly
+                      />
+                    </div>
+
+                    <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                      <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                        <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='primary'
+                            disabled={!data}
+                            onClick={() => {
+                              setQuantityPerArticleRows((prev) => [
+                                ...(prev ?? []),
+                                { articleNo: '', hmColourCode: '', ptArticleNumber: '', colour: '', optionNo: '', cost: '', qtyArticle: '' },
+                              ]);
+                            }}
+                          >
+                            Add row
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='overflow-auto'>
+                        <table className='min-w-[900px] w-full'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {quantityPerArticleRowsForPage1.length > 0 ? (
+                              quantityPerArticleRowsForPage1.map((row, rIdx) => (
+                                <tr key={rIdx}>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.articleNo ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.hmColourCode ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.ptArticleNumber ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.colour ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.optionNo ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.cost ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.qtyArticle ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Button
+                                      type='button'
+                                      variant='danger'
+                                      disabled={!data}
+                                      onClick={() => {
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                  No data
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                      <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                        <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='primary'
+                            disabled={!data}
+                            onClick={() => {
+                              setInvoiceAvgPriceRows((prev) => [...(prev ?? []), { invoiceAveragePrice: '', country: '' }]);
+                            }}
+                          >
+                            Add row
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='overflow-auto'>
+                        <table className='min-w-full w-full'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invoiceAvgPriceRowsForPage1.length > 0 ? (
+                              invoiceAvgPriceRowsForPage1.map((row, rIdx) => (
+                                <tr key={rIdx}>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.invoiceAveragePrice ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.country ?? ''} onChange={() => {}} disabled />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Button
+                                      type='button'
+                                      variant='danger'
+                                      disabled={!data}
+                                      onClick={() => {
+                                        const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                        const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                  No data
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              ) : null}
+
+              {activePage === 1 ? (
+                <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                  <div className='p-6 space-y-6 bg-gray-50'>
+                    <div className='bg-white rounded-xl border border-gray-200 p-4'>
+                      <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+                      <textarea
+                        className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                        value={termsOfDeliveryForActivePage}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                        }}
+                      />
+                    </div>
+
+                    <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                      <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                        <div className='text-sm font-semibold text-gray-900'>Time of Delivery</div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='primary'
+                            disabled={!data}
+                            onClick={() => {
+                              setTimeOfDeliveryRows((prev) => [
+                                ...(prev ?? []),
+                                { timeOfDelivery: '', planningMarkets: '', quantity: '', percentTotalQty: '' },
+                              ]);
+                            }}
+                          >
+                            Add row
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='overflow-auto'>
+                        <table className='min-w-[900px] w-full'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Time of Delivery</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Planning Markets</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Quantity</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>% Total Qty</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {timeOfDeliveryRows.length > 0 ? (
+                              timeOfDeliveryRows.map((row, rIdx) => (
+                                <tr key={rIdx}>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.quantity ?? ''} onChange={() => {}} />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Button
+                                      type='button'
+                                      variant='danger'
+                                      disabled={!data}
+                                      onClick={() => {
+                                        setTimeOfDeliveryRows((prev) => (prev ?? []).filter((_, i) => i !== rIdx));
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={5} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                  No data
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                      <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                        <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='primary'
+                            disabled={!data}
+                            onClick={() => {
+                              setQuantityPerArticleRows((prev) => [
+                                ...(prev ?? []),
+                                {
+                                  page: String(activePage),
+                                  articleNo: '',
+                                  hmColourCode: '',
+                                  ptArticleNumber: '',
+                                  colour: '',
+                                  optionNo: '',
+                                  cost: '',
+                                  qtyArticle: '',
+                                },
+                              ]);
+                            }}
+                          >
+                            Add row
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='overflow-auto'>
+                        <table className='min-w-[900px] w-full'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {quantityPerArticleRowsForActivePage.length > 0 ? (
+                              quantityPerArticleRowsForActivePage.map((row, rIdx) => (
+                                <tr key={rIdx}>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.articleNo ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.hmColourCode ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.ptArticleNumber ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.colour ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.optionNo ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.cost ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, cost: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.qtyArticle ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qtyArticle: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Button
+                                      type='button'
+                                      variant='danger'
+                                      disabled={!data}
+                                      onClick={() => {
+                                        const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                        const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                  No data
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                      <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                        <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='primary'
+                            disabled={!data}
+                            onClick={() => {
+                              setInvoiceAvgPriceRows((prev) => [
+                                ...(prev ?? []),
+                                {
+                                  page: String(activePage),
+                                  invoiceAveragePrice: '',
+                                  country: '',
+                                },
+                              ]);
+                            }}
+                          >
+                            Add row
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='overflow-auto'>
+                        <table className='min-w-full w-full'>
+                          <thead className='bg-gray-50'>
+                            <tr>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invoiceAvgPriceRowsForActivePage.length > 0 ? (
+                              invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
+                                <tr key={rIdx}>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.invoiceAveragePrice ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setInvoiceAvgPriceRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, invoiceAveragePrice: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Input
+                                      value={row.country ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                        const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setInvoiceAvgPriceRows((prev) =>
+                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, country: v } : x))
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className='px-3 py-2 border-b border-gray-100'>
+                                    <Button
+                                      type='button'
+                                      variant='danger'
+                                      disabled={!data}
+                                      onClick={() => {
+                                        const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                        const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                        setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                  No data
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                <div className='px-6 py-3 border-b border-gray-200 flex gap-2 overflow-auto'>
+                  {Array.from({ length: pageCount }).map((_, idx) => {
+                    const p = idx + 1;
+                    const label = `Page-${p}`;
+                    return (
+                      <button
+                        key={label}
+                        type='button'
+                        className={
+                          p === activePage
+                            ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white'
+                            : 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }
+                        onClick={() => setActivePage(p)}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className='p-6 space-y-6 bg-gray-50'>
+                  {activePage === 1 ? null : (
+                    <>
+                      <div className='bg-white rounded-xl border border-gray-200 p-4'>
+                        <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+                        <textarea
+                          className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                          value={termsOfDeliveryForActivePage}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                          }}
+                        />
+                      </div>
+
+                      <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                        <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                          <div className='text-sm font-semibold text-gray-900'>Quantity per Article</div>
+                          <div className='flex items-center gap-2'>
+                            <Button
+                              type='button'
+                              variant='primary'
+                              disabled={!data}
+                              onClick={() => {
+                                setQuantityPerArticleRows((prev) => [
+                                  ...(prev ?? []),
+                                  {
+                                    page: String(activePage),
+                                    articleNo: '',
+                                    hmColourCode: '',
+                                    ptArticleNumber: '',
+                                    colour: '',
+                                    optionNo: '',
+                                    cost: '',
+                                    qtyArticle: '',
+                                  },
+                                ]);
+                              }}
+                            >
+                              Add row
+                            </Button>
+                          </div>
+                        </div>
+                        <div className='overflow-auto'>
+                          <table className='min-w-[900px] w-full'>
+                            <thead className='bg-gray-50'>
+                              <tr>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {quantityPerArticleRowsForActivePage.length > 0 ? (
+                                quantityPerArticleRowsForActivePage.map((row, rIdx) => (
+                                  <tr key={rIdx}>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.articleNo ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.hmColourCode ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.ptArticleNumber ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.colour ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.optionNo ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.cost ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, cost: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.qtyArticle ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qtyArticle: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Button
+                                        type='button'
+                                        variant='danger'
+                                        disabled={!data}
+                                        onClick={() => {
+                                          const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
+                                          const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setQuantityPerArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                        }}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={8} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                    No data
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                        <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                          <div className='text-sm font-semibold text-gray-900'>Invoice Average Price</div>
+                          <div className='flex items-center gap-2'>
+                            <Button
+                              type='button'
+                              variant='primary'
+                              disabled={!data}
+                              onClick={() => {
+                                setInvoiceAvgPriceRows((prev) => [
+                                  ...(prev ?? []),
+                                  {
+                                    page: String(activePage),
+                                    invoiceAveragePrice: '',
+                                    country: '',
+                                  },
+                                ]);
+                              }}
+                            >
+                              Add row
+                            </Button>
+                          </div>
+                        </div>
+                        <div className='overflow-auto'>
+                          <table className='min-w-full w-full'>
+                            <thead className='bg-gray-50'>
+                              <tr>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Invoice Average Price</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {invoiceAvgPriceRowsForActivePage.length > 0 ? (
+                                invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
+                                  <tr key={rIdx}>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.invoiceAveragePrice ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setInvoiceAvgPriceRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, invoiceAveragePrice: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Input
+                                        value={row.country ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                          const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setInvoiceAvgPriceRows((prev) =>
+                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, country: v } : x))
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className='px-3 py-2 border-b border-gray-100'>
+                                      <Button
+                                        type='button'
+                                        variant='danger'
+                                        disabled={!data}
+                                        onClick={() => {
+                                          const originalIdx = (invoiceAvgPriceRows ?? []).findIndex((x) => x === row);
+                                          const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                          setInvoiceAvgPriceRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                        }}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={3} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                    No data
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className='bg-white rounded-xl border border-gray-200 overflow-hidden'>
+                <div className='px-6 py-4 border-b border-gray-200 text-sm font-semibold text-gray-900'>Sales Sample</div>
+                <div className='p-6 space-y-4'>
+                  <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+                    <div className='text-sm font-semibold text-gray-900 mb-3'>Sales Sample Terms</div>
+                    <textarea
+                      className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                      value={salesSampleTermsForActivePage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSalesSampleTermsByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                      }}
+                    />
+                  </div>
+                  <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+                    <div className='text-sm font-semibold text-gray-900 mb-3'>Destination Studio Address</div>
+                    <textarea
+                      className='w-full min-h-[84px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                      value={salesSampleDestinationStudioAddressForActivePage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSalesSampleDestinationStudioAddressByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                      }}
+                    />
+                  </div>
+                  <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+                    <div className='text-sm font-semibold text-gray-900 mb-3'>Time Of Delivery</div>
+                    <Input value={salesSampleTimeOfDeliveryForActivePage} onChange={() => {}} />
+                  </div>
+                  <div className='bg-gray-50 rounded-xl border border-gray-200 overflow-hidden'>
+                    <div className='px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3'>
+                      <div className='text-sm font-semibold text-gray-900'>Articles</div>
+                      <div className='flex items-center gap-2'>
+                        <Button
+                          type='button'
+                          variant='primary'
+                          disabled={!data}
+                          onClick={() => {
+                            setSalesSampleArticleRows((prev) => [
+                              ...(prev ?? []),
+                              {
+                                page: String(activePage),
+                                articleNo: '',
+                                hmColourCode: '',
+                                ptArticleNumber: '',
+                                colour: '',
+                                size: '',
+                                qty: '',
+                                tod: '',
+                                destinationStudio: '',
+                              },
+                            ]);
+                          }}
+                        >
+                          Add row
+                        </Button>
+                      </div>
+                    </div>
+                    <div className='overflow-auto'>
+                      <table className='min-w-[900px] w-full'>
+                        <thead className='bg-white'>
+                          <tr>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article No</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>TOD</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Destination Studio</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {salesSampleArticlesRowsForActivePage.length > 0 ? (
+                            salesSampleArticlesRowsForActivePage.map((row, rIdx) => (
+                              <tr key={rIdx}>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.articleNo ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, articleNo: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.hmColourCode ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, hmColourCode: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.ptArticleNumber ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, ptArticleNumber: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.colour ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, colour: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.size ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, size: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.qty ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, qty: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.tod ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, tod: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Input
+                                    value={row.destinationStudio ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) =>
+                                        (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, destinationStudio: v } : x))
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td className='px-3 py-2 border-b border-gray-100'>
+                                  <Button
+                                    type='button'
+                                    variant='danger'
+                                    disabled={!data}
+                                    onClick={() => {
+                                      const originalIdx = (salesSampleArticleRows ?? []).findIndex((x) => x === row);
+                                      const idxToRemove = originalIdx >= 0 ? originalIdx : rIdx;
+                                      setSalesSampleArticleRows((prev) => (prev ?? []).filter((_, i) => i !== idxToRemove));
+                                    }}
+                                  >
+                                    Delete
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={9} className='px-3 py-2 text-center text-sm text-gray-500 italic'>
+                                No data
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {lastSavedId !== null && (
+                <div className='bg-white rounded-xl border border-gray-200 p-6'>
+                  <div className='text-sm text-gray-700'>Draft ID: {lastSavedId}</div>
+                  <div className='mt-3 flex gap-2'>
+                    <Button type='button' onClick={() => navigate(`/sales-order-prototype/${lastSavedId}`)}>
+                      Open Draft
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1120,16 +2465,6 @@ export function AllScanPage() {
         </div>
       </div>
 
-      {lastSavedId !== null && (
-        <div className='bg-white rounded-2xl border border-gray-200 p-6'>
-          <div className='text-sm text-gray-700'>Draft ID: {lastSavedId}</div>
-          <div className='mt-3 flex gap-2'>
-            <Button type='button' onClick={() => navigate(`/sales-order-prototype/${lastSavedId}`)}>
-              Open Draft
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
