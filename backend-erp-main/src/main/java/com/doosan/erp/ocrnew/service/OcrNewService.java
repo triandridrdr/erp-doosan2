@@ -924,10 +924,37 @@ public class OcrNewService {
         }
 
         Pattern leadingCountryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+
+        // Ensure each page that has invoice-derived countries also has a Terms-of-Delivery row.
+        // Some PDFs lose the Terms-of-Delivery body on certain pages (e.g. page 4), so we need
+        // a placeholder row (country line) for later normalization with the global body.
+        Set<String> existingPages = new HashSet<>();
+        for (Map<String, String> r : poTermsOfDeliveryByPage) {
+            if (r == null) continue;
+            String p = r.get("page");
+            if (p == null || p.isBlank()) continue;
+            existingPages.add(p.trim());
+        }
+        for (Map.Entry<String, LinkedHashSet<String>> en : countriesByPage.entrySet()) {
+            String page = en.getKey();
+            if (page == null || page.isBlank()) continue;
+            if (page.trim().equals("1")) continue;
+            LinkedHashSet<String> countries = en.getValue();
+            if (countries == null || countries.isEmpty()) continue;
+            if (existingPages.contains(page.trim())) continue;
+
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("page", page.trim());
+            row.put("termsOfDelivery", String.join(", ", countries));
+            poTermsOfDeliveryByPage.add(row);
+            existingPages.add(page.trim());
+        }
+
         for (Map<String, String> row : poTermsOfDeliveryByPage) {
             if (row == null) continue;
             String page = row.get("page");
             if (page == null || page.isBlank()) page = "1";
+            if (page.trim().equals("1")) continue;
             LinkedHashSet<String> countries = countriesByPage.get(page.trim());
             if (countries == null || countries.isEmpty()) continue;
 
@@ -3529,14 +3556,14 @@ public class OcrNewService {
             // capturing nearby section/table headers.
             upsertPurchaseOrderTermsOfDeliveryPage1(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
 
-            normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
-
             String termsForInvoiceFallback = termsWithCountries;
             if (termsForInvoiceFallback == null || termsForInvoiceFallback.isBlank()) {
                 termsForInvoiceFallback = formFields.get("Terms of Delivery");
             }
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
             prefixPurchaseOrderTermsOfDeliveryCountriesFromInvoiceAvgPrice(poTermsOfDeliveryByPage, poInvoiceAvgPrice);
+
+            normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
             List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
@@ -3866,8 +3893,12 @@ public class OcrNewService {
                         || low.contains("standard purchase conditions")
                         || low.contains("conditions apply")
                         || low.contains("kawasaki")
-                        || low.equals("hong kong")) {
+                        ) {
                     break;
+                }
+
+                if (low.equals("hong kong")) {
+                    continue;
                 }
 
                 // Some POs have a single 2-letter destination/country code line (e.g. "JP")
