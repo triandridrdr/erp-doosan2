@@ -3801,7 +3801,53 @@ public class OcrNewService {
         }
         if (codes.isEmpty()) return termsOfDelivery;
 
-        String codesLine = String.join(", ", codes);
+        LinkedHashSet<String> ordered = codes;
+        if (allLines != null && !allLines.isEmpty()) {
+            Pattern anyCountryListPat = Pattern.compile("((?:[A-Z]{2}\\s*,\\s*){3,}[A-Z]{2})\\b");
+            Pattern twoLetterPat = Pattern.compile("\\b([A-Z]{2})\\b");
+
+            List<String> best = null;
+            for (OcrNewLine l : allLines) {
+                if (l == null || l.getText() == null) continue;
+                String t = oneLine(l.getText()).trim().toUpperCase(Locale.ROOT);
+                if (t.isBlank()) continue;
+
+                Matcher em = anyCountryListPat.matcher(t);
+                while (em.find()) {
+                    String chunk = em.group(1);
+                    if (chunk == null || chunk.isBlank()) continue;
+
+                    List<String> found = new ArrayList<>();
+                    Matcher cm = twoLetterPat.matcher(chunk);
+                    while (cm.find()) {
+                        String c = cm.group(1);
+                        if (c == null || c.isBlank()) continue;
+                        c = c.trim();
+                        // OCR often confuses I with l in codes like OI => OL.
+                        if (c.equals("OL") && codes.contains("OI") && !codes.contains("OL")) {
+                            c = "OI";
+                        }
+                        found.add(c);
+                    }
+                    if (found.size() >= 4 && (best == null || found.size() > best.size())) {
+                        best = found;
+                    }
+                }
+            }
+
+            if (best != null && !best.isEmpty()) {
+                LinkedHashSet<String> ord = new LinkedHashSet<>();
+                for (String c : best) {
+                    if (codes.contains(c)) ord.add(c);
+                }
+                for (String c : codes) {
+                    if (!ord.contains(c)) ord.add(c);
+                }
+                ordered = ord;
+            }
+        }
+
+        String codesLine = String.join(", ", ordered);
 
         String existing = safe(termsOfDelivery).trim();
         if (existing.toUpperCase(Locale.ROOT).startsWith(codesLine)) return existing;
@@ -3811,6 +3857,22 @@ public class OcrNewService {
         String body = parts.length > 1 ? parts[1].trim() : "";
         Pattern leadingCountryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
         if (leadingCountryLinePat.matcher(firstLine).matches()) {
+            // If the existing country list already contains the same set of codes, preserve the
+            // original ordering because it is the closest to the PDF's ordering.
+            LinkedHashSet<String> existingCodes = new LinkedHashSet<>();
+            Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(firstLine.toUpperCase(Locale.ROOT));
+            while (m.find()) {
+                existingCodes.add(m.group(1));
+            }
+            if (!existingCodes.isEmpty()) {
+                LinkedHashSet<String> computedCodes = new LinkedHashSet<>();
+                for (String c : ordered) {
+                    if (c != null && !c.isBlank()) computedCodes.add(c.trim().toUpperCase(Locale.ROOT));
+                }
+                if (!computedCodes.isEmpty() && existingCodes.size() == computedCodes.size() && computedCodes.containsAll(existingCodes)) {
+                    return existing;
+                }
+            }
             if (body.isBlank()) return codesLine;
             return codesLine + "\n" + body;
         }
