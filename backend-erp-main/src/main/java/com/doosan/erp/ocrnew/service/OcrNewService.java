@@ -99,6 +99,33 @@ public class OcrNewService {
         this.debugLogging = debugLogging;
     }
 
+    private static String inferPurchaseOrderTermsOfDeliveryGlobalBodyFromLines(List<OcrNewLine> allLines) {
+        if (allLines == null || allLines.isEmpty()) return "";
+
+        String best = "";
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String s = oneLine(l.getText()).replaceAll("\\s+", " ").trim();
+            if (s.isBlank()) continue;
+
+            String low = s.toLowerCase(Locale.ROOT);
+            boolean looksLikeTerms = low.contains("transport by")
+                    || low.contains("incoterms")
+                    || low.contains("free carrier")
+                    || low.contains("service provider information")
+                    || low.contains("origin delivery information")
+                    || low.contains("fca")
+                    || low.contains("fob");
+            if (!looksLikeTerms) continue;
+
+            if (s.length() > best.length()) {
+                best = s;
+            }
+        }
+
+        return cleanPurchaseOrderTermsOfDeliveryText(best);
+    }
+
     /**
      * Fallback extractor parsing raw OCR lines if table detection fails.
      * Heuristics:
@@ -838,14 +865,15 @@ public class OcrNewService {
         if (globalTerms == null || globalTerms.isBlank()) return;
 
         String globalBody = cleanPurchaseOrderTermsOfDeliveryText(stripLeadingCountryLine(globalTerms.trim()));
-        if (globalBody.isBlank()) return;
-
         Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+        if (countryLinePat.matcher(globalBody).matches()) {
+            globalBody = "";
+        }
+        if (globalBody.isBlank()) return;
 
         for (Map<String, String> row : poTermsOfDeliveryByPage) {
             if (row == null) continue;
             String page = row.get("page");
-            if (page != null && page.trim().equals("1")) continue;
 
             String existing = row.get("termsOfDelivery");
             if (existing == null || existing.isBlank()) continue;
@@ -3566,7 +3594,21 @@ public class OcrNewService {
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
             prefixPurchaseOrderTermsOfDeliveryCountriesFromInvoiceAvgPrice(poTermsOfDeliveryByPage, poInvoiceAvgPrice);
 
-            normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, formFields.get("Terms of Delivery"));
+            String globalTermsForNormalization = formFields.get("Terms of Delivery");
+            String globalBodyForNormalization = cleanPurchaseOrderTermsOfDeliveryText(
+                    stripLeadingCountryLine(nvl(globalTermsForNormalization).trim())
+            );
+            Pattern todCountryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+            if (todCountryLinePat.matcher(globalBodyForNormalization).matches()) {
+                globalBodyForNormalization = "";
+            }
+            if (globalBodyForNormalization.isBlank()) {
+                String inferredBody = inferPurchaseOrderTermsOfDeliveryGlobalBodyFromLines(allLines);
+                if (inferredBody != null && !inferredBody.isBlank()) {
+                    globalTermsForNormalization = inferredBody;
+                }
+            }
+            normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, globalTermsForNormalization);
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
             List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
