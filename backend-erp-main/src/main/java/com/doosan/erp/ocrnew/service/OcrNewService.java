@@ -102,28 +102,62 @@ public class OcrNewService {
     private static String inferPurchaseOrderTermsOfDeliveryGlobalBodyFromLines(List<OcrNewLine> allLines) {
         if (allLines == null || allLines.isEmpty()) return "";
 
-        String best = "";
+        List<String> lines = new ArrayList<>();
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             String s = oneLine(l.getText()).replaceAll("\\s+", " ").trim();
             if (s.isBlank()) continue;
+            lines.add(s);
+        }
+        if (lines.isEmpty()) return "";
 
+        int bestStart = -1;
+        String bestBlock = "";
+        for (int i = 0; i < lines.size(); i++) {
+            String s = lines.get(i);
             String low = s.toLowerCase(Locale.ROOT);
-            boolean looksLikeTerms = low.contains("transport by")
-                    || low.contains("incoterms")
-                    || low.contains("free carrier")
-                    || low.contains("service provider information")
-                    || low.contains("origin delivery information")
-                    || low.contains("fca")
-                    || low.contains("fob");
-            if (!looksLikeTerms) continue;
 
-            if (s.length() > best.length()) {
-                best = s;
+            boolean isAnchor = low.contains("transport by") || low.contains("incoterms");
+            if (!isAnchor) continue;
+
+            StringBuilder block = new StringBuilder();
+            int added = 0;
+            for (int j = i; j < Math.min(lines.size(), i + 6); j++) {
+                String sj = lines.get(j);
+                String lowj = sj.toLowerCase(Locale.ROOT);
+
+                boolean looksLikeTerms = lowj.contains("transport by")
+                        || lowj.contains("incoterms")
+                        || lowj.contains("ship by")
+                        || lowj.contains("free carrier")
+                        || lowj.contains("service provider information")
+                        || lowj.contains("origin delivery information")
+                        || lowj.contains("account number")
+                        || lowj.contains("account no")
+                        || lowj.contains("fca")
+                        || lowj.contains("fob");
+
+                if (!looksLikeTerms) {
+                    if (added > 0) break;
+                    continue;
+                }
+
+                if (block.length() > 0) block.append("\n");
+                block.append(sj);
+                added++;
+
+                if (lowj.startsWith("by accepting") || lowj.contains("supplier acknowledges")) break;
+            }
+
+            String cleaned = cleanPurchaseOrderTermsOfDeliveryText(block.toString());
+            if (!cleaned.isBlank() && cleaned.length() > bestBlock.length()) {
+                bestBlock = cleaned;
+                bestStart = i;
             }
         }
 
-        return cleanPurchaseOrderTermsOfDeliveryText(best);
+        if (bestStart < 0) return "";
+        return bestBlock;
     }
 
     /**
@@ -3883,7 +3917,7 @@ public class OcrNewService {
             if (best != null && !best.isEmpty()) {
                 LinkedHashSet<String> ord = new LinkedHashSet<>();
                 for (String c : best) {
-                    if (codes.contains(c)) ord.add(c);
+                    if (c != null && !c.isBlank()) ord.add(c.trim().toUpperCase(Locale.ROOT));
                 }
                 for (String c : codes) {
                     if (!ord.contains(c)) ord.add(c);
