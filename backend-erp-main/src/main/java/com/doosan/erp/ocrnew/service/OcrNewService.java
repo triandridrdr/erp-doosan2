@@ -4938,6 +4938,36 @@ public class OcrNewService {
 
             planningMarkets = planBuf.toString().trim();
 
+            // Final fallback: if the entire row is a single OCR line (date + planning + qty on one line),
+            // parse planning markets and qty/percent directly from the text after the date match.
+            if (planningMarkets.isBlank() || quantity.isBlank()) {
+                String afterDateText = line.substring(dm.end()).trim();
+                if (!afterDateText.isBlank()) {
+                    Matcher inlineQp = qtyPercentPat.matcher(afterDateText);
+                    if (inlineQp.find()) {
+                        if (quantity.isBlank()) {
+                            quantity = inlineQp.group(1).replaceAll("\\s+", " ").trim();
+                            percentTotalQty = inlineQp.group(2).trim();
+                        }
+                        if (planningMarkets.isBlank()) {
+                            String inlinePlanning = afterDateText.substring(0, inlineQp.start()).trim();
+                            List<String> inlineTokens = extractPlanningTokens.apply(inlinePlanning);
+                            if (!inlineTokens.isEmpty()) {
+                                planningMarkets = String.join(", ", inlineTokens);
+                            } else if (!inlinePlanning.isBlank()) {
+                                planningMarkets = inlinePlanning;
+                            }
+                        }
+                    } else if (planningMarkets.isBlank()) {
+                        // No qty/percent found but there may still be planning tokens
+                        List<String> inlineTokens = extractPlanningTokens.apply(afterDateText);
+                        if (!inlineTokens.isEmpty()) {
+                            planningMarkets = String.join(", ", inlineTokens);
+                        }
+                    }
+                }
+            }
+
             if (planningMarkets.isBlank() && log.isDebugEnabled()) {
                 String sample = rowLines.stream()
                         .limit(12)
@@ -5043,9 +5073,18 @@ public class OcrNewService {
                     planBuf.setLength(0);
 
                     // if date line also includes planning text, keep the tail.
+                    // Strip any trailing qty+percent pattern and keep the planning part.
                     String tail = s.substring(dm.end()).trim();
-                    if (!tail.isBlank() && !qtyPercentPat.matcher(tail).find()) {
-                        planBuf.append(tail);
+                    if (!tail.isBlank()) {
+                        Matcher tailQp = qtyPercentPat.matcher(tail);
+                        if (tailQp.find()) {
+                            String planPart = tail.substring(0, tailQp.start()).trim();
+                            if (!planPart.isBlank()) {
+                                planBuf.append(planPart);
+                            }
+                        } else {
+                            planBuf.append(tail);
+                        }
                     }
                     continue;
                 }
