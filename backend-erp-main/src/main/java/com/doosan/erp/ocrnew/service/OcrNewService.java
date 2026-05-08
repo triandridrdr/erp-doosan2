@@ -3610,6 +3610,58 @@ public class OcrNewService {
                 annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
             }
 
+            // Some documents (esp. Sales Sample attachments) contain another "Terms of Delivery"
+            // section on later pages (e.g. Courier DHL). For Purchase Orders we prefer the page-1
+            // header code (often a single 2-letter market code) combined with the shipping body
+            // (e.g. "Transport by Sea...") if present in OCR/PDFBox supplement lines.
+            try {
+                Pattern twoLetterCountryPat = Pattern.compile("^[A-Z]{2}$");
+                String page1Code = "";
+                if (allLines != null && !allLines.isEmpty()) {
+                    List<OcrNewLine> page1Lines = new ArrayList<>();
+                    for (OcrNewLine l : allLines) {
+                        if (l == null || l.getText() == null) continue;
+                        if (l.getPage() == 1) page1Lines.add(l);
+                    }
+                    page1Lines.sort(Comparator
+                            .comparingInt(OcrNewLine::getTop)
+                            .thenComparingInt(OcrNewLine::getLeft));
+
+                    int headerIdx = -1;
+                    for (int i = 0; i < page1Lines.size(); i++) {
+                        String s = oneLine(page1Lines.get(i).getText()).trim();
+                        if (s.equalsIgnoreCase("Terms of Delivery") || s.toLowerCase(Locale.ROOT).startsWith("terms of delivery")) {
+                            headerIdx = i;
+                            break;
+                        }
+                    }
+                    if (headerIdx >= 0) {
+                        for (int i = headerIdx + 1; i < Math.min(page1Lines.size(), headerIdx + 6); i++) {
+                            String s = oneLine(page1Lines.get(i).getText()).trim().toUpperCase(Locale.ROOT);
+                            if (s.isBlank()) continue;
+                            if (twoLetterCountryPat.matcher(s).matches()) {
+                                page1Code = s;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                String inferredBody = inferPurchaseOrderTermsOfDeliveryGlobalBodyFromLines(allLines);
+                if (!page1Code.isBlank() && inferredBody != null && !inferredBody.isBlank()) {
+                    String lowBody = inferredBody.toLowerCase(Locale.ROOT);
+                    boolean looksLikeSea = lowBody.contains("transport by") || lowBody.contains("incoterms") || lowBody.contains("ship by");
+                    String existingTerms = nvl(formFields.get("Terms of Delivery")).trim();
+                    String lowExisting = existingTerms.toLowerCase(Locale.ROOT);
+                    boolean existingLooksLikeCourier = lowExisting.contains("courier") || lowExisting.contains("dhl") || lowExisting.contains("destination studio address");
+                    if (looksLikeSea && (existingTerms.isBlank() || existingLooksLikeCourier)) {
+                        formFields.put("Terms of Delivery", page1Code + "\n" + inferredBody);
+                    }
+                }
+            } catch (Exception ignore) {
+                // Best-effort override only; never fail OCR job for this enrichment.
+            }
+
             String terms = formFields.get("Terms of Delivery");
             String termsWithCountries = addPurchaseOrderTermsDeliveryCountryCodes(terms, allLines, poTimeOfDelivery);
             if (termsWithCountries != null && !termsWithCountries.isBlank()) {
@@ -3871,14 +3923,36 @@ public class OcrNewService {
     }
 
     private static String addPurchaseOrderTermsDeliveryCountryCodes(String termsOfDelivery, List<OcrNewLine> allLines, List<Map<String, String>> poTimeOfDelivery) {
-        LinkedHashSet<String> codes = extractPurchaseOrderPlanningMarketCountryCodesExpanded(allLines, poTimeOfDelivery);
+        String existing0 = safe(termsOfDelivery).trim();
+        if (!existing0.isBlank()) {
+            String[] p0 = existing0.split("\\R", 2);
+            String first0 = p0.length > 0 ? p0[0].trim() : "";
+            String body0 = p0.length > 1 ? p0[1].trim() : "";
+            Pattern leadingCountryLinePat0 = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+            if (leadingCountryLinePat0.matcher(first0.toUpperCase(Locale.ROOT)).matches() && !body0.isBlank()) {
+                String low0 = body0.toLowerCase(Locale.ROOT);
+                boolean bodyLooksValid0 = low0.contains("transport by") || low0.contains("incoterms") || low0.contains("ship by")
+                        || low0.contains("free carrier") || low0.contains("fca") || low0.contains("fob");
+                if (bodyLooksValid0) return existing0;
+            }
+        }
+
+        // Prefer parsed Time-of-Delivery table (most reliable, scoped to the planning market list)
+        // to avoid accidentally collecting random 2-letter tokens from addresses/other text.
+        String codesSource = "parsedTable";
+        LinkedHashSet<String> codes = extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery);
         if (codes.isEmpty()) {
+            codesSource = "expanded";
+            codes = extractPurchaseOrderPlanningMarketCountryCodesExpanded(allLines, poTimeOfDelivery);
+        }
+        if (codes.isEmpty()) {
+            codesSource = "allLines";
             codes = extractPurchaseOrderPlanningMarketCountryCodes(allLines);
         }
-        if (codes.isEmpty()) {
-            codes = extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery);
-        }
         if (codes.isEmpty()) return termsOfDelivery;
+        if (log.isDebugEnabled()) {
+            log.debug("[PO-TOD-CODES] source={} size={} codes={}", codesSource, codes.size(), codes);
+        }
 
         LinkedHashSet<String> ordered = codes;
         if (allLines != null && !allLines.isEmpty()) {
@@ -3915,14 +3989,32 @@ public class OcrNewService {
             }
 
             if (best != null && !best.isEmpty()) {
-                LinkedHashSet<String> ord = new LinkedHashSet<>();
+                int overlap = 0;
                 for (String c : best) {
-                    if (c != null && !c.isBlank()) ord.add(c.trim().toUpperCase(Locale.ROOT));
+                    if (c == null || c.isBlank()) continue;
+                    String cc = c.trim().toUpperCase(Locale.ROOT);
+                    if (codes.contains(cc)) overlap++;
                 }
-                for (String c : codes) {
-                    if (!ord.contains(c)) ord.add(c);
+                double overlapRatio = best.isEmpty() ? 0d : (overlap * 1.0d / best.size());
+
+                // Only trust the OCR-detected country list line when it is clearly describing
+                // the same planning market codes set. This prevents unrelated 2-letter tokens
+                // (e.g. from addresses/other sections) from expanding a valid single-code TOD.
+                boolean trustBestList = overlap >= 4 && overlapRatio >= 0.60d;
+                if (log.isDebugEnabled()) {
+                    log.debug("[PO-TOD-CODES] bestList size={} overlap={} overlapRatio={} trustBestList={}",
+                            best.size(), overlap, String.format(Locale.ROOT, "%.2f", overlapRatio), trustBestList);
                 }
-                ordered = ord;
+                if (trustBestList) {
+                    LinkedHashSet<String> ord = new LinkedHashSet<>();
+                    for (String c : best) {
+                        if (c != null && !c.isBlank()) ord.add(c.trim().toUpperCase(Locale.ROOT));
+                    }
+                    for (String c : codes) {
+                        if (!ord.contains(c)) ord.add(c);
+                    }
+                    ordered = ord;
+                }
             }
         }
 
