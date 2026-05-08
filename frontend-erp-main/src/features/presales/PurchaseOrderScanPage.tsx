@@ -252,6 +252,9 @@ export function PurchaseOrderScanPage() {
 
   const termsOfDeliveryForActivePage = useMemo(() => {
     const direct = (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+
+    if (activePage === 1) return direct;
+
     const countries = (invoiceAvgPriceRows ?? [])
       .filter((r) => (r?.page ?? '1').toString() === String(activePage))
       .map((r) => (r?.country ?? '').toString().trim())

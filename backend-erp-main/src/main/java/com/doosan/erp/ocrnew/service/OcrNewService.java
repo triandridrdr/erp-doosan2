@@ -3778,7 +3778,15 @@ public class OcrNewService {
 
         String existing = safe(termsOfDelivery).trim();
         if (existing.toUpperCase(Locale.ROOT).startsWith(codesLine)) return existing;
-        if (existing.matches("^[A-Z]{2}(?:\\s*,\\s*[A-Z]{2}){3,}.*")) return existing;
+
+        String[] parts = existing.split("\\R", 2);
+        String firstLine = parts.length > 0 ? parts[0].trim() : "";
+        String body = parts.length > 1 ? parts[1].trim() : "";
+        Pattern leadingCountryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+        if (leadingCountryLinePat.matcher(firstLine).matches()) {
+            if (body.isBlank()) return codesLine;
+            return codesLine + "\n" + body;
+        }
 
         String formatted = existing
                 .replaceAll("(?i)\\.\\s*n\\s*(ship\\s+by\\b)", ".\\n$1")
@@ -3966,8 +3974,25 @@ public class OcrNewService {
 
         // Ensure we also include directly extracted country codes (e.g. KR (PM-KR), ID (PM-ID), MY (PM-MY)).
         out.addAll(extractPurchaseOrderPlanningMarketCountryCodesGlobal(allLines));
-        if (out.isEmpty()) {
-            out.addAll(extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery));
+
+        // Always merge in table-parsed codes as well, because region OCR fills planningMarkets
+        // into poTimeOfDelivery without adding those tokens into allLines.
+        out.addAll(extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery));
+
+        // Stabilize ordering: follow the canonical PMSEU expansion order (plus TW) when possible.
+        // This matches how the PDF typically lists markets and avoids order drift from OCR discovery order.
+        if (!out.isEmpty()) {
+            String[] canonical = new String[] {
+                    "SE", "DE", "BE", "US", "PL", "JP", "KR", "CH", "CA", "TR", "MX", "MY", "RS", "PH", "IN", "CO", "VN", "EC", "GB", "ME", "IX", "TH", "ID", "TW", "PA"
+            };
+            LinkedHashSet<String> ordered = new LinkedHashSet<>();
+            for (String c : canonical) {
+                if (out.contains(c)) ordered.add(c);
+            }
+            for (String c : out) {
+                if (!ordered.contains(c)) ordered.add(c);
+            }
+            return ordered;
         }
 
         return out;
@@ -4012,7 +4037,7 @@ public class OcrNewService {
         LinkedHashSet<String> codes = new LinkedHashSet<>();
         if (allLines == null || allLines.isEmpty()) return codes;
 
-        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*(?:PM|OL)[- ]?[A-Z0-9]{2,}\\s*\\)");
+        Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*(?:PM|OL|PIM)[- ]?[A-Z0-9]{2,}\\s*\\)");
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             String t = oneLine(l.getText()).trim();
