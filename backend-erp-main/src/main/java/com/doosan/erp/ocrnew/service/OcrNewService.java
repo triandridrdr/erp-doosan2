@@ -1134,7 +1134,10 @@ public class OcrNewService {
             Map<String, String> row = new LinkedHashMap<>();
             row.put("invoiceAveragePrice", price);
             row.put("country", fallbackCountryList);
-            poInvoiceAvgPrice.add(1, row);
+            int insertAt = 1;
+            if (poInvoiceAvgPrice == null) return;
+            if (insertAt > poInvoiceAvgPrice.size()) insertAt = poInvoiceAvgPrice.size();
+            poInvoiceAvgPrice.add(insertAt, row);
             log.info("[PO-INVOICE-PRICE] Filled missing row from Terms of Delivery: {} | {}", price, fallbackCountryList);
             break;
         }
