@@ -900,6 +900,53 @@ public class OcrNewService {
         }
     }
 
+    private static void prefixPurchaseOrderTermsOfDeliveryCountriesFromInvoiceAvgPrice(
+            List<Map<String, String>> poTermsOfDeliveryByPage,
+            List<Map<String, String>> poInvoiceAvgPrice
+    ) {
+        if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
+        if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) return;
+
+        Map<String, LinkedHashSet<String>> countriesByPage = new LinkedHashMap<>();
+        Pattern countryListPat = Pattern.compile("\\b[A-Z]{2}\\b");
+        for (Map<String, String> row : poInvoiceAvgPrice) {
+            if (row == null) continue;
+            String page = row.get("page");
+            if (page == null || page.isBlank()) page = "1";
+            String country = row.get("country");
+            if (country == null || country.isBlank()) continue;
+
+            LinkedHashSet<String> countries = countriesByPage.computeIfAbsent(page.trim(), k -> new LinkedHashSet<>());
+            Matcher m = countryListPat.matcher(country.toUpperCase(Locale.ROOT));
+            while (m.find()) {
+                countries.add(m.group());
+            }
+        }
+
+        Pattern leadingCountryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+        for (Map<String, String> row : poTermsOfDeliveryByPage) {
+            if (row == null) continue;
+            String page = row.get("page");
+            if (page == null || page.isBlank()) page = "1";
+            LinkedHashSet<String> countries = countriesByPage.get(page.trim());
+            if (countries == null || countries.isEmpty()) continue;
+
+            String existing = row.get("termsOfDelivery");
+            String countryLine = String.join(", ", countries);
+            if (existing == null || existing.isBlank()) {
+                row.put("termsOfDelivery", countryLine);
+                continue;
+            }
+
+            String trimmed = existing.trim();
+            String[] parts = trimmed.split("\\R", 2);
+            String firstLine = parts.length > 0 ? parts[0].trim() : "";
+            if (leadingCountryLinePat.matcher(firstLine).matches()) continue;
+
+            row.put("termsOfDelivery", countryLine + "\n" + trimmed);
+        }
+    }
+
     private static String stripLeadingCountryLine(String terms) {
         if (terms == null) return "";
         String t = terms.trim();
@@ -3489,6 +3536,7 @@ public class OcrNewService {
                 termsForInvoiceFallback = formFields.get("Terms of Delivery");
             }
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
+            prefixPurchaseOrderTermsOfDeliveryCountriesFromInvoiceAvgPrice(poTermsOfDeliveryByPage, poInvoiceAvgPrice);
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
             List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);

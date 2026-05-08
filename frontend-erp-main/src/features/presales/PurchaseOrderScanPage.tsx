@@ -252,8 +252,19 @@ export function PurchaseOrderScanPage() {
   };
 
   const termsOfDeliveryForActivePage = useMemo(() => {
-    return (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
-  }, [activePage, termsOfDeliveryByPageDraft]);
+    const direct = (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+    const countries = (invoiceAvgPriceRows ?? [])
+      .filter((r) => (r?.page ?? '1').toString() === String(activePage))
+      .map((r) => (r?.country ?? '').toString().trim())
+      .filter((v) => v.length > 0);
+    const countryLine = countries.join(', ');
+    if (countryLine.length === 0) return direct;
+    const trimmed = direct.trim();
+    if (trimmed.length === 0) return countryLine;
+    const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? '';
+    if (/^(?:[A-Z]{2}\s*,\s*)*[A-Z]{2}$/.test(firstLine)) return direct;
+    return `${countryLine}\n${direct}`;
+  }, [activePage, termsOfDeliveryByPageDraft, invoiceAvgPriceRows]);
 
   const salesSampleTermsForActivePage = useMemo(() => {
     const direct = (salesSampleTermsByPageDraft?.[activePage] ?? '').toString();
@@ -1066,7 +1077,7 @@ useEffect(() => {
         </div>
       ) : null}
 
-      {activePage === 1 ? (
+      {activePage >= 1 ? (
         <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
           <div className='p-6 space-y-6 bg-gray-50'>
             <div className='bg-white rounded-xl border border-gray-200 p-4'>
