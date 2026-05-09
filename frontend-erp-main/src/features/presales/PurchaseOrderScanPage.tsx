@@ -56,6 +56,7 @@ export function PurchaseOrderScanPage() {
 
   const pageCount = Math.max(1, Number(data?.pageCount ?? 1));
   const [activePage, setActivePage] = useState<number>(1);
+  const staticPreTabPage = 1;
 
   const [timeOfDeliveryRows, setTimeOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
   const [quantityPerArticleRows, setQuantityPerArticleRows] = useState<Array<Record<string, string>>>([]);
@@ -913,7 +914,7 @@ useEffect(() => {
         </div>
       </div>
 
-      {activePage !== 1 ? (
+      {false ? (
         <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
           <div className='p-6 space-y-6 bg-gray-50'>
             <div className='bg-white rounded-xl border border-gray-200 p-4'>
@@ -1084,10 +1085,10 @@ useEffect(() => {
               <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
               <textarea
                 className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-                value={termsOfDeliveryForActivePage}
+                value={termsOfDeliveryForPage1}
                 onChange={(e) => {
                   const v = e.target.value;
-                  setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+                  setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [staticPreTabPage]: v }));
                 }}
               />
             </div>
@@ -1173,7 +1174,7 @@ useEffect(() => {
                       setQuantityPerArticleRows((prev) => [
                         ...(prev ?? []),
                         {
-                          page: String(activePage),
+                          page: String(staticPreTabPage),
                           articleNo: '',
                           hmColourCode: '',
                           ptArticleNumber: '',
@@ -1204,8 +1205,8 @@ useEffect(() => {
                     </tr>
                   </thead>
                   <tbody>
-                    {quantityPerArticleRowsForActivePage.length > 0 ? (
-                      quantityPerArticleRowsForActivePage.map((row, rIdx) => (
+                    {quantityPerArticleRowsForPage1.length > 0 ? (
+                      quantityPerArticleRowsForPage1.map((row, rIdx) => (
                         <tr key={rIdx}>
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input
@@ -1338,7 +1339,7 @@ useEffect(() => {
                       setInvoiceAvgPriceRows((prev) => [
                         ...(prev ?? []),
                         {
-                          page: String(activePage),
+                          page: String(staticPreTabPage),
                           invoiceAveragePrice: '',
                           country: '',
                         },
@@ -1359,8 +1360,8 @@ useEffect(() => {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoiceAvgPriceRowsForActivePage.length > 0 ? (
-                      invoiceAvgPriceRowsForActivePage.map((row, rIdx) => (
+                    {invoiceAvgPriceRowsForPage1.length > 0 ? (
+                      invoiceAvgPriceRowsForPage1.map((row, rIdx) => (
                         <tr key={rIdx}>
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input
