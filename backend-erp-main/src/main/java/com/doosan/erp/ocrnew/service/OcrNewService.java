@@ -396,7 +396,7 @@ public class OcrNewService {
         int pageCount = pageImages.size();
         if (pageCount <= 0) return;
 
-        Pattern pricePat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})");
+        Pattern pricePat = Pattern.compile("(\\d+(?:[\\.,]\\d+)?)\\s*([A-Z]{3})");
         Pattern countryPat = Pattern.compile("\\b([A-Z]{2})\\b");
         String whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/() %-";
 
@@ -411,89 +411,113 @@ public class OcrNewService {
             OcrNewLine header = invoiceHeaderByPage.get(page);
             OcrNewLine totalQty = totalQtyByPage.get(page);
 
-            int left;
-            int top;
-            int right;
-            int bottom;
-            String anchor;
+
+            double w = img.getWidth();
+            double h = img.getHeight();
+            List<int[]> rects = new ArrayList<>();
 
             if (header != null) {
-                left = Math.max(0, header.getLeft() - 20);
-                top = Math.max(0, header.getBottom() + 2);
-                right = Math.min(img.getWidth(), left + (int) Math.round(img.getWidth() * 0.70));
-                bottom = Math.min(img.getHeight(), top + (int) Math.round(img.getHeight() * 0.18));
-                anchor = "invoiceHeader";
-            } else if (totalQty != null) {
-                // Common layout: invoice avg price table appears right after Total Quantity.
-                left = Math.max(0, totalQty.getLeft() - 30);
-                top = Math.max(0, totalQty.getBottom() + 2);
-                right = Math.min(img.getWidth(), left + (int) Math.round(img.getWidth() * 0.70));
-                bottom = Math.min(img.getHeight(), top + (int) Math.round(img.getHeight() * 0.16));
-                anchor = "totalQuantity";
-            } else {
-                // Template fallback: bottom portion where the small table usually sits.
-                double w = img.getWidth();
-                double h = img.getHeight();
-                left = (int) Math.round(w * 0.05);
-                right = (int) Math.round(w * 0.85);
-                top = (int) Math.round(h * 0.72);
-                bottom = (int) Math.round(h * 0.90);
-                anchor = "templateBottom";
+                int left0 = Math.max(0, header.getLeft() - 30);
+                int top0 = Math.max(0, header.getBottom() + 2);
+                int right0 = Math.min(img.getWidth(), left0 + (int) Math.round(w * 0.78));
+                int bottom0 = Math.min(img.getHeight(), top0 + (int) Math.round(h * 0.22));
+                rects.add(new int[]{left0, top0, right0, bottom0, 1});
+                rects.add(new int[]{Math.max(0, left0 - 40), Math.max(0, top0 - 10), Math.min(img.getWidth(), right0 + 60), Math.min(img.getHeight(), bottom0 + 40), 2});
             }
-
-            int width = Math.max(0, right - left);
-            int height = Math.max(0, bottom - top);
-            if (width <= 10 || height <= 10) continue;
-
-            String regionText;
-            try {
-                regionText = ocrEngine.extractTextFromRegion(img, new Rectangle(left, top, width, height), 6, whitelist);
-            } catch (Exception ex) {
-                continue;
+            if (totalQty != null) {
+                int left0 = Math.max(0, totalQty.getLeft() - 40);
+                int top0 = Math.max(0, totalQty.getBottom() + 2);
+                int right0 = Math.min(img.getWidth(), left0 + (int) Math.round(w * 0.78));
+                int bottom0 = Math.min(img.getHeight(), top0 + (int) Math.round(h * 0.20));
+                rects.add(new int[]{left0, top0, right0, bottom0, 3});
             }
-            if (regionText == null || regionText.isBlank()) {
-                if (effectiveDebug) {
-                    log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} skip: empty regionText anchor={} regionBBox=[{},{}-{},{}]", fileName, page, anchor, left, top, right, bottom);
-                }
-                continue;
-            }
+            // Template fallbacks.
+            rects.add(new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.66), (int) Math.round(w * 0.90), (int) Math.round(h * 0.90), 4});
+            rects.add(new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.58), (int) Math.round(w * 0.92), (int) Math.round(h * 0.88), 5});
+            // Very aggressive fallbacks (expensive): lower half and full page.
+            rects.add(new int[]{(int) Math.round(w * 0.00), (int) Math.round(h * 0.45), (int) Math.round(w * 1.00), (int) Math.round(h * 0.98), 6});
+            rects.add(new int[]{(int) Math.round(w * 0.00), (int) Math.round(h * 0.00), (int) Math.round(w * 1.00), (int) Math.round(h * 1.00), 7});
 
             String pendingPrice = "";
             String country = "";
+            int usedRect = 0;
+            String usedAnchor = "";
 
-            String[] lines = regionText.split("\\r?\\n");
-            for (String raw : lines) {
-                String s = raw == null ? "" : oneLine(raw).replaceAll("\\s+", " ").trim();
-                if (s.isBlank()) continue;
-                String low = s.toLowerCase(Locale.ROOT);
-                if (low.contains("invoice average")) continue;
-                if (low.equals("country")) continue;
+            for (int[] r0 : rects) {
+                if (r0 == null || r0.length < 5) continue;
+                int left = Math.max(0, Math.min(img.getWidth() - 1, r0[0]));
+                int top = Math.max(0, Math.min(img.getHeight() - 1, r0[1]));
+                int right = Math.max(0, Math.min(img.getWidth(), r0[2]));
+                int bottom = Math.max(0, Math.min(img.getHeight(), r0[3]));
+                int width = Math.max(0, right - left);
+                int height = Math.max(0, bottom - top);
+                if (width <= 10 || height <= 10) continue;
 
-                Matcher pm = pricePat.matcher(s.toUpperCase(Locale.ROOT));
-                if (pm.find()) {
-                    pendingPrice = (pm.group(1).trim() + " " + pm.group(2).trim()).trim();
-                    String tail = s.substring(pm.end()).trim();
-                    Matcher cm = countryPat.matcher(tail.toUpperCase(Locale.ROOT));
-                    if (cm.find()) {
-                        country = cm.group(1).trim().toUpperCase(Locale.ROOT);
-                        break;
+                String regionText;
+                try {
+                    regionText = ocrEngine.extractTextFromRegion(img, new Rectangle(left, top, width, height), 8, whitelist);
+                } catch (Exception ex) {
+                    continue;
+                }
+                if (regionText == null || regionText.isBlank()) {
+                    if (effectiveDebug) {
+                        log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} tryRect={} empty regionBBox=[{},{}-{},{}]", fileName, page, r0[4], left, top, right, bottom);
                     }
                     continue;
                 }
 
-                if (!pendingPrice.isBlank()) {
-                    Matcher cm = countryPat.matcher(s.toUpperCase(Locale.ROOT));
-                    if (cm.find()) {
-                        country = cm.group(1).trim().toUpperCase(Locale.ROOT);
-                        break;
+                pendingPrice = "";
+                country = "";
+
+                String[] lines = regionText.split("\\r?\\n");
+                for (String raw : lines) {
+                    String s = raw == null ? "" : oneLine(raw).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.contains("invoice average")) continue;
+                    if (low.equals("country") || low.equals("invoice") || low.equals("average")) continue;
+
+                    String up = s.toUpperCase(Locale.ROOT);
+                    Matcher pm = pricePat.matcher(up);
+                    if (pm.find()) {
+                        String n = pm.group(1) == null ? "" : pm.group(1).trim();
+                        String cur = pm.group(2) == null ? "" : pm.group(2).trim();
+                        if (!n.isBlank() && !cur.isBlank()) {
+                            n = n.replace(',', '.');
+                            pendingPrice = (n + " " + cur).trim();
+                        }
+
+                        Matcher cm = countryPat.matcher(up.substring(pm.end()));
+                        if (cm.find()) {
+                            country = cm.group(1).trim().toUpperCase(Locale.ROOT);
+                            break;
+                        }
+                        continue;
                     }
+
+                    if (!pendingPrice.isBlank()) {
+                        Matcher cm = countryPat.matcher(up);
+                        if (cm.find()) {
+                            country = cm.group(1).trim().toUpperCase(Locale.ROOT);
+                            break;
+                        }
+                    }
+                }
+
+                if (!pendingPrice.isBlank() && !country.isBlank()) {
+                    usedRect = r0[4];
+                    if (usedRect == 1 || usedRect == 2) usedAnchor = "invoiceHeader";
+                    else if (usedRect == 3) usedAnchor = "totalQuantity";
+                    else usedAnchor = "template";
+                    break;
+                }
+
+                if (effectiveDebug) {
+                    log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} tryRect={} parseFailed price='{}' country='{}'", fileName, page, r0[4], pendingPrice, country);
                 }
             }
 
             if (pendingPrice.isBlank() || country.isBlank()) {
-                if (effectiveDebug) {
-                    log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} skip: parseFailed anchor={} price='{}' country='{}' regionBBox=[{},{}-{},{}]", fileName, page, anchor, pendingPrice, country, left, top, right, bottom);
-                }
                 continue;
             }
             Map<String, String> row = new LinkedHashMap<>();
@@ -505,12 +529,14 @@ public class OcrNewService {
             pagesWithRows.add(page);
             filled++;
             if (effectiveDebug) {
-                log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} price={} country={} anchor={} regionBBox=[{},{}-{},{}]", fileName, page, pendingPrice, country, anchor, left, top, right, bottom);
+                log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} price={} country={} anchor={} rectId={}", fileName, page, pendingPrice, country, usedAnchor, usedRect);
             }
         }
 
         if (filled > 0) {
             log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} filledRows={}", fileName, filled);
+        } else if (effectiveDebug) {
+            log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} filledRows=0 (no missing pages could be parsed)", fileName);
         }
     }
 
@@ -4188,21 +4214,13 @@ public class OcrNewService {
             // Then annotate each extracted row with a best-effort page number so the frontend
             // can still filter by active page.
             List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
-            List<Map<String, String>> poInvoiceAvgPrice = null;
-            if (isPdf(file)) {
-                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(fileBytes);
-            }
-            if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
-                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
-            }
+            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
-                annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
             }
-
-            if (isPdf(file) && poInvoiceAvgPrice != null) {
-                fillMissingPurchaseOrderInvoiceAvgPriceFromRegionOcr(poInvoiceAvgPrice, allLines, cleanedPageImages, ocrEngine, fname, effectiveDebug);
-            }
+            // Always annotate pages (even when extracted per-page) so the frontend can show
+            // best-effort rows for page tabs when the PDF layout is inconsistent.
+            annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
 
             if (effectiveDebug) {
                 log.info("[PO-INVOICE-PRICE][PIPE] afterExtract rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
