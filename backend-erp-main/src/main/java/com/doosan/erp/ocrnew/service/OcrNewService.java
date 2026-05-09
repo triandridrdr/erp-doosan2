@@ -349,268 +349,6 @@ public class OcrNewService {
         }
     }
 
-    private static void fillMissingPurchaseOrderInvoiceAvgPriceFromRegionOcr(
-            List<Map<String, String>> poInvoiceAvgPrice,
-            List<OcrNewLine> allLines,
-            List<BufferedImage> pageImages,
-            TesseractOcrEngine ocrEngine,
-            String fileName,
-            boolean effectiveDebug
-    ) {
-        if (poInvoiceAvgPrice == null) return;
-        if (allLines == null || allLines.isEmpty()) return;
-        if (pageImages == null || pageImages.isEmpty()) return;
-        if (ocrEngine == null) return;
-
-        Set<Integer> pagesWithRows = new HashSet<>();
-        for (Map<String, String> r : poInvoiceAvgPrice) {
-            if (r == null) continue;
-            int p;
-            try {
-                p = Integer.parseInt(nvl(r.get("page")).trim());
-            } catch (Exception e) {
-                continue;
-            }
-            if (p > 0) pagesWithRows.add(p);
-        }
-
-        Map<Integer, OcrNewLine> invoiceHeaderByPage = new LinkedHashMap<>();
-        Map<Integer, OcrNewLine> totalQtyByPage = new LinkedHashMap<>();
-        for (OcrNewLine l : allLines) {
-            if (l == null || l.getText() == null) continue;
-            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
-            int page = l.getPage();
-            if (page <= 0) continue;
-            boolean looksSynthetic = l.getLeft() == 0 && l.getRight() == 1000 && (l.getWords() == null || l.getWords().isEmpty());
-            if (looksSynthetic) continue;
-
-            if (low.contains("invoice average")) {
-                invoiceHeaderByPage.putIfAbsent(page, l);
-                continue;
-            }
-            if (low.contains("total quantity")) {
-                totalQtyByPage.putIfAbsent(page, l);
-            }
-        }
-
-        int pageCount = pageImages.size();
-        if (pageCount <= 0) return;
-
-        Pattern pricePat = Pattern.compile("(\\d+(?:[\\.,]\\d+)?)\\s*([A-Z]{3})");
-        Pattern countryPat = Pattern.compile("\\b([A-Z]{2})\\b");
-        String whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/() %-";
-
-        int filled = 0;
-        for (int page = 1; page <= pageCount; page++) {
-            if (pagesWithRows.contains(page)) continue;
-            int pageIndex = page - 1;
-            if (pageIndex < 0 || pageIndex >= pageImages.size()) continue;
-            BufferedImage img = pageImages.get(pageIndex);
-            if (img == null) continue;
-
-            OcrNewLine header = invoiceHeaderByPage.get(page);
-            OcrNewLine totalQty = totalQtyByPage.get(page);
-
-
-            double w = img.getWidth();
-            double h = img.getHeight();
-            List<int[]> rects = new ArrayList<>();
-
-            if (header != null) {
-                int left0 = Math.max(0, header.getLeft() - 30);
-                int top0 = Math.max(0, header.getBottom() + 2);
-                int right0 = Math.min(img.getWidth(), left0 + (int) Math.round(w * 0.78));
-                int bottom0 = Math.min(img.getHeight(), top0 + (int) Math.round(h * 0.22));
-                rects.add(new int[]{left0, top0, right0, bottom0, 1});
-                rects.add(new int[]{Math.max(0, left0 - 40), Math.max(0, top0 - 10), Math.min(img.getWidth(), right0 + 60), Math.min(img.getHeight(), bottom0 + 40), 2});
-            }
-            if (totalQty != null) {
-                int left0 = Math.max(0, totalQty.getLeft() - 40);
-                int top0 = Math.max(0, totalQty.getBottom() + 2);
-                int right0 = Math.min(img.getWidth(), left0 + (int) Math.round(w * 0.78));
-                int bottom0 = Math.min(img.getHeight(), top0 + (int) Math.round(h * 0.20));
-                rects.add(new int[]{left0, top0, right0, bottom0, 3});
-            }
-            // Template fallbacks.
-            rects.add(new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.66), (int) Math.round(w * 0.90), (int) Math.round(h * 0.90), 4});
-            rects.add(new int[]{(int) Math.round(w * 0.05), (int) Math.round(h * 0.58), (int) Math.round(w * 0.92), (int) Math.round(h * 0.88), 5});
-            // Very aggressive fallbacks (expensive): lower half and full page.
-            rects.add(new int[]{(int) Math.round(w * 0.00), (int) Math.round(h * 0.45), (int) Math.round(w * 1.00), (int) Math.round(h * 0.98), 6});
-            rects.add(new int[]{(int) Math.round(w * 0.00), (int) Math.round(h * 0.00), (int) Math.round(w * 1.00), (int) Math.round(h * 1.00), 7});
-
-            String pendingPrice = "";
-            String country = "";
-            int usedRect = 0;
-            String usedAnchor = "";
-
-            for (int[] r0 : rects) {
-                if (r0 == null || r0.length < 5) continue;
-                int left = Math.max(0, Math.min(img.getWidth() - 1, r0[0]));
-                int top = Math.max(0, Math.min(img.getHeight() - 1, r0[1]));
-                int right = Math.max(0, Math.min(img.getWidth(), r0[2]));
-                int bottom = Math.max(0, Math.min(img.getHeight(), r0[3]));
-                int width = Math.max(0, right - left);
-                int height = Math.max(0, bottom - top);
-                if (width <= 10 || height <= 10) continue;
-
-                String regionText;
-                try {
-                    regionText = ocrEngine.extractTextFromRegion(img, new Rectangle(left, top, width, height), 8, whitelist);
-                } catch (Exception ex) {
-                    continue;
-                }
-                if (regionText == null || regionText.isBlank()) {
-                    if (effectiveDebug) {
-                        log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} tryRect={} empty regionBBox=[{},{}-{},{}]", fileName, page, r0[4], left, top, right, bottom);
-                    }
-                    continue;
-                }
-
-                pendingPrice = "";
-                country = "";
-
-                String[] lines = regionText.split("\\r?\\n");
-                for (String raw : lines) {
-                    String s = raw == null ? "" : oneLine(raw).replaceAll("\\s+", " ").trim();
-                    if (s.isBlank()) continue;
-                    String low = s.toLowerCase(Locale.ROOT);
-                    if (low.contains("invoice average")) continue;
-                    if (low.equals("country") || low.equals("invoice") || low.equals("average")) continue;
-
-                    String up = s.toUpperCase(Locale.ROOT);
-                    Matcher pm = pricePat.matcher(up);
-                    if (pm.find()) {
-                        String n = pm.group(1) == null ? "" : pm.group(1).trim();
-                        String cur = pm.group(2) == null ? "" : pm.group(2).trim();
-                        if (!n.isBlank() && !cur.isBlank()) {
-                            n = n.replace(',', '.');
-                            pendingPrice = (n + " " + cur).trim();
-                        }
-
-                        Matcher cm = countryPat.matcher(up.substring(pm.end()));
-                        if (cm.find()) {
-                            country = cm.group(1).trim().toUpperCase(Locale.ROOT);
-                            break;
-                        }
-                        continue;
-                    }
-
-                    if (!pendingPrice.isBlank()) {
-                        Matcher cm = countryPat.matcher(up);
-                        if (cm.find()) {
-                            country = cm.group(1).trim().toUpperCase(Locale.ROOT);
-                            break;
-                        }
-                    }
-                }
-
-                if (!pendingPrice.isBlank() && !country.isBlank()) {
-                    usedRect = r0[4];
-                    if (usedRect == 1 || usedRect == 2) usedAnchor = "invoiceHeader";
-                    else if (usedRect == 3) usedAnchor = "totalQuantity";
-                    else usedAnchor = "template";
-                    break;
-                }
-
-                if (effectiveDebug) {
-                    log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} tryRect={} parseFailed price='{}' country='{}'", fileName, page, r0[4], pendingPrice, country);
-                }
-            }
-
-            if (pendingPrice.isBlank() || country.isBlank()) {
-                continue;
-            }
-            Map<String, String> row = new LinkedHashMap<>();
-            row.put("page", String.valueOf(page));
-            row.put("invoiceAveragePrice", pendingPrice);
-            row.put("country", country);
-            row.put("_src", "regionOcr");
-            poInvoiceAvgPrice.add(row);
-            pagesWithRows.add(page);
-            filled++;
-            if (effectiveDebug) {
-                log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} page={} price={} country={} anchor={} rectId={}", fileName, page, pendingPrice, country, usedAnchor, usedRect);
-            }
-        }
-
-        if (filled > 0) {
-            log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} filledRows={}", fileName, filled);
-        } else if (effectiveDebug) {
-            log.info("[PO-INVOICE-PRICE][REGION-OCR] file={} filledRows=0 (no missing pages could be parsed)", fileName);
-        }
-    }
-
-    private static List<Map<String, String>> extractPurchaseOrderTermsOfDeliveryByPageFromPdfBytes(byte[] pdfBytes) {
-        List<Map<String, String>> out = new ArrayList<>();
-        if (pdfBytes == null || pdfBytes.length == 0) return out;
-
-        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            stripper.setSortByPosition(true);
-
-            Pattern stopPat = Pattern.compile("(?i).*(time of delivery|quantity per artic|invoice average|sales sample|total quantity|purchase order detail).* ");
-            Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*){1,}[A-Z]{2}$");
-
-            int pageCount = doc.getNumberOfPages();
-            for (int page = 1; page <= pageCount; page++) {
-                stripper.setStartPage(page);
-                stripper.setEndPage(page);
-                String text = stripper.getText(doc);
-                if (text == null || text.isBlank()) continue;
-
-                String[] lines = text.split("\\r?\\n");
-                int headerIdx = -1;
-                for (int i = 0; i < lines.length; i++) {
-                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
-                    if (s.isBlank()) continue;
-                    String low = s.toLowerCase(Locale.ROOT);
-                    if (low.equals("terms of delivery") || low.startsWith("terms of delivery")) {
-                        headerIdx = i;
-                        break;
-                    }
-                }
-                if (headerIdx < 0) continue;
-
-                String countryLine = "";
-                StringBuilder body = new StringBuilder();
-                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 80); i++) {
-                    String raw = lines[i];
-                    if (raw == null) continue;
-                    String s = oneLine(raw).replaceAll("\\s+", " ").trim();
-                    if (s.isBlank()) continue;
-                    if (stopPat.matcher(s + " ").matches()) break;
-
-                    String upper = s.toUpperCase(Locale.ROOT);
-                    if (countryLine.isBlank() && countryLinePat.matcher(upper).matches()) {
-                        countryLine = upper;
-                        continue;
-                    }
-
-                    if (body.length() > 0) body.append("\n");
-                    body.append(s);
-                }
-
-                String cleanedBody = cleanPurchaseOrderTermsOfDeliveryText(body.toString());
-                String combined = "";
-                if (!countryLine.isBlank() && !cleanedBody.isBlank()) combined = countryLine + "\n" + cleanedBody;
-                else if (!countryLine.isBlank()) combined = countryLine;
-                else combined = cleanedBody;
-
-                if (combined != null && !combined.isBlank()) {
-                    Map<String, String> row = new LinkedHashMap<>();
-                    row.put("page", String.valueOf(page));
-                    row.put("termsOfDelivery", combined);
-                    row.put("_src", "pdfText");
-                    out.add(row);
-                }
-            }
-        } catch (Exception ex) {
-            log.warn("[PO-TERMS-DELIVERY][PDFBOX] failed(byPage): {}", ex.getMessage());
-        }
-
-        return out;
-    }
-
     private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(byte[] pdfBytes) {
         List<Map<String, String>> out = new ArrayList<>();
         if (pdfBytes == null || pdfBytes.length == 0) return out;
@@ -1532,6 +1270,87 @@ public class OcrNewService {
             if (leadingCountryLinePat.matcher(firstLine).matches()) continue;
 
             row.put("termsOfDelivery", countryLine + "\n" + trimmed);
+        }
+    }
+
+    private static void fillPurchaseOrderInvoiceAvgPriceCountriesFromTermsByPage(
+            List<Map<String, String>> poInvoiceAvgPrice,
+            List<Map<String, String>> poTermsOfDeliveryByPage
+    ) {
+        if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) return;
+        if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
+
+        Map<String, Set<String>> termsCountriesByPage = new LinkedHashMap<>();
+        for (Map<String, String> r : poTermsOfDeliveryByPage) {
+            if (r == null) continue;
+            String p = nvl(r.get("page")).trim();
+            if (p.isBlank() || p.equals("1")) continue;
+            String terms = nvl(r.get("termsOfDelivery")).trim();
+            if (terms.isBlank()) continue;
+            Set<String> codes = extractTwoLetterCountryCodesFromTermsFirstLine(terms);
+            if (codes == null || codes.isEmpty()) continue;
+            termsCountriesByPage.put(p, new LinkedHashSet<>(codes));
+        }
+        if (termsCountriesByPage.isEmpty()) return;
+
+        Pattern codePat = Pattern.compile("\\b([A-Z]{2})\\b");
+        Map<String, List<Map<String, String>>> invoiceRowsByCountry = new LinkedHashMap<>();
+        List<Map<String, String>> invoiceRowsWithPrice = new ArrayList<>();
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            if (r == null) continue;
+            String price = nvl(r.get("invoiceAveragePrice")).trim();
+            if (price.isBlank()) continue;
+            invoiceRowsWithPrice.add(r);
+
+            String countryField = nvl(r.get("country")).toUpperCase(Locale.ROOT);
+            Matcher m = codePat.matcher(countryField);
+            while (m.find()) {
+                String c = m.group(1);
+                if (c == null || c.isBlank()) continue;
+                invoiceRowsByCountry.computeIfAbsent(c, k -> new ArrayList<>()).add(r);
+            }
+        }
+        if (invoiceRowsWithPrice.isEmpty()) return;
+
+        Set<String> existingKeys = new HashSet<>();
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            if (r == null) continue;
+            String key = nvl(r.get("page")).trim() + "|" + nvl(r.get("invoiceAveragePrice")).trim() + "|" + nvl(r.get("country")).trim();
+            existingKeys.add(key);
+        }
+
+        for (Map.Entry<String, Set<String>> en : termsCountriesByPage.entrySet()) {
+            String page = en.getKey();
+            if (page == null || page.isBlank()) continue;
+
+            Set<String> wantedCodes = en.getValue();
+            if (wantedCodes == null || wantedCodes.isEmpty()) continue;
+
+            for (String code : wantedCodes) {
+                if (code == null || code.isBlank()) continue;
+                String c = code.trim().toUpperCase(Locale.ROOT);
+
+                List<Map<String, String>> candidates = invoiceRowsByCountry.get(c);
+                Map<String, String> chosen = (candidates != null && !candidates.isEmpty()) ? candidates.get(0) : null;
+                if (chosen == null) {
+                    // Fallback: if no explicit match exists, still provide a row using the first known price.
+                    chosen = invoiceRowsWithPrice.get(0);
+                }
+
+                String price = nvl(chosen.get("invoiceAveragePrice")).trim();
+                if (price.isBlank()) continue;
+
+                String key = page.trim() + "|" + price + "|" + c;
+                if (existingKeys.contains(key)) continue;
+
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", page.trim());
+                row.put("invoiceAveragePrice", price);
+                row.put("country", c);
+                row.put("_src", (candidates != null && !candidates.isEmpty()) ? "termsMatch" : "termsOnly");
+                poInvoiceAvgPrice.add(row);
+                existingKeys.add(key);
+            }
         }
     }
 
@@ -4138,38 +3957,6 @@ public class OcrNewService {
                 }
             }
             List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
-            if (isPdf(file)) {
-                List<Map<String, String>> pdfTermsByPage = extractPurchaseOrderTermsOfDeliveryByPageFromPdfBytes(fileBytes);
-                if (pdfTermsByPage != null && !pdfTermsByPage.isEmpty()) {
-                    if (poTermsOfDeliveryByPage == null) poTermsOfDeliveryByPage = new ArrayList<>();
-                    Map<String, Map<String, String>> byPage = new LinkedHashMap<>();
-                    for (Map<String, String> r : poTermsOfDeliveryByPage) {
-                        if (r == null) continue;
-                        String p = nvl(r.get("page")).trim();
-                        if (p.isBlank()) p = "1";
-                        byPage.put(p, r);
-                    }
-                    for (Map<String, String> r : pdfTermsByPage) {
-                        if (r == null) continue;
-                        String p = nvl(r.get("page")).trim();
-                        if (p.isBlank()) p = "1";
-                        String terms = nvl(r.get("termsOfDelivery")).trim();
-                        if (terms.isBlank()) continue;
-                        Map<String, String> cur = byPage.get(p);
-                        if (cur == null) {
-                            Map<String, String> nr = new LinkedHashMap<>();
-                            nr.put("page", p);
-                            nr.put("termsOfDelivery", terms);
-                            nr.put("_src", nvl(r.get("_src")).trim().isBlank() ? "pdfText" : nvl(r.get("_src")).trim());
-                            poTermsOfDeliveryByPage.add(nr);
-                            byPage.put(p, nr);
-                        } else {
-                            cur.put("termsOfDelivery", terms);
-                            cur.put("_src", nvl(r.get("_src")).trim().isBlank() ? "pdfText" : nvl(r.get("_src")).trim());
-                        }
-                    }
-                }
-            }
             Set<String> allowedTermsCountries = extractTwoLetterCountryCodesFromTermsFirstLine(formFields.get("Terms of Delivery"));
             fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug, allowedTermsCountries);
 
@@ -4179,26 +3966,20 @@ public class OcrNewService {
                 List<Map<String, String>> poQuantityFromPdf = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
                 if (poQuantityFromPdf != null && !poQuantityFromPdf.isEmpty()) {
                     if (poQuantityPerArticle == null) poQuantityPerArticle = new ArrayList<>();
-                    Set<String> pdfPages = new HashSet<>();
+                    Set<String> existingKeys = new HashSet<>();
+                    for (Map<String, String> r : poQuantityPerArticle) {
+                        if (r == null) continue;
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        existingKeys.add(k);
+                    }
                     for (Map<String, String> r : poQuantityFromPdf) {
                         if (r == null) continue;
-                        String p = nvl(r.get("page")).trim();
-                        if (p.isBlank()) p = "1";
-                        pdfPages.add(p);
-                    }
-
-                    // Prefer PDFBox rows for any page where we have them: remove OCR rows for that page.
-                    if (!pdfPages.isEmpty()) {
-                        List<Map<String, String>> kept = new ArrayList<>();
-                        for (Map<String, String> r : poQuantityPerArticle) {
-                            if (r == null) continue;
-                            String p = nvl(r.get("page")).trim();
-                            if (p.isBlank()) p = "1";
-                            if (!pdfPages.contains(p)) kept.add(r);
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        if (!existingKeys.contains(k)) {
+                            poQuantityPerArticle.add(r);
+                            existingKeys.add(k);
                         }
-                        poQuantityPerArticle = kept;
                     }
-                    poQuantityPerArticle.addAll(poQuantityFromPdf);
                 }
             }
             if (poQuantityPerArticle == null || poQuantityPerArticle.isEmpty()) {
@@ -4214,13 +3995,17 @@ public class OcrNewService {
             // Then annotate each extracted row with a best-effort page number so the frontend
             // can still filter by active page.
             List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
-            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
+            List<Map<String, String>> poInvoiceAvgPrice = null;
+            if (isPdf(file)) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(fileBytes);
+            }
+            if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
+            }
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+                annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
             }
-            // Always annotate pages (even when extracted per-page) so the frontend can show
-            // best-effort rows for page tabs when the PDF layout is inconsistent.
-            annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
 
             if (effectiveDebug) {
                 log.info("[PO-INVOICE-PRICE][PIPE] afterExtract rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
@@ -4597,6 +4382,10 @@ public class OcrNewService {
                 }
             }
             normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(poTermsOfDeliveryByPage, globalTermsForNormalization);
+
+            // For page > 1, display Invoice Avg Price rows using the page's Terms-of-Delivery country
+            // codes, mapped to the extracted Invoice Avg Price table.
+            fillPurchaseOrderInvoiceAvgPriceCountriesFromTermsByPage(poInvoiceAvgPrice, poTermsOfDeliveryByPage);
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
             List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
