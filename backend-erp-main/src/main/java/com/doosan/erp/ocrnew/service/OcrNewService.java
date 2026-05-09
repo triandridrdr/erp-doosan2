@@ -179,16 +179,17 @@ public class OcrNewService {
         int startIdx = -1;
         for (int i = 0; i < normLines.size(); i++) {
             String s = normLines.get(i).toLowerCase(Locale.ROOT);
-            if (s.contains("colour / country breakdown") || (s.contains("country") && s.contains("total"))) {
+            // Avoid over-broad triggers like "Invoice Average Price Country" that appear in other sections.
+            // This fallback should only activate when the document contains the explicit Country Breakdown section.
+            if (s.contains("colour / country breakdown")
+                    || s.contains("color / country breakdown")
+                    || s.contains("country breakdown")) {
                 startIdx = i;
                 break;
             }
         }
 
-        if (startIdx < 0) {
-            // No obvious header; still try scanning entire doc for PM lines with totals
-            startIdx = 0;
-        }
+        if (startIdx < 0) return out;
 
         // Accept codes like PM-UK, PMUK, OL-UK, OLUK, OLEEU, etc. Code is REQUIRED to avoid false positives.
         Pattern codePat = Pattern.compile("\\b(?:PM|OL)[- ]?[A-Z0-9]{2,6}\\b", Pattern.CASE_INSENSITIVE);
@@ -892,6 +893,96 @@ public class OcrNewService {
         }
     }
 
+    private static void deduplicatePurchaseOrderInvoiceAvgPriceRows(List<Map<String, String>> rows) {
+        if (rows == null || rows.size() < 2) return;
+
+        Pattern singleCountryPat = Pattern.compile("^[A-Z]{2}$");
+        Map<String, Map<String, String>> bestByPrice = new LinkedHashMap<>();
+        Map<String, Integer> bestScoreByPrice = new LinkedHashMap<>();
+
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            String price = nvl(r.get("invoiceAveragePrice")).trim();
+            if (price.isBlank()) continue;
+
+            String country = nvl(r.get("country")).trim();
+            boolean isSingle = singleCountryPat.matcher(country).matches();
+            boolean isBlank = country.isBlank();
+            boolean isMulti = country.contains(",");
+
+            String src = nvl(r.get("_src")).trim();
+            int srcScore = 0;
+            // Source quality: prefer direct table extraction over inferred fallbacks.
+            if (src.equals("sameLine")) srcScore = 10000;
+            else if (src.equals("paired")) srcScore = 8000;
+            else if (src.equals("filled")) srcScore = 3000;
+            else if (src.equals("blank")) srcScore = 500;
+            else if (src.equals("terms")) srcScore = 100;
+            else srcScore = 1000;
+
+            // Higher is better
+            int score = 0;
+            score += srcScore;
+            // If we have a multi-country list (comma-separated), prefer it over any single-country
+            // candidates. This matches the PDF table format on page 1.
+            if (isMulti) score += 2_000_000;
+            // If the country is a single 2-letter code, strongly prefer keeping the earliest-page
+            // instance so page-scoped UI filtering (page 1 view) does not hide a valid row.
+            if (isSingle) score += 1_000_000;
+            if (!isBlank) score += 100;
+            if (!isMulti) score += 10;
+
+            // Prefer earlier page if all else equal
+            int page = 0;
+            try {
+                page = Integer.parseInt(nvl(r.get("page")).trim());
+            } catch (Exception ignore) {
+            }
+            // Make page preference meaningful across pages (e.g. prefer page 1 filled row over
+            // later-page duplicate even if later page is a stronger source).
+            score -= Math.max(0, page) * 10_000;
+
+            Integer bestScore = bestScoreByPrice.get(price);
+            if (bestScore == null || score > bestScore) {
+                bestScoreByPrice.put(price, score);
+                bestByPrice.put(price, r);
+            }
+        }
+
+        if (bestByPrice.isEmpty()) return;
+
+        List<Map<String, String>> deduped = new ArrayList<>();
+        Set<String> addedPrices = new HashSet<>();
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            String price = nvl(r.get("invoiceAveragePrice")).trim();
+            if (price.isBlank()) continue;
+            Map<String, String> best = bestByPrice.get(price);
+            if (best == null) continue;
+            if (addedPrices.contains(price)) continue;
+
+            // Keep the best row for this price.
+            if (r == best) {
+                deduped.add(r);
+                addedPrices.add(price);
+            } else {
+                // Only add when we reach the best instance (preserve relative ordering).
+                // So do nothing here.
+            }
+        }
+
+        // If some best rows were never encountered (shouldn't happen), append them.
+        for (Map.Entry<String, Map<String, String>> en : bestByPrice.entrySet()) {
+            if (!addedPrices.contains(en.getKey())) {
+                deduped.add(en.getValue());
+                addedPrices.add(en.getKey());
+            }
+        }
+
+        rows.clear();
+        rows.addAll(deduped);
+    }
+
     private static void normalizePurchaseOrderTermsOfDeliveryTextFromGlobal(
             List<Map<String, String>> poTermsOfDeliveryByPage,
             String globalTerms
@@ -1107,35 +1198,82 @@ public class OcrNewService {
         if (poInvoiceAvgPrice == null) return;
         if (allLines == null || allLines.isEmpty()) return;
 
-        String fallbackCountryList = null;
+        String termsFirstLine = null;
+        List<String> baseOrderedFromTerms = new ArrayList<>();
+        String baseFallbackCountryList = "";
         if (termsWithCountries != null && !termsWithCountries.isBlank()) {
-            String firstLine = termsWithCountries.split("\\R", 2)[0].trim();
+            termsFirstLine = termsWithCountries.split("\\R", 2)[0].trim();
 
-            // Strict comma-separated list: "SE, DE, ..."
-            Pattern countryListPat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)+[A-Z]{2}$");
-            if (countryListPat.matcher(firstLine).matches()) {
-                fallbackCountryList = firstLine;
-            } else {
-                // Robust mode: extract 2-letter country codes from the line even if it's
-                // mixed with PM codes or parentheses: "SE (PMSCA), US (PM-US)"
-                Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(firstLine);
-                LinkedHashSet<String> codes = new LinkedHashSet<>();
-                while (m.find()) {
-                    String code = m.group(1);
-                    if (code != null && !code.isBlank()) codes.add(code.trim());
-                }
-                if (!codes.isEmpty()) {
-                    fallbackCountryList = String.join(", ", codes);
-                }
+            // Preserve PDF/Terms ordering by splitting on commas.
+            String[] parts = termsFirstLine.split("\\s*,\\s*");
+            for (String p : parts) {
+                if (p == null) continue;
+                String code = p.trim().toUpperCase(Locale.ROOT);
+                if (!code.matches("^[A-Z]{2}$")) continue;
+                if (!baseOrderedFromTerms.contains(code)) baseOrderedFromTerms.add(code);
             }
         }
-        if (fallbackCountryList == null || fallbackCountryList.isBlank()) return;
 
-        // If we already have a multi-country row, do nothing.
-        for (Map<String, String> r : poInvoiceAvgPrice) {
-            String c = r == null ? null : r.get("country");
-            if (c != null && c.contains(",")) return;
+        if (!baseOrderedFromTerms.isEmpty()) {
+            baseFallbackCountryList = String.join(", ", baseOrderedFromTerms);
         }
+
+        // Only overwrite weak sources to avoid clobbering strong OCR-extracted countries.
+        Pattern singleCountryPat = Pattern.compile("^[A-Z]{2}$");
+        boolean anyOverwritten = false;
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            if (r == null) continue;
+            String price = nvl(r.get("invoiceAveragePrice")).trim();
+            if (price.isBlank()) continue;
+
+            String src = nvl(r.get("_src")).trim();
+            String cur = nvl(r.get("country")).trim();
+
+            boolean weakSrc = src.isBlank() || src.equals("blank") || src.equals("filled") || src.equals("terms");
+            boolean curBlankOrSingle = cur.isBlank() || singleCountryPat.matcher(cur).matches();
+            if (weakSrc && curBlankOrSingle) {
+                // Build a price-specific fallback list:
+                // - base list from Terms (ordered)
+                // - plus strong same-price codes (sameLine/paired) from other pages
+                // - minus codes that already have their own single-country row for OTHER prices
+                LinkedHashSet<String> set = new LinkedHashSet<>();
+                for (String c0 : baseOrderedFromTerms) set.add(c0);
+
+                Pattern codePat = Pattern.compile("\\b([A-Z]{2})\\b");
+                for (Map<String, String> rr : poInvoiceAvgPrice) {
+                    if (rr == null) continue;
+                    String p = nvl(rr.get("invoiceAveragePrice")).trim();
+                    if (!p.equals(price)) continue;
+                    String ssrc = nvl(rr.get("_src")).trim();
+                    boolean strong = ssrc.equals("sameLine") || ssrc.equals("paired");
+                    if (!strong) continue;
+                    String cc = nvl(rr.get("country")).trim().toUpperCase(Locale.ROOT);
+                    Matcher mm = codePat.matcher(cc);
+                    while (mm.find()) {
+                        String code = mm.group(1);
+                        if (code != null && !code.isBlank()) set.add(code.trim());
+                    }
+                }
+
+                Set<String> excluded = new HashSet<>();
+                for (Map<String, String> rr : poInvoiceAvgPrice) {
+                    if (rr == null) continue;
+                    String p = nvl(rr.get("invoiceAveragePrice")).trim();
+                    if (p.isBlank() || p.equals(price)) continue;
+                    String cc = nvl(rr.get("country")).trim().toUpperCase(Locale.ROOT);
+                    if (singleCountryPat.matcher(cc).matches()) excluded.add(cc);
+                }
+                set.removeAll(excluded);
+
+                String priceFallbackCountryList = String.join(", ", set);
+                if (priceFallbackCountryList.isBlank()) continue;
+
+                r.put("country", priceFallbackCountryList);
+                r.put("_src", "terms");
+                anyOverwritten = true;
+            }
+        }
+        if (anyOverwritten) return;
 
         List<String> texts = new ArrayList<>();
         for (OcrNewLine l : allLines) {
@@ -1146,7 +1284,10 @@ public class OcrNewService {
 
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
-            if (texts.get(i).toLowerCase(Locale.ROOT).contains("invoice average price")) {
+            String low = texts.get(i).toLowerCase(Locale.ROOT);
+            boolean looksLikeHeader = (low.contains("invoice average") || low.contains("invoice avg"))
+                    && low.contains("country");
+            if (looksLikeHeader) {
                 headerIdx = i;
                 break;
             }
@@ -1171,6 +1312,18 @@ public class OcrNewService {
         }
         if (detectedPrices.isEmpty()) return;
 
+        Set<String> existingPrices = new LinkedHashSet<>();
+        Set<String> existingPricesNorm = new LinkedHashSet<>();
+        for (Map<String, String> r : poInvoiceAvgPrice) {
+            String p = r == null ? null : r.get("invoiceAveragePrice");
+            if (p == null) continue;
+            String pp = p.trim();
+            if (!pp.isBlank()) {
+                existingPrices.add(pp);
+                existingPricesNorm.add(pp.replaceAll("\\s+", ""));
+            }
+        }
+
         Map<String, List<String>> existingCountriesByPrice = new LinkedHashMap<>();
         for (Map<String, String> r : poInvoiceAvgPrice) {
             String p = r == null ? null : r.get("invoiceAveragePrice");
@@ -1183,25 +1336,28 @@ public class OcrNewService {
         }
 
         for (String price : detectedPrices) {
+            String priceNorm = price == null ? "" : price.replaceAll("\\s+", "");
+            if (existingPrices.contains(price) || (!priceNorm.isBlank() && existingPricesNorm.contains(priceNorm))) {
+                // A row for this price already exists (even if the country is blank).
+                // Do not inject a multi-country fallback row from Terms of Delivery.
+                continue;
+            }
             List<String> existingCountries = existingCountriesByPrice.get(price);
             if (existingCountries != null && !existingCountries.isEmpty()) {
-                boolean hasMultiCountry = false;
-                for (String c : existingCountries) {
-                    if (c != null && c.contains(",")) {
-                        hasMultiCountry = true;
-                        break;
-                    }
-                }
-                if (hasMultiCountry) continue;
+                // We already have at least one country mapped for this price.
+                // Do not inject an extra multi-country fallback row because it pollutes
+                // the Invoice Avg Price table in the UI.
+                continue;
             }
             Map<String, String> row = new LinkedHashMap<>();
             row.put("invoiceAveragePrice", price);
-            row.put("country", fallbackCountryList);
+            row.put("country", baseFallbackCountryList);
+            row.put("_src", "terms");
             int insertAt = 1;
             if (poInvoiceAvgPrice == null) return;
             if (insertAt > poInvoiceAvgPrice.size()) insertAt = poInvoiceAvgPrice.size();
             poInvoiceAvgPrice.add(insertAt, row);
-            log.info("[PO-INVOICE-PRICE] Filled missing row from Terms of Delivery: {} | {}", price, fallbackCountryList);
+            log.info("[PO-INVOICE-PRICE] Filled missing row from Terms of Delivery: {} | {}", price, baseFallbackCountryList);
             break;
         }
     }
@@ -3605,10 +3761,89 @@ public class OcrNewService {
             // (price-only line + country-only line, multi-country lists, etc.).
             // Then annotate each extracted row with a best-effort page number so the frontend
             // can still filter by active page.
+            List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
             List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
                 annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
+            }
+
+            if (effectiveDebug) {
+                log.info("[PO-INVOICE-PRICE][PIPE] afterExtract rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
+                if (poInvoiceAvgPrice != null) {
+                    for (int i = 0; i < Math.min(30, poInvoiceAvgPrice.size()); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        log.info("[PO-INVOICE-PRICE][PIPE] afterExtract[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                nvl(r.get("invoiceAveragePrice")).trim(),
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+
+                    for (int i = 0; i < poInvoiceAvgPrice.size(); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        String price = nvl(r.get("invoiceAveragePrice")).trim();
+                        if (!price.equals("5.40 USD")) continue;
+                        if (poInvoiceAvgPriceTraceBuffer != null) {
+                            poInvoiceAvgPriceTraceBuffer.add("[PO-INVOICE-PRICE][TRACE] afterExtract[" + i
+                                    + "] page=" + nvl(r.get("page")).trim()
+                                    + " price=" + price
+                                    + " country=" + nvl(r.get("country")).trim()
+                                    + " src=" + nvl(r.get("_src")).trim());
+                        }
+                        log.info("[PO-INVOICE-PRICE][TRACE] afterExtract[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                price,
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+                }
+            }
+
+            // Some PDFs repeat the "Invoice Average Price" table across pages. Page 1 can
+            // contain the price but miss the country, while a later page captures the full
+            // "price currency country" on the same line. Enrich missing countries by matching
+            // on the exact price token.
+            fillMissingPurchaseOrderInvoiceAvgPriceCountriesFromOtherPages(poInvoiceAvgPrice);
+
+            if (effectiveDebug) {
+                log.info("[PO-INVOICE-PRICE][PIPE] afterFillFromOtherPages rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
+                if (poInvoiceAvgPrice != null) {
+                    for (int i = 0; i < Math.min(30, poInvoiceAvgPrice.size()); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        log.info("[PO-INVOICE-PRICE][PIPE] afterFillFromOtherPages[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                nvl(r.get("invoiceAveragePrice")).trim(),
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+
+                    for (int i = 0; i < poInvoiceAvgPrice.size(); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        String price = nvl(r.get("invoiceAveragePrice")).trim();
+                        if (!price.equals("5.40 USD")) continue;
+                        if (poInvoiceAvgPriceTraceBuffer != null) {
+                            poInvoiceAvgPriceTraceBuffer.add("[PO-INVOICE-PRICE][TRACE] afterFillFromOtherPages[" + i
+                                    + "] page=" + nvl(r.get("page")).trim()
+                                    + " price=" + price
+                                    + " country=" + nvl(r.get("country")).trim()
+                                    + " src=" + nvl(r.get("_src")).trim());
+                        }
+                        log.info("[PO-INVOICE-PRICE][TRACE] afterFillFromOtherPages[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                price,
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+                }
             }
 
             try {
@@ -3817,6 +4052,80 @@ public class OcrNewService {
                 termsForInvoiceFallback = formFields.get("Terms of Delivery");
             }
             fillMissingPurchaseOrderInvoiceAvgPriceCountries(poInvoiceAvgPrice, allLines, termsForInvoiceFallback);
+
+            if (effectiveDebug) {
+                log.info("[PO-INVOICE-PRICE][PIPE] afterFillFromTerms rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
+                if (poInvoiceAvgPrice != null) {
+                    for (int i = 0; i < Math.min(30, poInvoiceAvgPrice.size()); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        log.info("[PO-INVOICE-PRICE][PIPE] afterFillFromTerms[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                nvl(r.get("invoiceAveragePrice")).trim(),
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+
+                    for (int i = 0; i < poInvoiceAvgPrice.size(); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        String price = nvl(r.get("invoiceAveragePrice")).trim();
+                        if (!price.equals("5.40 USD")) continue;
+                        if (poInvoiceAvgPriceTraceBuffer != null) {
+                            poInvoiceAvgPriceTraceBuffer.add("[PO-INVOICE-PRICE][TRACE] afterFillFromTerms[" + i
+                                    + "] page=" + nvl(r.get("page")).trim()
+                                    + " price=" + price
+                                    + " country=" + nvl(r.get("country")).trim()
+                                    + " src=" + nvl(r.get("_src")).trim());
+                        }
+                        log.info("[PO-INVOICE-PRICE][TRACE] afterFillFromTerms[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                price,
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+                }
+            }
+
+            deduplicatePurchaseOrderInvoiceAvgPriceRows(poInvoiceAvgPrice);
+
+            if (effectiveDebug) {
+                log.info("[PO-INVOICE-PRICE][PIPE] afterDedup rows={}", poInvoiceAvgPrice == null ? 0 : poInvoiceAvgPrice.size());
+                if (poInvoiceAvgPrice != null) {
+                    for (int i = 0; i < Math.min(30, poInvoiceAvgPrice.size()); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        log.info("[PO-INVOICE-PRICE][PIPE] afterDedup[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                nvl(r.get("invoiceAveragePrice")).trim(),
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+
+                    for (int i = 0; i < poInvoiceAvgPrice.size(); i++) {
+                        Map<String, String> r = poInvoiceAvgPrice.get(i);
+                        if (r == null) continue;
+                        String price = nvl(r.get("invoiceAveragePrice")).trim();
+                        if (!price.equals("5.40 USD")) continue;
+                        if (poInvoiceAvgPriceTraceBuffer != null) {
+                            poInvoiceAvgPriceTraceBuffer.add("[PO-INVOICE-PRICE][TRACE] afterDedup[" + i
+                                    + "] page=" + nvl(r.get("page")).trim()
+                                    + " price=" + price
+                                    + " country=" + nvl(r.get("country")).trim()
+                                    + " src=" + nvl(r.get("_src")).trim());
+                        }
+                        log.info("[PO-INVOICE-PRICE][TRACE] afterDedup[{}] page={} price={} country={} src={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                price,
+                                nvl(r.get("country")).trim(),
+                                nvl(r.get("_src")).trim());
+                    }
+                }
+            }
             prefixPurchaseOrderTermsOfDeliveryCountriesFromInvoiceAvgPrice(poTermsOfDeliveryByPage, poInvoiceAvgPrice);
 
             String globalTermsForNormalization = formFields.get("Terms of Delivery");
@@ -3955,14 +4264,25 @@ public class OcrNewService {
                     colourSizeBreakdown == null ? 0 : colourSizeBreakdown.size(),
                     formFields.size());
             // Dump all raw OCR lines so we can verify what Tesseract actually read
-            for (int li = 0; li < allLines.size(); li++) {
+            int ocrResultLineLimit = 120;
+            for (int li = 0; li < Math.min(allLines.size(), ocrResultLineLimit); li++) {
                 OcrNewLine l = allLines.get(li);
                 log.info("[OCR-RESULT][LINE] file={} page={} line[{}]: {}", fname, l.getPage(), li, truncate(oneLine(l.getText()), 400));
             }
+            if (allLines.size() > ocrResultLineLimit) {
+                log.info("[OCR-RESULT][LINE] file={} {} more lines not logged", fname, allLines.size() - ocrResultLineLimit);
+            }
             // Dump form fields
-            formFields.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .forEach(en -> log.info("[OCR-RESULT][FIELD] file={} {} = {}", fname, en.getKey(), truncate(oneLine(en.getValue()), 300)));
+            int ocrResultFieldLimit = 120;
+            List<Map.Entry<String, String>> fieldEntries = new ArrayList<>(formFields.entrySet());
+            fieldEntries.sort(Map.Entry.comparingByKey());
+            for (int fi = 0; fi < Math.min(fieldEntries.size(), ocrResultFieldLimit); fi++) {
+                Map.Entry<String, String> en = fieldEntries.get(fi);
+                log.info("[OCR-RESULT][FIELD] file={} {} = {}", fname, en.getKey(), truncate(oneLine(en.getValue()), 300));
+            }
+            if (fieldEntries.size() > ocrResultFieldLimit) {
+                log.info("[OCR-RESULT][FIELD] file={} {} more fields not logged", fname, fieldEntries.size() - ocrResultFieldLimit);
+            }
             // Dump detail rows
             for (int di = 0; di < salesOrderDetailSizeBreakdown.size(); di++) {
                 log.info("[OCR-RESULT][DETAIL] file={} row[{}] {}", fname, di, salesOrderDetailSizeBreakdown.get(di));
@@ -3999,6 +4319,12 @@ public class OcrNewService {
             log.info("╔══════════════════════════════════════════════════════════════════════╗");
             log.info("║  [OCR-RESULT]  END — file: {}", fname);
             log.info("╚══════════════════════════════════════════════════════════════════════╝");
+
+            if (poInvoiceAvgPriceTraceBuffer != null && !poInvoiceAvgPriceTraceBuffer.isEmpty()) {
+                for (String s : poInvoiceAvgPriceTraceBuffer) {
+                    log.info("[PO-INVOICE-PRICE][TRACE-END] {}", s);
+                }
+            }
 
             float avgConfidence = 0f;
             if (!allLines.isEmpty()) {
@@ -4407,7 +4733,47 @@ public class OcrNewService {
             List<OcrNewLine> pageLines = en.getValue();
             if (pageLines == null || pageLines.isEmpty()) continue;
 
-            List<Map<String, String>> rows = extractPurchaseOrderInvoiceAvgPrice(pageLines);
+            pageLines = new ArrayList<>(pageLines);
+            pageLines.sort(Comparator
+                    .comparingInt(OcrNewLine::getTop)
+                    .thenComparingInt(OcrNewLine::getLeft));
+
+            // Guard against false positives on non-table pages: we only run the extractor
+            // when the page contains a plausible header in the expected region.
+            int headerIdx = -1;
+            int headerTop = -1;
+            for (int i = 0; i < pageLines.size(); i++) {
+                OcrNewLine l = pageLines.get(i);
+                if (l == null || l.getText() == null) continue;
+                String s = oneLine(l.getText()).trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                boolean looksLikeHeader = (low.contains("invoice average") || low.contains("invoice avg"))
+                        && low.contains("country");
+                // Reject key-value artefacts like "Invoice Average Price = Country".
+                if (looksLikeHeader && !s.contains("=") && l.getLeft() <= 650 && l.getTop() >= 1400) {
+                    headerIdx = i;
+                    headerTop = l.getTop();
+                    break;
+                }
+            }
+            if (headerIdx < 0) continue;
+
+            List<OcrNewLine> scoped = new ArrayList<>();
+            int topMin = Math.max(0, headerTop - 20);
+            int topMax = headerTop + 320;
+            for (int i = headerIdx; i < pageLines.size(); i++) {
+                OcrNewLine l = pageLines.get(i);
+                if (l == null || l.getText() == null) continue;
+                if (l.getTop() < topMin) continue;
+                if (l.getTop() > topMax) break;
+                // The table is on the left side; ignore far-right columns to avoid picking up
+                // unrelated prices/codes elsewhere on the page.
+                if (l.getLeft() > 900) continue;
+                scoped.add(l);
+            }
+
+            List<Map<String, String>> rows = extractPurchaseOrderInvoiceAvgPrice(scoped);
             if (rows == null || rows.isEmpty()) continue;
             for (Map<String, String> r : rows) {
                 if (r == null) continue;
@@ -5415,6 +5781,7 @@ public class OcrNewService {
                 final int pl = planningLeft;
                 final int ql = qtyLeft;
                 String rlDump = rowLines.stream()
+                        .limit(12)
                         .map(rl -> {
                             String bucket = (rl.getLeft() >= pl && rl.getLeft() < ql) ? "PLAN"
                                     : (rl.getLeft() >= ql ? "QTY" : "OTHER");
@@ -5422,7 +5789,7 @@ public class OcrNewService {
                         })
                         .reduce("", (a, b) -> a.isEmpty() ? b : (a + " | " + b));
                 log.debug("[PO-TIME-DELIVERY][DIAG] row={} page={} windowTopBottom=[{}..{}] lines={}",
-                        timeOfDelivery, page, rowTopMin, rowBottomMax, rlDump);
+                        timeOfDelivery, page, rowTopMin, rowBottomMax, truncate(rlDump, 900));
             }
 
             StringBuilder planBuf = new StringBuilder();
@@ -6044,17 +6411,27 @@ public class OcrNewService {
             return out;
         }
 
-        List<String> texts = new ArrayList<>();
+        List<OcrNewLine> sorted = new ArrayList<>();
         for (OcrNewLine l : allLines) {
-            if (l != null && l.getText() != null) {
-                texts.add(oneLine(l.getText()).trim());
-            }
+            if (l == null || l.getText() == null) continue;
+            sorted.add(l);
+        }
+        sorted.sort(Comparator
+                .comparingInt(OcrNewLine::getPage)
+                .thenComparingInt(OcrNewLine::getTop)
+                .thenComparingInt(OcrNewLine::getLeft));
+
+        List<String> texts = new ArrayList<>();
+        for (OcrNewLine l : sorted) {
+            texts.add(oneLine(l.getText()).trim());
         }
         // Find "Invoice Average Price" header
         int headerIdx = -1;
         for (int i = 0; i < texts.size(); i++) {
             String low = texts.get(i).toLowerCase(Locale.ROOT);
-            if (low.contains("invoice average price")) {
+            boolean looksLikeHeader = (low.contains("invoice average") || low.contains("invoice avg"))
+                    && low.contains("country");
+            if (looksLikeHeader) {
                 headerIdx = i;
                 log.info("[PO-INVOICE-PRICE] Found header at line {}: {}", i, texts.get(i));
                 break;
@@ -6072,6 +6449,7 @@ public class OcrNewService {
         Pattern countryOnlyPat = Pattern.compile("^([A-Z]{2})$");
         Pattern countryListPat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)+[A-Z]{2}$");
         Pattern priceCountrySameLinePat = Pattern.compile("^([\\d\\.,]+)\\s+([A-Z]{2,3})\\s+([A-Z]{2})$");
+        Pattern countryCodeAnyPat = Pattern.compile("\\b([A-Z]{2})\\b");
 
         String lastPrice = "";
         for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 40); i++) {
@@ -6088,6 +6466,7 @@ public class OcrNewService {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("invoiceAveragePrice", sameLine.group(1) + " " + sameLine.group(2));
                 row.put("country", sameLine.group(3));
+                row.put("_src", "sameLine");
                 out.add(row);
                 log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", row.get("invoiceAveragePrice"), row.get("country"));
                 lastPrice = "";
@@ -6097,23 +6476,136 @@ public class OcrNewService {
             Matcher priceOnly = priceOnlyPat.matcher(line);
             Matcher countryOnly = countryOnlyPat.matcher(line);
             if (priceOnly.find()) {
+                // If we see a new price while the previous price is still waiting for a country,
+                // do not lose it. Emit it with blank country.
+                if (!lastPrice.isEmpty()) {
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("invoiceAveragePrice", lastPrice);
+                    row.put("country", "");
+                    row.put("_src", "blank");
+                    out.add(row);
+                    log.info("[PO-INVOICE-PRICE] Extracted row (country missing): {} |", lastPrice);
+                }
                 lastPrice = line;
                 continue;
             }
 
             String cleanedCountryLine = line.replaceAll("\\s+", " ").replaceAll(",\\s*$", "").trim();
-            boolean isCountry = countryOnlyPat.matcher(cleanedCountryLine).find() || countryListPat.matcher(cleanedCountryLine).find();
+            // Follow Time of Delivery planning-markets behavior: if the OCR line is in the form
+            // "<something>, <country tokens...>", keep the whole trailing segment after the first comma.
+            int firstComma = cleanedCountryLine.indexOf(',');
+            if (firstComma >= 0) {
+                String afterComma = cleanedCountryLine.substring(firstComma + 1).trim();
+                if (!afterComma.isBlank() && countryCodeAnyPat.matcher(afterComma).find()) {
+                    cleanedCountryLine = afterComma;
+                }
+            }
+
+            boolean isCountry = countryOnlyPat.matcher(cleanedCountryLine).find()
+                    || countryListPat.matcher(cleanedCountryLine).find()
+                    || (cleanedCountryLine.contains(",") && countryCodeAnyPat.matcher(cleanedCountryLine).find());
             if (isCountry && !lastPrice.isEmpty()) {
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("invoiceAveragePrice", lastPrice);
                 row.put("country", cleanedCountryLine);
+                row.put("_src", "paired");
                 out.add(row);
                 log.info("[PO-INVOICE-PRICE] Extracted row: {} | {}", lastPrice, cleanedCountryLine);
                 lastPrice = "";
             }
         }
+
+        // Flush trailing price if the country never appeared inside the scan window.
+        if (!lastPrice.isEmpty()) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("invoiceAveragePrice", lastPrice);
+            row.put("country", "");
+            row.put("_src", "blank");
+            out.add(row);
+            log.info("[PO-INVOICE-PRICE] Extracted row (country missing at end): {} |", lastPrice);
+        }
         log.info("[PO-INVOICE-PRICE] Total rows extracted: {}", out.size());
         return out;
+    }
+
+    private static void fillMissingPurchaseOrderInvoiceAvgPriceCountriesFromOtherPages(List<Map<String, String>> rows) {
+        if (rows == null || rows.isEmpty()) return;
+
+        Pattern singleCountryPat = Pattern.compile("^[A-Z]{2}$");
+        Map<String, String> countryByPrice = new LinkedHashMap<>();
+        Map<String, Integer> scoreByPrice = new LinkedHashMap<>();
+        Map<String, Integer> srcRankByPrice = new LinkedHashMap<>();
+        Map<String, Integer> pageByPrice = new LinkedHashMap<>();
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            String p = nvl(r.get("invoiceAveragePrice")).trim();
+            if (p.isBlank()) continue;
+            String c = nvl(r.get("country")).trim();
+            if (c.isBlank()) continue;
+            if (!singleCountryPat.matcher(c).matches()) continue;
+
+            String src = nvl(r.get("_src")).trim();
+            // Only accept strong sources as authoritative candidates for cross-page filling.
+            // This prevents polluting the fill-map with countries derived from Terms or other heuristics.
+            if (!(src.equals("sameLine") || src.equals("paired"))) continue;
+
+            int srcRank = src.equals("sameLine") ? 2 : 1;
+            int score = 0;
+            if (src.equals("sameLine")) score += 1000;
+            else if (src.equals("paired")) score += 800;
+            else if (src.equals("filled")) score += 200;
+            else if (src.equals("terms")) score += 50;
+            else score += 100;
+
+            int page = 0;
+            try {
+                page = Integer.parseInt(nvl(r.get("page")).trim());
+            } catch (Exception ignore) {
+            }
+            // Prefer later page when source score ties (later pages tend to contain the
+            // consolidated/complete table, while earlier detail pages may include artefacts).
+            score += Math.max(0, page);
+
+            Integer best = scoreByPrice.get(p);
+            Integer bestPage = pageByPrice.get(p);
+            if (best == null || score > best || (score == best && bestPage != null && page > bestPage)) {
+                scoreByPrice.put(p, score);
+                countryByPrice.put(p, c);
+                srcRankByPrice.put(p, srcRank);
+                pageByPrice.put(p, page);
+            }
+        }
+
+        if (countryByPrice.isEmpty()) return;
+
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+            String p = nvl(r.get("invoiceAveragePrice")).trim();
+            if (p.isBlank()) continue;
+            String c = nvl(r.get("country")).trim();
+
+            String bestCountry = countryByPrice.get(p);
+            Integer bestRank = srcRankByPrice.get(p);
+            if (bestCountry == null || bestCountry.isBlank() || bestRank == null) continue;
+
+            String src = nvl(r.get("_src")).trim();
+            int curRank = src.equals("sameLine") ? 2 : (src.equals("paired") ? 1 : 0);
+            boolean curSingle = !c.isBlank() && singleCountryPat.matcher(c).matches();
+
+            boolean shouldOverwrite = false;
+            if (c.isBlank()) shouldOverwrite = true;
+            // If we have a stronger source for this price (e.g. sameLine on another page),
+            // propagate it to weaker rows even if they currently have a value.
+            else if (bestRank > curRank) shouldOverwrite = true;
+            // If both are strong but differ, prefer sameLine over paired.
+            else if (bestRank == curRank && curRank == 1 && curSingle && !bestCountry.equalsIgnoreCase(c) && bestRank == 2) shouldOverwrite = true;
+
+            if (shouldOverwrite) {
+                r.put("country", bestCountry);
+                r.put("_src", "filled");
+                log.info("[PO-INVOICE-PRICE] Filled/overrode country from other pages: {} | {}", p.trim(), bestCountry);
+            }
+        }
     }
 
     private static void annotatePurchaseOrderInvoiceAvgPricePages(List<Map<String, String>> rows, List<OcrNewLine> allLines) {
