@@ -291,6 +291,64 @@ public class OcrNewService {
         return out;
     }
 
+    private static String extractPurchaseOrderTermsOfDeliveryPage1FromPdfBytes(byte[] pdfBytes) {
+        if (pdfBytes == null || pdfBytes.length == 0) return "";
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            if (doc.getNumberOfPages() <= 0) return "";
+
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            stripper.setStartPage(1);
+            stripper.setEndPage(1);
+            String text = stripper.getText(doc);
+            if (text == null || text.isBlank()) return "";
+
+            String[] lines = text.split("\\r?\\n");
+            int headerIdx = -1;
+            for (int i = 0; i < lines.length; i++) {
+                String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+                if (low.equals("terms of delivery") || low.startsWith("terms of delivery")) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx < 0) return "";
+
+            Pattern stopPat = Pattern.compile("(?i).*(time of delivery|quantity per artic|invoice average|sales sample|total quantity|purchase order detail).*");
+            Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*){2,}[A-Z]{2}$");
+
+            String countryLine = "";
+            StringBuilder body = new StringBuilder();
+            for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 80); i++) {
+                String raw = lines[i];
+                if (raw == null) continue;
+                String s = oneLine(raw).replaceAll("\\s+", " ").trim();
+                if (s.isBlank()) continue;
+                if (stopPat.matcher(s).matches()) break;
+
+                String upper = s.toUpperCase(Locale.ROOT);
+                if (countryLine.isBlank() && countryLinePat.matcher(upper).matches()) {
+                    countryLine = upper;
+                    continue;
+                }
+
+                if (body.length() > 0) body.append("\n");
+                body.append(s);
+            }
+
+            String cleanedBody = cleanPurchaseOrderTermsOfDeliveryText(body.toString());
+            if (!countryLine.isBlank() && !cleanedBody.isBlank()) return countryLine + "\n" + cleanedBody;
+            if (!countryLine.isBlank()) return countryLine;
+            return cleanedBody;
+        } catch (Exception ex) {
+            log.warn("[PO-TERMS-DELIVERY][PDFBOX] failed: {}", ex.getMessage());
+            return "";
+        }
+    }
+
     private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(byte[] pdfBytes) {
         List<Map<String, String>> out = new ArrayList<>();
         if (pdfBytes == null || pdfBytes.length == 0) return out;
@@ -3810,6 +3868,13 @@ public class OcrNewService {
             if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
+
+            if (isPdf(file)) {
+                String pdfTermsPage1 = extractPurchaseOrderTermsOfDeliveryPage1FromPdfBytes(fileBytes);
+                if (pdfTermsPage1 != null && !pdfTermsPage1.isBlank()) {
+                    formFields.put("Terms of Delivery", pdfTermsPage1);
+                }
+            }
             List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
             Set<String> allowedTermsCountries = extractTwoLetterCountryCodesFromTermsFirstLine(formFields.get("Terms of Delivery"));
             fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug, allowedTermsCountries);
@@ -4545,6 +4610,43 @@ public class OcrNewService {
                         boolean shouldReplace = orderedTod.size() > existingSet.size() && overlap >= Math.max(1, orderedTod.size() / 2);
                         if (shouldReplace) {
                             String newFirst = String.join(", ", orderedTod);
+                            return newFirst + "\n" + body0;
+                        }
+
+                        // Otherwise, merge missing TOD codes into the existing list while preserving
+                        // the original ordering as much as possible (PDF-like) and inserting new codes
+                        // according to the TOD sequence (no hardcoded canonical list).
+                        List<String> base = new ArrayList<>();
+                        for (String t : first0.split("\\s*,\\s*")) {
+                            String tt = safe(t).trim().toUpperCase(Locale.ROOT);
+                            if (normalizeOlToOi && tt.equals("OL")) tt = "OI";
+                            if (!tt.isBlank() && !base.contains(tt)) base.add(tt);
+                        }
+                        boolean changed = false;
+                        for (String c : orderedTod) {
+                            if (c == null || c.isBlank()) continue;
+                            String cc = c.trim().toUpperCase(Locale.ROOT);
+                            if (normalizeOlToOi && cc.equals("OL")) cc = "OI";
+                            if (base.contains(cc)) continue;
+
+                            int insertAt = base.size();
+                            String prev = "";
+                            for (String x : orderedTod) {
+                                if (x == null) continue;
+                                String xx = x.trim().toUpperCase(Locale.ROOT);
+                                if (normalizeOlToOi && xx.equals("OL")) xx = "OI";
+                                if (xx.equals(cc)) break;
+                                if (base.contains(xx)) prev = xx;
+                            }
+                            if (!prev.isBlank()) {
+                                int idx = base.indexOf(prev);
+                                if (idx >= 0) insertAt = idx + 1;
+                            }
+                            base.add(insertAt, cc);
+                            changed = true;
+                        }
+                        if (changed) {
+                            String newFirst = String.join(", ", base);
                             return newFirst + "\n" + body0;
                         }
                     }
