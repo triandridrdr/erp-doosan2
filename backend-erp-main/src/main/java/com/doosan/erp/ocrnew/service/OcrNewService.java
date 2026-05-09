@@ -1358,7 +1358,7 @@ public class OcrNewService {
             if (p.isBlank() || p.equals("1")) continue;
             String terms = nvl(r.get("termsOfDelivery")).trim();
             if (terms.isBlank()) continue;
-            Set<String> codes = extractTwoLetterCountryCodesFromTermsFirstLine(terms);
+            Set<String> codes = extractAnyTwoLetterCodesFromTermsFirstLine(terms);
             if (codes == null || codes.isEmpty()) continue;
             termsCountriesByPage.put(p, new LinkedHashSet<>(codes));
         }
@@ -2241,6 +2241,23 @@ public class OcrNewService {
         while (m.find()) {
             String code = m.group(1);
             if (code != null && !code.isBlank() && PO_DELIVERY_COUNTRY_CODES.contains(code)) {
+                out.add(code);
+            }
+        }
+        return out;
+    }
+
+    private static Set<String> extractAnyTwoLetterCodesFromTermsFirstLine(String terms) {
+        if (terms == null || terms.isBlank()) return Set.of();
+        String t = terms.trim();
+        String firstLine = t.split("\\R", 2)[0].trim();
+        if (firstLine.isBlank()) return Set.of();
+
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(firstLine.toUpperCase(Locale.ROOT));
+        while (m.find()) {
+            String code = m.group(1);
+            if (code != null && !code.isBlank()) {
                 out.add(code);
             }
         }
