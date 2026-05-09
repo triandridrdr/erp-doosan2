@@ -5312,6 +5312,9 @@ public class OcrNewService {
         }
 
         Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]+)\\s+(\\d+%|<\\d+%)\\s*$");
+        Pattern qtyOnlyPat = Pattern.compile("^\\s*(\\d[\\d\\s]{0,15})\\s*$");
+        Pattern percentOnlyPat = Pattern.compile("^\\s*(\\d+%|<\\d+%)\\s*$");
+        Pattern qtyAtEndPat = Pattern.compile("(\\d[\\d\\s]{0,15})\\s*$");
         // Capture country prefix + planning market code; closing ')' is optional because OCR sometimes drops it.
         // We will normalize the output to always include the closing ')'.
         Pattern planningTokenPat = Pattern.compile("\\b([A-Z]{2})\\s*\\(\\s*((?:PM|OL)[- ]?[A-Z0-9]{2,})\\s*\\)?");
@@ -5375,6 +5378,7 @@ public class OcrNewService {
                 String tLow = t.toLowerCase(Locale.ROOT);
                 if (tLow.contains("quantity per artic") || tLow.contains("article no")
                         || tLow.contains("total quantity") || tLow.startsWith("total:")) {
+                    rowBottomMax = Math.max(rowTop + 20, Math.min(rowTop + 180, next.getTop() - 2));
                     break;
                 }
                 Matcher dm2 = DATE_PATTERN.matcher(t);
@@ -5388,6 +5392,7 @@ public class OcrNewService {
             String planningMarkets = "";
             String quantity = "";
             String percentTotalQty = "";
+            String totalQtyInBlock = "";
 
             List<OcrNewLine> rowLines = new ArrayList<>();
             for (int k = headerIdx + 1; k < Math.min(lines.size(), headerIdx + 200); k++) {
@@ -5426,6 +5431,11 @@ public class OcrNewService {
                     String candidate = rl.getText();
                     if (candidate.equalsIgnoreCase("planning markets")) continue;
                     if (candidate.equalsIgnoreCase("total") || candidate.toLowerCase(Locale.ROOT).startsWith("total:")) continue;
+                    String candLow = candidate.toLowerCase(Locale.ROOT);
+                    if (candLow.contains("quantity per artic") || candLow.contains("article no")
+                            || candLow.contains("total quantity")) {
+                        continue;
+                    }
                     if (DATE_PATTERN.matcher(candidate).find()) continue;
 
                     List<String> tokens = extractPlanningTokens.apply(candidate);
@@ -5443,10 +5453,42 @@ public class OcrNewService {
                 }
 
                 if (rl.getLeft() >= qtyLeft) {
-                    Matcher qpMatcher = qtyPercentPat.matcher(rl.getText());
-                    if (qpMatcher.find()) {
-                        quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
-                        percentTotalQty = qpMatcher.group(2).trim();
+                    String qtyCand = rl.getText();
+                    if (qtyCand != null) qtyCand = qtyCand.trim();
+
+                    if (qtyCand != null && !qtyCand.isBlank()) {
+                        Matcher qpMatcher = qtyPercentPat.matcher(qtyCand);
+                        if (qpMatcher.find()) {
+                            quantity = qpMatcher.group(1).replaceAll("\\s+", " ").trim();
+                            percentTotalQty = qpMatcher.group(2).trim();
+                            continue;
+                        }
+
+                        // OCR sometimes splits Quantity and % into separate lines.
+                        // Example: one line "402" and another line "34%".
+                        Matcher qOnly = qtyOnlyPat.matcher(qtyCand);
+                        if (quantity.isBlank() && qOnly.find()) {
+                            quantity = qOnly.group(1).replaceAll("\\s+", " ").trim();
+                            continue;
+                        }
+                        Matcher pOnly = percentOnlyPat.matcher(qtyCand);
+                        if (percentTotalQty.isBlank() && pOnly.find()) {
+                            percentTotalQty = pOnly.group(1).trim();
+                        }
+                    }
+                }
+
+                // Capture Total quantity line that can appear in the same vertical block.
+                // Example: "Total: 28" might end up in the planning column region.
+                String maybeTotal = rl.getText();
+                if (maybeTotal != null) {
+                    String lowTotal = maybeTotal.toLowerCase(Locale.ROOT).trim();
+                    if (lowTotal.startsWith("total:")) {
+                        String tail = maybeTotal.substring(Math.min(maybeTotal.length(), 6)).trim();
+                        Matcher mt = qtyAtEndPat.matcher(tail);
+                        if (mt.find()) {
+                            totalQtyInBlock = mt.group(1).replaceAll("\\s+", " ").trim();
+                        }
                     }
                 }
             }
@@ -5492,13 +5534,38 @@ public class OcrNewService {
                                 planningMarkets = inlinePlanning;
                             }
                         }
-                    } else if (planningMarkets.isBlank()) {
-                        // No qty/percent found but there may still be planning tokens
-                        List<String> inlineTokens = extractPlanningTokens.apply(afterDateText);
-                        if (!inlineTokens.isEmpty()) {
-                            planningMarkets = String.join(", ", inlineTokens);
+                    } else {
+                        // Handle inline qty without percent: "BE (PMSEU) 28"
+                        Matcher inlineQtyEnd = qtyAtEndPat.matcher(afterDateText);
+                        if (inlineQtyEnd.find()) {
+                            String qtyStr = inlineQtyEnd.group(1).replaceAll("\\s+", " ").trim();
+                            String beforeQty = afterDateText.substring(0, inlineQtyEnd.start()).trim();
+                            if (quantity.isBlank() && !qtyStr.isBlank()) {
+                                quantity = qtyStr;
+                            }
+                            if (planningMarkets.isBlank() && !beforeQty.isBlank()) {
+                                List<String> inlineTokens = extractPlanningTokens.apply(beforeQty);
+                                if (!inlineTokens.isEmpty()) {
+                                    planningMarkets = String.join(", ", inlineTokens);
+                                } else {
+                                    planningMarkets = beforeQty;
+                                }
+                            }
+                        } else if (planningMarkets.isBlank()) {
+                            // No qty/percent found but there may still be planning tokens
+                            List<String> inlineTokens = extractPlanningTokens.apply(afterDateText);
+                            if (!inlineTokens.isEmpty()) {
+                                planningMarkets = String.join(", ", inlineTokens);
+                            }
                         }
                     }
+                }
+            }
+
+            // If this section has only one row and we have a matching Total, percent is 100%.
+            if (percentTotalQty.isBlank() && !quantity.isBlank() && !totalQtyInBlock.isBlank()) {
+                if (quantity.replaceAll("\\s+", "").equals(totalQtyInBlock.replaceAll("\\s+", ""))) {
+                    percentTotalQty = "100%";
                 }
             }
 
@@ -5518,6 +5585,17 @@ public class OcrNewService {
             row.put("percentTotalQty", percentTotalQty);
             out.add(row);
             log.info("[PO-TIME-DELIVERY] Extracted row: {} | {} | {} | {}", timeOfDelivery, planningMarkets, quantity, percentTotalQty);
+        }
+
+        if (out.size() == 1) {
+            Map<String, String> only = out.get(0);
+            if (only != null) {
+                String q = only.get("quantity");
+                String p = only.get("percentTotalQty");
+                if ((p == null || p.isBlank()) && (q != null && !q.isBlank())) {
+                    only.put("percentTotalQty", "100%");
+                }
+            }
         }
 
         log.info("[PO-TIME-DELIVERY] Total rows extracted: {}", out.size());
