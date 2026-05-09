@@ -349,6 +349,77 @@ public class OcrNewService {
         }
     }
 
+    private static List<Map<String, String>> extractPurchaseOrderTermsOfDeliveryByPageFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            Pattern stopPat = Pattern.compile("(?i).*(time of delivery|quantity per artic|invoice average|sales sample|total quantity|purchase order detail).* ");
+            Pattern countryLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*){1,}[A-Z]{2}$");
+
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.equals("terms of delivery") || low.startsWith("terms of delivery")) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) continue;
+
+                String countryLine = "";
+                StringBuilder body = new StringBuilder();
+                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 80); i++) {
+                    String raw = lines[i];
+                    if (raw == null) continue;
+                    String s = oneLine(raw).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    if (stopPat.matcher(s + " ").matches()) break;
+
+                    String upper = s.toUpperCase(Locale.ROOT);
+                    if (countryLine.isBlank() && countryLinePat.matcher(upper).matches()) {
+                        countryLine = upper;
+                        continue;
+                    }
+
+                    if (body.length() > 0) body.append("\n");
+                    body.append(s);
+                }
+
+                String cleanedBody = cleanPurchaseOrderTermsOfDeliveryText(body.toString());
+                String combined;
+                if (!countryLine.isBlank() && !cleanedBody.isBlank()) combined = countryLine + "\n" + cleanedBody;
+                else if (!countryLine.isBlank()) combined = countryLine;
+                else combined = cleanedBody;
+
+                if (combined != null && !combined.isBlank()) {
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("page", String.valueOf(page));
+                    row.put("termsOfDelivery", combined);
+                    row.put("_src", "pdfText");
+                    out.add(row);
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[PO-TERMS-DELIVERY][PDFBOX] failed(byPage): {}", ex.getMessage());
+        }
+
+        return out;
+    }
+
     private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(byte[] pdfBytes) {
         List<Map<String, String>> out = new ArrayList<>();
         if (pdfBytes == null || pdfBytes.length == 0) return out;
@@ -3957,6 +4028,39 @@ public class OcrNewService {
                 }
             }
             List<Map<String, String>> poTermsOfDeliveryByPage = extractPurchaseOrderTermsOfDeliveryByPage(allLines);
+            if (isPdf(file)) {
+                List<Map<String, String>> pdfTermsByPage = extractPurchaseOrderTermsOfDeliveryByPageFromPdfBytes(fileBytes);
+                if (pdfTermsByPage != null && !pdfTermsByPage.isEmpty()) {
+                    if (poTermsOfDeliveryByPage == null) poTermsOfDeliveryByPage = new ArrayList<>();
+                    Map<String, Map<String, String>> byPage = new LinkedHashMap<>();
+                    for (Map<String, String> r : poTermsOfDeliveryByPage) {
+                        if (r == null) continue;
+                        String p = nvl(r.get("page")).trim();
+                        if (p.isBlank()) p = "1";
+                        byPage.put(p, r);
+                    }
+                    for (Map<String, String> r : pdfTermsByPage) {
+                        if (r == null) continue;
+                        String p = nvl(r.get("page")).trim();
+                        if (p.isBlank()) p = "1";
+                        if (p.equals("1")) continue;
+                        String terms = nvl(r.get("termsOfDelivery")).trim();
+                        if (terms.isBlank()) continue;
+                        Map<String, String> cur = byPage.get(p);
+                        if (cur == null) {
+                            Map<String, String> nr = new LinkedHashMap<>();
+                            nr.put("page", p);
+                            nr.put("termsOfDelivery", terms);
+                            nr.put("_src", "pdfText");
+                            poTermsOfDeliveryByPage.add(nr);
+                            byPage.put(p, nr);
+                        } else {
+                            cur.put("termsOfDelivery", terms);
+                            cur.put("_src", "pdfText");
+                        }
+                    }
+                }
+            }
             Set<String> allowedTermsCountries = extractTwoLetterCountryCodesFromTermsFirstLine(formFields.get("Terms of Delivery"));
             fillMissingPurchaseOrderTermsOfDeliveryCountryCodeFromRegionOcr(poTermsOfDeliveryByPage, allLines, pageImages, ocrEngine, fname, effectiveDebug, allowedTermsCountries);
 
