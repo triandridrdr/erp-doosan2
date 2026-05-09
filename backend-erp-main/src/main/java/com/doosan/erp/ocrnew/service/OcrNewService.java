@@ -291,6 +291,91 @@ public class OcrNewService {
         return out;
     }
 
+    private static List<Map<String, String>> extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            Pattern headerPat = Pattern.compile("(?i).*invoice\\s+average.*");
+            Pattern stopPat = Pattern.compile("(?i).*(terms of delivery|time of delivery|quantity per artic|sales sample|total quantity).*");
+            Pattern rowSameLinePat = Pattern.compile("^\\s*([\\d\\.,]+)\\s+([A-Z]{3})\\s+(.*?)\\s*$");
+            Pattern priceOnlyPat = Pattern.compile("^\\s*[\\d\\.,]+\\s+[A-Z]{3}\\s*$");
+            Pattern hasCountryCodePat = Pattern.compile("\\b[A-Z]{2}\\b");
+
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).trim();
+                    if (s.isBlank()) continue;
+                    if (headerPat.matcher(s).matches() && s.toLowerCase(Locale.ROOT).contains("country")) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) continue;
+
+                String pendingPrice = "";
+                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 60); i++) {
+                    String raw = lines[i];
+                    if (raw == null) continue;
+                    String line = oneLine(raw).replaceAll("\\s+", " ").trim();
+                    if (line.isBlank()) continue;
+                    if (stopPat.matcher(line).matches()) break;
+                    String low = line.toLowerCase(Locale.ROOT);
+                    if (low.contains("invoice average") && low.contains("country")) continue;
+
+                    Matcher same = rowSameLinePat.matcher(line);
+                    if (same.matches()) {
+                        String price = (same.group(1).trim() + " " + same.group(2).trim()).trim();
+                        String country = same.group(3) == null ? "" : same.group(3).trim();
+                        if (!country.isBlank() && hasCountryCodePat.matcher(country.toUpperCase(Locale.ROOT)).find()) {
+                            Map<String, String> row = new LinkedHashMap<>();
+                            row.put("page", String.valueOf(page));
+                            row.put("invoiceAveragePrice", price);
+                            row.put("country", country);
+                            row.put("_src", "pdfText");
+                            out.add(row);
+                            pendingPrice = "";
+                            continue;
+                        }
+                    }
+
+                    if (priceOnlyPat.matcher(line).matches()) {
+                        pendingPrice = line.trim();
+                        continue;
+                    }
+
+                    if (!pendingPrice.isBlank()) {
+                        String country = line.trim();
+                        if (hasCountryCodePat.matcher(country.toUpperCase(Locale.ROOT)).find()) {
+                            Map<String, String> row = new LinkedHashMap<>();
+                            row.put("page", String.valueOf(page));
+                            row.put("invoiceAveragePrice", pendingPrice);
+                            row.put("country", country);
+                            row.put("_src", "pdfTextPaired");
+                            out.add(row);
+                        }
+                        pendingPrice = "";
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[PO-INVOICE-PRICE][PDFBOX] failed: {}", ex.getMessage());
+        }
+
+        return out;
+    }
+
     private static List<Map<String, String>> extractSalesSampleDestinationStudioAddressByPage(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
         if (allLines == null || allLines.isEmpty()) return out;
@@ -913,7 +998,9 @@ public class OcrNewService {
             String src = nvl(r.get("_src")).trim();
             int srcScore = 0;
             // Source quality: prefer direct table extraction over inferred fallbacks.
-            if (src.equals("sameLine")) srcScore = 10000;
+            if (src.equals("pdfText")) srcScore = 12000;
+            else if (src.equals("pdfTextPaired")) srcScore = 11000;
+            else if (src.equals("sameLine")) srcScore = 10000;
             else if (src.equals("paired")) srcScore = 8000;
             else if (src.equals("filled")) srcScore = 3000;
             else if (src.equals("blank")) srcScore = 500;
@@ -3762,7 +3849,13 @@ public class OcrNewService {
             // Then annotate each extracted row with a best-effort page number so the frontend
             // can still filter by active page.
             List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
-            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
+            List<Map<String, String>> poInvoiceAvgPrice = null;
+            if (isPdf(file)) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(fileBytes);
+            }
+            if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
+            }
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
                 annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
