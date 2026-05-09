@@ -27,6 +27,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -3610,10 +3611,6 @@ public class OcrNewService {
                 annotatePurchaseOrderInvoiceAvgPricePages(poInvoiceAvgPrice, allLines);
             }
 
-            // Some documents (esp. Sales Sample attachments) contain another "Terms of Delivery"
-            // section on later pages (e.g. Courier DHL). For Purchase Orders we prefer the page-1
-            // header code (often a single 2-letter market code) combined with the shipping body
-            // (e.g. "Transport by Sea...") if present in OCR/PDFBox supplement lines.
             try {
                 Pattern twoLetterCountryPat = Pattern.compile("^[A-Z]{2}$");
                 String page1Code = "";
@@ -3626,6 +3623,16 @@ public class OcrNewService {
                     page1Lines.sort(Comparator
                             .comparingInt(OcrNewLine::getTop)
                             .thenComparingInt(OcrNewLine::getLeft));
+
+                    boolean hasStandaloneOi = false;
+                    for (OcrNewLine l : allLines) {
+                        if (l == null || l.getText() == null) continue;
+                        String s = oneLine(l.getText()).trim();
+                        if (s.equalsIgnoreCase("OI")) {
+                            hasStandaloneOi = true;
+                            break;
+                        }
+                    }
 
                     int headerIdx = -1;
                     for (int i = 0; i < page1Lines.size(); i++) {
@@ -3645,17 +3652,149 @@ public class OcrNewService {
                             }
                         }
                     }
-                }
 
-                String inferredBody = inferPurchaseOrderTermsOfDeliveryGlobalBodyFromLines(allLines);
-                if (!page1Code.isBlank() && inferredBody != null && !inferredBody.isBlank()) {
-                    String lowBody = inferredBody.toLowerCase(Locale.ROOT);
-                    boolean looksLikeSea = lowBody.contains("transport by") || lowBody.contains("incoterms") || lowBody.contains("ship by");
-                    String existingTerms = nvl(formFields.get("Terms of Delivery")).trim();
-                    String lowExisting = existingTerms.toLowerCase(Locale.ROOT);
-                    boolean existingLooksLikeCourier = lowExisting.contains("courier") || lowExisting.contains("dhl") || lowExisting.contains("destination studio address");
-                    if (looksLikeSea && (existingTerms.isBlank() || existingLooksLikeCourier)) {
-                        formFields.put("Terms of Delivery", page1Code + "\n" + inferredBody);
+                    // Some layouts don't have a single-code line under the header. In that case,
+                    // take the most "pure" country list line from page 1 and preserve its ordering.
+                    Pattern countryListLinePat = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
+                    String page1CountryListLine = "";
+                    for (OcrNewLine l : page1Lines) {
+                        if (l == null || l.getText() == null) continue;
+                        String s0 = oneLine(l.getText()).replaceAll("\\s+", " ").trim();
+                        if (s0.isBlank()) continue;
+                        String s = s0.toUpperCase(Locale.ROOT).replaceAll("\\s*,\\s*", ", ");
+                        if (!countryListLinePat.matcher(s.replaceAll(", ", ",")).matches()) continue;
+                        if (s.length() > page1CountryListLine.length()) page1CountryListLine = s;
+                    }
+
+                    if (!page1CountryListLine.isBlank() && hasStandaloneOi) {
+                        // OCR often confuses OI as OL/Ol. If the document contains standalone OI,
+                        // normalize OL -> OI inside the list.
+                        List<String> toks = new ArrayList<>();
+                        for (String t : page1CountryListLine.split("\\s*,\\s*")) {
+                            if (t == null) continue;
+                            String tt = t.trim().toUpperCase(Locale.ROOT);
+                            if (tt.equals("OL")) tt = "OI";
+                            if (!tt.isBlank()) toks.add(tt);
+                        }
+                        LinkedHashSet<String> uniq = new LinkedHashSet<>(toks);
+                        page1CountryListLine = String.join(", ", uniq);
+                    }
+
+                    // Ensure the prefix includes any planning-market codes that appear in the
+                    // Time-of-Delivery section but are missing from the pure list line (e.g. DR).
+                    // Preserve the pure line order, inserting missing codes after the closest
+                    // preceding code from the ToD order.
+                    if (!page1CountryListLine.isBlank()) {
+                        Pattern todCodePat = Pattern.compile("\\b([A-Z]{2})\\s*\\(");
+                        LinkedHashSet<String> todOrdered = new LinkedHashSet<>();
+                        for (OcrNewLine l : page1Lines) {
+                            if (l == null || l.getText() == null) continue;
+                            String s0 = oneLine(l.getText()).replaceAll("\\s+", " ").trim();
+                            if (s0.isBlank()) continue;
+                            // Only consider typical ToD lines containing dates and planning markets
+                            String low0 = s0.toLowerCase(Locale.ROOT);
+                            boolean looksLikeTod = low0.contains(",") && (low0.contains("nov") || low0.contains("dec")
+                                    || low0.contains("jan") || low0.contains("feb") || low0.contains("mar")
+                                    || low0.contains("apr") || low0.contains("may") || low0.contains("jun")
+                                    || low0.contains("jul") || low0.contains("aug") || low0.contains("sep")
+                                    || low0.contains("oct")) && s0.contains("(");
+                            if (!looksLikeTod) continue;
+
+                            Matcher m = todCodePat.matcher(s0.toUpperCase(Locale.ROOT));
+                            while (m.find()) {
+                                String c = m.group(1);
+                                if (c == null) continue;
+                                String cc = c.trim().toUpperCase(Locale.ROOT);
+                                if (hasStandaloneOi && cc.equals("OL")) cc = "OI";
+                                if (!cc.isBlank()) todOrdered.add(cc);
+                            }
+                        }
+
+                        if (!todOrdered.isEmpty()) {
+                            List<String> base = new ArrayList<>();
+                            for (String t : page1CountryListLine.split("\\s*,\\s*")) {
+                                if (t == null) continue;
+                                String tt = t.trim().toUpperCase(Locale.ROOT);
+                                if (!tt.isBlank() && !base.contains(tt)) base.add(tt);
+                            }
+                            for (String c : todOrdered) {
+                                if (c == null || c.isBlank()) continue;
+                                if (base.contains(c)) continue;
+
+                                int insertAt = base.size();
+                                String prev = "";
+                                for (String x : todOrdered) {
+                                    if (x.equals(c)) break;
+                                    if (base.contains(x)) prev = x;
+                                }
+                                if (!prev.isBlank()) {
+                                    int idx = base.indexOf(prev);
+                                    if (idx >= 0) insertAt = idx + 1;
+                                }
+                                base.add(insertAt, c);
+                            }
+                            page1CountryListLine = String.join(", ", base);
+                        }
+                    }
+
+                    StringBuilder page1BodyBlock = new StringBuilder();
+                    int start = -1;
+                    for (int i = 0; i < page1Lines.size(); i++) {
+                        String s = oneLine(page1Lines.get(i).getText()).replaceAll("\\s+", " ").trim();
+                        if (s.isBlank()) continue;
+                        String low = s.toLowerCase(Locale.ROOT);
+                        boolean anchor = low.contains("transport by") || low.contains("incoterms") || low.contains("ship by")
+                                || low.contains("free carrier") || low.contains("fca") || low.contains("fob");
+                        if (anchor) {
+                            start = i;
+                            break;
+                        }
+                    }
+                    if (start >= 0) {
+                        int added = 0;
+                        for (int j = start; j < Math.min(page1Lines.size(), start + 8); j++) {
+                            String sj = oneLine(page1Lines.get(j).getText()).replaceAll("\\s+", " ").trim();
+                            if (sj.isBlank()) continue;
+                            String lowj = sj.toLowerCase(Locale.ROOT);
+                            boolean looksLikeTerms = lowj.contains("transport by")
+                                    || lowj.contains("incoterms")
+                                    || lowj.contains("ship by")
+                                    || lowj.contains("free carrier")
+                                    || lowj.contains("service provider information")
+                                    || lowj.contains("origin delivery information")
+                                    || lowj.contains("account number")
+                                    || lowj.contains("account no")
+                                    || lowj.contains("fca")
+                                    || lowj.contains("fob");
+                            if (!looksLikeTerms) {
+                                if (added > 0) break;
+                                continue;
+                            }
+                            if (page1BodyBlock.length() > 0) page1BodyBlock.append("\n");
+                            page1BodyBlock.append(sj);
+                            added++;
+                            if (lowj.startsWith("by accepting") || lowj.contains("supplier acknowledges")) break;
+                        }
+                    }
+
+                    String inferredBodyPage1 = cleanPurchaseOrderTermsOfDeliveryText(page1BodyBlock.toString());
+                    if (inferredBodyPage1 != null && !inferredBodyPage1.isBlank()) {
+                        String existingTerms = nvl(formFields.get("Terms of Delivery")).trim();
+                        String lowExisting = existingTerms.toLowerCase(Locale.ROOT);
+                        boolean existingLooksLikeCourier = lowExisting.contains("courier") || lowExisting.contains("dhl") || lowExisting.contains("destination studio address");
+                        if (existingTerms.isBlank() || existingLooksLikeCourier) {
+                            String prefix = "";
+                            if (!page1Code.isBlank()) {
+                                prefix = page1Code;
+                            } else if (!page1CountryListLine.isBlank()) {
+                                prefix = page1CountryListLine;
+                            }
+                            if (!prefix.isBlank()) {
+                                formFields.put("Terms of Delivery", prefix + "\n" + inferredBodyPage1);
+                            } else {
+                                formFields.put("Terms of Delivery", inferredBodyPage1);
+                            }
+                        }
                     }
                 }
             } catch (Exception ignore) {
@@ -3922,6 +4061,45 @@ public class OcrNewService {
         return s == null ? "" : s;
     }
 
+    private static boolean hasStandaloneToken(List<OcrNewLine> allLines, String token) {
+        if (allLines == null || token == null) return false;
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String s = oneLine(l.getText()).trim();
+            if (s.equalsIgnoreCase(token)) return true;
+        }
+        return false;
+    }
+
+    private static List<String> extractPurchaseOrderTodCodesOrderedFromParsedTable(List<Map<String, String>> poTimeOfDelivery, boolean normalizeOlToOi) {
+        if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) return Collections.emptyList();
+        Pattern codePat = Pattern.compile("\\b([A-Z]{2})\\s*\\(");
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        for (Map<String, String> row : poTimeOfDelivery) {
+            if (row == null) continue;
+            String pm = safe(row.get("planningMarkets")).replaceAll("\\s+", " ").trim();
+            if (pm.isBlank()) continue;
+            Matcher m = codePat.matcher(pm.toUpperCase(Locale.ROOT));
+            while (m.find()) {
+                String c = m.group(1);
+                if (c == null) continue;
+                String cc = c.trim().toUpperCase(Locale.ROOT);
+                if (normalizeOlToOi && cc.equals("OL")) cc = "OI";
+                if (!cc.isBlank()) ordered.add(cc);
+            }
+            // Fallback if planningMarkets is already a 2-letter token
+            if (ordered.isEmpty()) {
+                String pmUp = pm.toUpperCase(Locale.ROOT);
+                if (pmUp.matches("^[A-Z]{2}$")) {
+                    String cc = pmUp;
+                    if (normalizeOlToOi && cc.equals("OL")) cc = "OI";
+                    ordered.add(cc);
+                }
+            }
+        }
+        return new ArrayList<>(ordered);
+    }
+
     private static String addPurchaseOrderTermsDeliveryCountryCodes(String termsOfDelivery, List<OcrNewLine> allLines, List<Map<String, String>> poTimeOfDelivery) {
         String existing0 = safe(termsOfDelivery).trim();
         if (!existing0.isBlank()) {
@@ -3933,14 +4111,35 @@ public class OcrNewService {
                 String low0 = body0.toLowerCase(Locale.ROOT);
                 boolean bodyLooksValid0 = low0.contains("transport by") || low0.contains("incoterms") || low0.contains("ship by")
                         || low0.contains("free carrier") || low0.contains("fca") || low0.contains("fob");
-                if (bodyLooksValid0) return existing0;
+                if (bodyLooksValid0) {
+                    boolean normalizeOlToOi = hasStandaloneToken(allLines, "OI");
+                    List<String> orderedTod = extractPurchaseOrderTodCodesOrderedFromParsedTable(poTimeOfDelivery, normalizeOlToOi);
+                    if (orderedTod != null && !orderedTod.isEmpty()) {
+                        LinkedHashSet<String> existingSet = new LinkedHashSet<>();
+                        for (String t : first0.split("\\s*,\\s*")) {
+                            String tt = safe(t).trim().toUpperCase(Locale.ROOT);
+                            if (normalizeOlToOi && tt.equals("OL")) tt = "OI";
+                            if (!tt.isBlank()) existingSet.add(tt);
+                        }
+                        int overlap = 0;
+                        for (String c : orderedTod) if (existingSet.contains(c)) overlap++;
+                        boolean shouldReplace = orderedTod.size() > existingSet.size() && overlap >= Math.max(1, orderedTod.size() / 2);
+                        if (shouldReplace) {
+                            String newFirst = String.join(", ", orderedTod);
+                            return newFirst + "\n" + body0;
+                        }
+                    }
+                    return existing0;
+                }
             }
         }
 
         // Prefer parsed Time-of-Delivery table (most reliable, scoped to the planning market list)
         // to avoid accidentally collecting random 2-letter tokens from addresses/other text.
         String codesSource = "parsedTable";
-        LinkedHashSet<String> codes = extractPurchaseOrderPlanningMarketCountryCodesFromParsedTable(poTimeOfDelivery);
+        boolean normalizeOlToOi = hasStandaloneToken(allLines, "OI");
+        List<String> orderedTod = extractPurchaseOrderTodCodesOrderedFromParsedTable(poTimeOfDelivery, normalizeOlToOi);
+        LinkedHashSet<String> codes = new LinkedHashSet<>(orderedTod);
         if (codes.isEmpty()) {
             codesSource = "expanded";
             codes = extractPurchaseOrderPlanningMarketCountryCodesExpanded(allLines, poTimeOfDelivery);
