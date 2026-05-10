@@ -368,19 +368,46 @@ public class OcrNewService {
 
                 String[] lines = text.split("\\r?\\n");
                 int headerIdx = -1;
+                boolean includeHeaderLine = false;
                 for (int i = 0; i < lines.length; i++) {
                     String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
                     if (s.isBlank()) continue;
                     String low = s.toLowerCase(Locale.ROOT);
+
+                    // Prefer explicit header, but only if it looks like the Sales Sample courier block.
                     if (low.equals("terms of delivery") || low.startsWith("terms of delivery")) {
+                        boolean courierNearby = false;
+                        for (int j = i + 1; j < Math.min(lines.length, i + 8); j++) {
+                            String t = lines[j] == null ? "" : oneLine(lines[j]).replaceAll("\\s+", " ").trim();
+                            String tl = t.toLowerCase(Locale.ROOT);
+                            if (tl.contains("courier") || tl.contains("account number") || tl.contains("shipment")) {
+                                courierNearby = true;
+                                break;
+                            }
+                        }
+                        if (courierNearby) {
+                            headerIdx = i;
+                            includeHeaderLine = false;
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // Fallback: in some PDFs the header isn't present in text layer; detect by content.
+                    if (low.startsWith("transport by courier")
+                            || low.contains("transport by courier")
+                            || low.startsWith("account number to be used")
+                            || low.contains("account number to be used")) {
                         headerIdx = i;
+                        includeHeaderLine = true;
                         break;
                     }
                 }
                 if (headerIdx < 0) continue;
 
                 StringBuilder sb = new StringBuilder();
-                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 60); i++) {
+                int startIdx = includeHeaderLine ? headerIdx : headerIdx + 1;
+                for (int i = startIdx; i < Math.min(lines.length, headerIdx + 60); i++) {
                     String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
                     if (s.isBlank()) continue;
                     String low = s.toLowerCase(Locale.ROOT);
@@ -398,6 +425,13 @@ public class OcrNewService {
 
                 String tod = sb.toString().trim();
                 if (tod.isBlank()) continue;
+
+                // Guard: must look like courier block, otherwise it's likely Purchase Order Terms of Delivery.
+                String lowTod = tod.toLowerCase(Locale.ROOT);
+                if (!(lowTod.contains("courier") || lowTod.contains("account number") || lowTod.contains("shipment"))) {
+                    continue;
+                }
+
                 Map<String, String> row = new LinkedHashMap<>();
                 row.put("page", String.valueOf(page));
                 row.put("termsOfDelivery", tod);
@@ -1777,6 +1811,22 @@ public class OcrNewService {
         return nvl(best).trim();
     }
 
+    private static String inferSalesSampleCourierTermsBlockFromAllLines(List<OcrNewLine> allLines) {
+        if (allLines == null || allLines.isEmpty()) return "";
+        LinkedHashSet<String> keep = new LinkedHashSet<>();
+        for (OcrNewLine l : allLines) {
+            if (l == null) continue;
+            String s = nvl(l.getText()).trim();
+            if (s.isBlank()) continue;
+            String low = oneLine(s).toLowerCase(Locale.ROOT);
+            if (low.contains("transport by courier") || low.contains("account number to be used")) {
+                keep.add(oneLine(s).replaceAll("\\s+", " ").trim());
+            }
+        }
+        if (keep.isEmpty()) return "";
+        return String.join("\n", keep).trim();
+    }
+
     private static void removeCourierTermsFromPurchaseOrderTermsByPage(List<Map<String, String>> poTermsOfDeliveryByPage) {
         if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
 
@@ -1933,6 +1983,64 @@ public class OcrNewService {
                 byPage.put(ps, nr);
             } else {
                 cur.put("timeOfDelivery", t);
+                cur.put("_src", "static");
+            }
+        }
+    }
+
+    private static String chooseStaticSalesSampleTermsOfDeliveryText(List<Map<String, String>> salesSampleTermsOfDeliveryByPage) {
+        if (salesSampleTermsOfDeliveryByPage == null || salesSampleTermsOfDeliveryByPage.isEmpty()) return "";
+
+        String best = "";
+        int bestPage = -1;
+        int bestLen = -1;
+        for (Map<String, String> r : salesSampleTermsOfDeliveryByPage) {
+            if (r == null) continue;
+            String v = nvl(r.get("termsOfDelivery")).trim();
+            if (v.isBlank()) continue;
+
+            int page = 0;
+            try {
+                page = Integer.parseInt(nvl(r.get("page")).trim());
+            } catch (Exception ignore) {
+            }
+            if (page <= 0) page = 1;
+
+            if (page > bestPage || (page == bestPage && v.length() > bestLen)) {
+                bestPage = page;
+                bestLen = v.length();
+                best = v;
+            }
+        }
+        return nvl(best).trim();
+    }
+
+    private static void upsertSalesSampleTermsOfDeliveryStaticAllPages(List<Map<String, String>> salesSampleTermsOfDeliveryByPage, int pageCount, String staticTermsOfDelivery) {
+        if (salesSampleTermsOfDeliveryByPage == null) return;
+        if (pageCount <= 0) return;
+        String t = nvl(staticTermsOfDelivery).trim();
+        if (t.isBlank()) return;
+
+        Map<String, Map<String, String>> byPage = new LinkedHashMap<>();
+        for (Map<String, String> r : salesSampleTermsOfDeliveryByPage) {
+            if (r == null) continue;
+            String p = nvl(r.get("page")).trim();
+            if (p.isBlank()) p = "1";
+            byPage.put(p, r);
+        }
+
+        for (int p = 1; p <= pageCount; p++) {
+            String ps = String.valueOf(p);
+            Map<String, String> cur = byPage.get(ps);
+            if (cur == null) {
+                Map<String, String> nr = new LinkedHashMap<>();
+                nr.put("page", ps);
+                nr.put("termsOfDelivery", t);
+                nr.put("_src", "static");
+                salesSampleTermsOfDeliveryByPage.add(nr);
+                byPage.put(ps, nr);
+            } else {
+                cur.put("termsOfDelivery", t);
                 cur.put("_src", "static");
             }
         }
@@ -5167,8 +5275,30 @@ public class OcrNewService {
             }
             if (salesSampleTermsOfDeliveryByPage == null || salesSampleTermsOfDeliveryByPage.isEmpty()) {
                 salesSampleTermsOfDeliveryByPage = new ArrayList<>();
-                if (!courierTermsBlock.isBlank() && salesSamplePageCount > 0) {
-                    salesSampleTermsOfDeliveryByPage = buildSalesSampleTermsOfDeliveryStaticAllPages(salesSamplePageCount, courierTermsBlock);
+                String staticBlock = courierTermsBlock;
+                if (staticBlock.isBlank()) {
+                    staticBlock = inferSalesSampleCourierTermsBlockFromAllLines(allLines);
+                }
+                if (!staticBlock.isBlank() && salesSamplePageCount > 0) {
+                    salesSampleTermsOfDeliveryByPage = buildSalesSampleTermsOfDeliveryStaticAllPages(salesSamplePageCount, staticBlock);
+                }
+            }
+
+            if (effectiveDebug) {
+                log.info("[SALES-SAMPLE-TERMS-DELIVERY][PIPE] pageCount={} courierTermsBlockBlank={} rows={} (afterPdfbox+fallback)",
+                        salesSamplePageCount,
+                        courierTermsBlock.isBlank(),
+                        salesSampleTermsOfDeliveryByPage == null ? 0 : salesSampleTermsOfDeliveryByPage.size());
+                if (salesSampleTermsOfDeliveryByPage != null) {
+                    for (int i = 0; i < Math.min(5, salesSampleTermsOfDeliveryByPage.size()); i++) {
+                        Map<String, String> r = salesSampleTermsOfDeliveryByPage.get(i);
+                        if (r == null) continue;
+                        log.info("[SALES-SAMPLE-TERMS-DELIVERY][PIPE] row[{}]: page={} src={} textPreview={}",
+                                i,
+                                nvl(r.get("page")).trim(),
+                                nvl(r.get("_src")).trim(),
+                                truncate(nvl(r.get("termsOfDelivery")), 220));
+                    }
                 }
             }
 
@@ -5177,6 +5307,11 @@ public class OcrNewService {
                 String staticSalesSampleTerms = chooseStaticSalesSampleTermsText(salesSampleTermsByPage);
                 if (!staticSalesSampleTerms.isBlank()) {
                     upsertSalesSampleTermsStaticAllPages(salesSampleTermsByPage, salesSamplePageCount, staticSalesSampleTerms);
+                }
+
+                String staticSalesSampleTermsOfDelivery = chooseStaticSalesSampleTermsOfDeliveryText(salesSampleTermsOfDeliveryByPage);
+                if (!staticSalesSampleTermsOfDelivery.isBlank()) {
+                    upsertSalesSampleTermsOfDeliveryStaticAllPages(salesSampleTermsOfDeliveryByPage, salesSamplePageCount, staticSalesSampleTermsOfDelivery);
                 }
 
                 String staticSalesSampleTod = chooseStaticSalesSampleTimeOfDeliveryText(salesSampleTimeOfDeliveryByPage);
@@ -5190,6 +5325,17 @@ public class OcrNewService {
                     Map<String, String> r = salesSampleTermsByPage.get(i);
                     if (r == null) continue;
                     log.info("[SALES-SAMPLE-TERMS] row[{}]: page={} textPreview={}", i, r.get("page"), truncate(r.get("salesSampleTerms"), 200));
+                }
+
+                log.info("[SALES-SAMPLE-TERMS-DELIVERY] extracted rows: {}", salesSampleTermsOfDeliveryByPage == null ? 0 : salesSampleTermsOfDeliveryByPage.size());
+                for (int i = 0; i < Math.min(10, salesSampleTermsOfDeliveryByPage == null ? 0 : salesSampleTermsOfDeliveryByPage.size()); i++) {
+                    Map<String, String> r = salesSampleTermsOfDeliveryByPage.get(i);
+                    if (r == null) continue;
+                    log.info("[SALES-SAMPLE-TERMS-DELIVERY] row[{}]: page={} src={} textPreview={}",
+                            i,
+                            nvl(r.get("page")).trim(),
+                            nvl(r.get("_src")).trim(),
+                            truncate(nvl(r.get("termsOfDelivery")), 220));
                 }
 
                 log.info("[SALES-SAMPLE-TOD] extracted rows: {}", salesSampleTimeOfDeliveryByPage == null ? 0 : salesSampleTimeOfDeliveryByPage.size());

@@ -419,6 +419,7 @@ export function AllScanPage() {
     const mergedSalesSampleArticles: any[] = [];
     const nextTerms: Record<number, string> = {};
     const nextSalesSampleTerms: Record<number, string> = {};
+    const nextSalesSampleTermsOfDelivery: Record<number, string> = {};
     const nextSalesSampleTod: Record<number, string> = {};
     const nextSalesSampleDest: Record<number, string> = {};
 
@@ -445,6 +446,15 @@ export function AllScanPage() {
         if (v.trim().length > 0 && (nextSalesSampleTerms[p] ?? '').toString().trim().length === 0) nextSalesSampleTerms[p] = v;
       }
 
+      for (const ss of d?.salesSampleTermsOfDeliveryByPage ?? []) {
+        const p = Number((ss?.page ?? '').toString().trim());
+        if (!Number.isFinite(p) || p <= 0) continue;
+        const v = (ss?.termsOfDelivery ?? '').toString();
+        if (v.trim().length > 0 && (nextSalesSampleTermsOfDelivery[p] ?? '').toString().trim().length === 0) {
+          nextSalesSampleTermsOfDelivery[p] = v;
+        }
+      }
+
       for (const ss of d?.salesSampleTimeOfDeliveryByPage ?? []) {
         const p = Number((ss?.page ?? '').toString().trim());
         if (!Number.isFinite(p) || p <= 0) continue;
@@ -467,6 +477,8 @@ export function AllScanPage() {
     setTermsOfDeliveryByPageDraft(nextTerms);
 
     setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
+
+    setSalesSampleTermsOfDeliveryByPageDraft(nextSalesSampleTermsOfDelivery);
 
     setSalesSampleTimeOfDeliveryByPageDraft(nextSalesSampleTod);
 
