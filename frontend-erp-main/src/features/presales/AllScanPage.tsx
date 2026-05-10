@@ -599,6 +599,24 @@ export function AllScanPage() {
     return { fileName: tcb.fileName ?? '', rows: tcb?.data?.totalCountryBreakdown ?? [] };
   }, [data, results, activeFileIndex]);
 
+  const bomProdUnitsNoDetails = useMemo(() => {
+    const rows = bomProdUnitsRows ?? [];
+    if (rows.length === 0) return false;
+    return rows.every((r) => {
+      const pos = (r?.position ?? '').toString().trim();
+      const isNoDetails = pos.toLowerCase().includes('no yarn details found');
+      const allBlank =
+        pos.length === 0 &&
+        (r?.placement ?? '').toString().trim().length === 0 &&
+        (r?.type ?? '').toString().trim().length === 0 &&
+        (r?.materialSupplier ?? '').toString().trim().length === 0 &&
+        (r?.composition ?? '').toString().trim().length === 0 &&
+        (r?.weight ?? '').toString().trim().length === 0 &&
+        (r?.productionUnitProcessingCapability ?? '').toString().trim().length === 0;
+      return isNoDetails || allBlank;
+    });
+  }, [bomProdUnitsRows]);
+
   const extractArticleNoColourLabel = (d: OcrNewDocumentAnalysisResponseData | null | undefined) => {
     if (!d) return '';
     const ff = d?.formFields ?? {};
@@ -2978,78 +2996,107 @@ export function AllScanPage() {
                   {bomProdUnitsRows.map((row, idx) => (
                     <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
                       <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.position}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, position: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.position ?? ''}</div>
+                        ) : (
+                          <Input
+                            value={row.position}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, position: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.placement}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, placement: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.placement ?? ''}</div>
+                        ) : (
+                          <Input
+                            value={row.placement}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, placement: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.type}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.type ?? ''}</div>
+                        ) : (
+                          <Input
+                            value={row.type}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <textarea
-                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-                          value={row.materialSupplier}
-                          rows={2}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.materialSupplier ?? ''}</div>
+                        ) : (
+                          <textarea
+                            className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                            value={row.materialSupplier}
+                            rows={2}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, materialSupplier: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <textarea
-                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-                          value={row.composition}
-                          rows={2}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.composition ?? ''}</div>
+                        ) : (
+                          <textarea
+                            className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                            value={row.composition}
+                            rows={2}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, composition: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.weight}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, weight: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.weight ?? ''}</div>
+                        ) : (
+                          <Input
+                            value={row.weight}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, weight: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <textarea
-                          className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
-                          value={row.productionUnitProcessingCapability}
-                          rows={2}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, productionUnitProcessingCapability: v } : r)));
-                          }}
-                        />
+                        {bomProdUnitsNoDetails ? (
+                          <div className='text-sm text-gray-700 whitespace-pre-wrap'>{row.productionUnitProcessingCapability ?? ''}</div>
+                        ) : (
+                          <textarea
+                            className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+                            value={row.productionUnitProcessingCapability}
+                            rows={2}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setBomProdUnitsRows((prev) => prev.map((r, i) => (i === idx ? { ...r, productionUnitProcessingCapability: v } : r)));
+                            }}
+                          />
+                        )}
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
                           variant='danger'
+                          disabled={bomProdUnitsNoDetails}
                           onClick={() => {
                             setBomProdUnitsRows((prev) => prev.filter((_, i) => i !== idx));
                           }}

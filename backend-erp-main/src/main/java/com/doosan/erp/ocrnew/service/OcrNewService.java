@@ -7040,6 +7040,12 @@ public class OcrNewService {
                 }
 
                 if (rl.getLeft() >= qtyLeft) {
+                    // Quantity/% cells should align with the current date row.
+                    // If our vertical capture window overlaps the previous row, ignore any qty candidates
+                    // that are clearly above the current date baseline to prevent repeating values.
+                    if (rl.getTop() < rowTop - 10) {
+                        continue;
+                    }
                     String qtyCand = rl.getText();
                     if (qtyCand != null) qtyCand = qtyCand.trim();
 
