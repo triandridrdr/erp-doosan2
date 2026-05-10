@@ -291,6 +291,249 @@ public class OcrNewService {
         return out;
     }
 
+    private static List<Map<String, String>> extractSalesSampleDestinationStudioAddressByPageFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+                String lowAll = text.toLowerCase(Locale.ROOT);
+                if (!lowAll.contains("sales sample") && !lowAll.contains("sales samples")) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.equals("destination studio address") || low.startsWith("destination studio address")) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) continue;
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 40); i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("sales sample terms")) break;
+                    if (low.startsWith("time of delivery")) break;
+                    if (low.startsWith("article no")) break;
+                    if (low.startsWith("by accepting")) break;
+                    if (low.startsWith("created:")) break;
+                    if (low.startsWith("page:")) break;
+                    s = s.replaceAll("(?i)\\bH&M\\b", "H & M");
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append(s);
+                }
+
+                String addr = sb.toString().trim();
+                if (addr.isBlank()) continue;
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", String.valueOf(page));
+                row.put("destinationStudioAddress", addr);
+                row.put("_src", "pdfText");
+                out.add(row);
+            }
+        } catch (Exception ex) {
+            log.warn("[SALES-SAMPLE-DEST-STUDIO-ADDR][PDFBOX] failed: {}", ex.getMessage());
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractSalesSampleTimeOfDeliveryByPageFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+                String lowAll = text.toLowerCase(Locale.ROOT);
+                if (!lowAll.contains("sales sample") && !lowAll.contains("sales samples")) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.equals("time of delivery") || low.startsWith("time of delivery")) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) continue;
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 30); i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("article no")) break;
+                    if (low.startsWith("by accepting")) break;
+                    if (low.startsWith("created:")) break;
+                    if (low.startsWith("page:")) break;
+                    if (sb.length() > 0) sb.append(' ');
+                    sb.append(s);
+                }
+
+                String tod = sb.toString().trim();
+                if (!tod.isBlank()) {
+                    tod = tod.replaceAll("(?i)\\bas\\s+soon\\s+possible\\b", "As soon as possible");
+                }
+                if (tod.isBlank()) continue;
+
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("page", String.valueOf(page));
+                row.put("timeOfDelivery", tod);
+                row.put("_src", "pdfText");
+                out.add(row);
+            }
+        } catch (Exception ex) {
+            log.warn("[SALES-SAMPLE-TOD][PDFBOX] failed: {}", ex.getMessage());
+        }
+
+        return out;
+    }
+
+    private static List<Map<String, String>> extractSalesSampleArticlesByPageFromPdfBytes(byte[] pdfBytes) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        Pattern datePat = Pattern.compile("\\b\\d{1,2}\\s+[A-Za-z]{3},\\s*\\d{4}\\b");
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            int pageCount = doc.getNumberOfPages();
+            for (int page = 1; page <= pageCount; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                String text = stripper.getText(doc);
+                if (text == null || text.isBlank()) continue;
+                String lowAll = text.toLowerCase(Locale.ROOT);
+                if (!lowAll.contains("sales sample") && !lowAll.contains("sales samples")) continue;
+                if (!lowAll.contains("article no")) continue;
+
+                String[] lines = text.split("\\r?\\n");
+                int headerIdx = -1;
+                for (int i = 0; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("article no") && low.contains("tod") && (low.contains("qty") || low.contains("quantity"))) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                int start = headerIdx >= 0 ? headerIdx + 1 : 0;
+
+                boolean extractedAny = false;
+                for (int i = start; i < lines.length; i++) {
+                    String s = lines[i] == null ? "" : oneLine(lines[i]).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("by accepting") || low.startsWith("created:") || low.startsWith("page:")) {
+                        if (extractedAny) break;
+                        continue;
+                    }
+
+                    if (!Character.isDigit(s.charAt(0))) continue;
+                    Matcher dm = datePat.matcher(s);
+                    if (!dm.find()) continue;
+                    String date = dm.group();
+
+                    String pre = s.substring(0, dm.start()).trim();
+                    String post = s.substring(dm.end()).trim();
+                    String[] toks = pre.split("\\s+");
+                    if (toks.length < 6) continue;
+
+                    String articleNo = toks[0];
+                    String hmColourCode = toks[1];
+                    String ptArticleNumber = toks[2];
+
+                    String qty = toks[toks.length - 1];
+                    if (!qty.matches("\\d+")) continue;
+                    String sizeRaw = toks[toks.length - 2];
+                    String size = sizeRaw.replaceAll("[^A-Za-z0-9]", "").trim();
+
+                    StringBuilder colourSb = new StringBuilder();
+                    for (int t = 3; t < toks.length - 2; t++) {
+                        String tok = toks[t];
+                        if (tok == null || tok.isBlank()) continue;
+                        if (colourSb.length() > 0) colourSb.append(' ');
+                        colourSb.append(tok);
+                    }
+                    String colour = colourSb.toString().trim();
+
+                    String destinationStudio = "";
+                    if (!post.isBlank()) {
+                        String[] postToks = post.split("\\s+");
+                        if (postToks.length > 0 && postToks[0] != null) {
+                            String cand = postToks[0].trim();
+                            if (!(cand.length() <= 24 && cand.matches("[A-Za-z]+"))) {
+                                cand = "";
+                            }
+                            destinationStudio = cand;
+                        }
+                    }
+
+                    if (destinationStudio.isBlank() && i + 1 < lines.length) {
+                        String next = lines[i + 1] == null ? "" : oneLine(lines[i + 1]).replaceAll("\\s+", " ").trim();
+                        if (!next.isBlank()) {
+                            String nextLow = next.toLowerCase(Locale.ROOT);
+                            if (!nextLow.startsWith("by accepting")
+                                    && !nextLow.startsWith("created:")
+                                    && !nextLow.startsWith("page:")
+                                    && next.length() <= 24
+                                    && next.matches("[A-Za-z]+")) {
+                                destinationStudio = next;
+                                i = i + 1;
+                            }
+                        }
+                    }
+
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("page", String.valueOf(page));
+                    row.put("articleNo", articleNo);
+                    row.put("hmColourCode", hmColourCode);
+                    row.put("ptArticleNumber", ptArticleNumber);
+                    row.put("colour", colour);
+                    row.put("size", size);
+                    row.put("qty", qty);
+                    row.put("tod", date);
+                    row.put("destinationStudio", destinationStudio);
+                    row.put("_src", "pdfText");
+                    out.add(row);
+                    extractedAny = true;
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[SALES-SAMPLE-ARTICLES][PDFBOX] failed: {}", ex.getMessage());
+        }
+
+        return out;
+    }
+
     private static String extractPurchaseOrderTermsOfDeliveryPage1FromPdfBytes(byte[] pdfBytes) {
         if (pdfBytes == null || pdfBytes.length == 0) return "";
 
@@ -327,6 +570,8 @@ public class OcrNewService {
                 if (raw == null) continue;
                 String s = oneLine(raw).replaceAll("\\s+", " ").trim();
                 if (s.isBlank()) continue;
+                String sCompact = s.replaceAll("\\s+", "").trim();
+                if (sCompact.equalsIgnoreCase("BY")) continue;
                 if (stopPat.matcher(s).matches()) break;
 
                 String upper = s.toUpperCase(Locale.ROOT);
@@ -387,6 +632,8 @@ public class OcrNewService {
                     if (raw == null) continue;
                     String s = oneLine(raw).replaceAll("\\s+", " ").trim();
                     if (s.isBlank()) continue;
+                    String sCompact = s.replaceAll("\\s+", "").trim();
+                    if (sCompact.equalsIgnoreCase("BY")) continue;
                     if (stopPat.matcher(s + " ").matches()) break;
 
                     String upper = s.toUpperCase(Locale.ROOT);
@@ -1277,6 +1524,16 @@ public class OcrNewService {
         if (poTermsOfDeliveryByPage == null || poTermsOfDeliveryByPage.isEmpty()) return;
         if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) return;
 
+        java.util.function.Predicate<String> looksLikeCourierTerms = (s0) -> {
+            String s = nvl(s0).trim().toLowerCase(Locale.ROOT);
+            if (s.isBlank()) return false;
+            boolean hasCourier = s.contains("courier") || s.contains("dhl") || s.contains("destination studio")
+                    || s.contains("account number") || s.contains("account no");
+            boolean hasIncoterms = s.contains("incoterms") || s.contains("transport by") || s.contains("packing mode")
+                    || s.contains("free carrier") || s.contains("fca") || s.contains("fob") || s.contains("ship by");
+            return hasCourier && !hasIncoterms;
+        };
+
         Map<String, LinkedHashSet<String>> countriesByPage = new LinkedHashMap<>();
         Pattern countryListPat = Pattern.compile("\\b[A-Z]{2}\\b");
         for (Map<String, String> row : poInvoiceAvgPrice) {
@@ -1313,11 +1570,15 @@ public class OcrNewService {
             if (countries == null || countries.isEmpty()) continue;
             if (existingPages.contains(page.trim())) continue;
 
-            Map<String, String> row = new LinkedHashMap<>();
-            row.put("page", page.trim());
-            row.put("termsOfDelivery", String.join(", ", countries));
-            poTermsOfDeliveryByPage.add(row);
-            existingPages.add(page.trim());
+            // Do not inject placeholder Terms-of-Delivery rows for courier-only pages.
+            // These pages often contain shipping/account information without any country line.
+            // Keeping them empty avoids showing misleading country codes in the UI.
+            // (If such a page actually needs ToD, it should be extracted from the PDF text itself.)
+            // NOTE: This block only controls placeholder creation; real extracted rows remain untouched.
+            //
+            // Since we don't have the page's ToD content here, we skip placeholder creation entirely.
+            // (Placeholders are best-effort only and can confuse the last page.)
+            continue;
         }
 
         for (Map<String, String> row : poTermsOfDeliveryByPage) {
@@ -1329,6 +1590,7 @@ public class OcrNewService {
             if (countries == null || countries.isEmpty()) continue;
 
             String existing = row.get("termsOfDelivery");
+            if (looksLikeCourierTerms.test(existing)) continue;
             String countryLine = String.join(", ", countries);
             if (existing == null || existing.isBlank()) {
                 row.put("termsOfDelivery", countryLine);
@@ -4509,9 +4771,23 @@ public class OcrNewService {
             fillPurchaseOrderInvoiceAvgPriceCountriesFromTermsByPage(poInvoiceAvgPrice, poTermsOfDeliveryByPage);
 
             List<Map<String, String>> salesSampleTermsByPage = extractSalesSampleTermsByPage(allLines);
-            List<Map<String, String>> salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
-            List<Map<String, String>> salesSampleDestinationStudioAddressByPage = extractSalesSampleDestinationStudioAddressByPage(allLines);
-            List<Map<String, String>> salesSampleArticlesByPage = extractSalesSampleArticlesByPage(allLines);
+            List<Map<String, String>> salesSampleTimeOfDeliveryByPage = null;
+            List<Map<String, String>> salesSampleDestinationStudioAddressByPage = null;
+            List<Map<String, String>> salesSampleArticlesByPage = null;
+            if (isPdf(file)) {
+                salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPageFromPdfBytes(fileBytes);
+                salesSampleDestinationStudioAddressByPage = extractSalesSampleDestinationStudioAddressByPageFromPdfBytes(fileBytes);
+                salesSampleArticlesByPage = extractSalesSampleArticlesByPageFromPdfBytes(fileBytes);
+            }
+            if (salesSampleTimeOfDeliveryByPage == null || salesSampleTimeOfDeliveryByPage.isEmpty()) {
+                salesSampleTimeOfDeliveryByPage = extractSalesSampleTimeOfDeliveryByPage(allLines);
+            }
+            if (salesSampleDestinationStudioAddressByPage == null || salesSampleDestinationStudioAddressByPage.isEmpty()) {
+                salesSampleDestinationStudioAddressByPage = extractSalesSampleDestinationStudioAddressByPage(allLines);
+            }
+            if (salesSampleArticlesByPage == null || salesSampleArticlesByPage.isEmpty()) {
+                salesSampleArticlesByPage = extractSalesSampleArticlesByPage(allLines);
+            }
             if (effectiveDebug) {
                 log.info("[SALES-SAMPLE-TERMS] extracted rows: {}", salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size());
                 for (int i = 0; i < Math.min(10, salesSampleTermsByPage == null ? 0 : salesSampleTermsByPage.size()); i++) {
