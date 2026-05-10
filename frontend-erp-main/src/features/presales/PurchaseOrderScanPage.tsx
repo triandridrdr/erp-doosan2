@@ -66,6 +66,8 @@ export function PurchaseOrderScanPage() {
 
   const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
 
+  const [salesSampleTermsOfDeliveryByPageDraft, setSalesSampleTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+
   const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
   const [salesSampleDestinationStudioAddressByPageDraft, setSalesSampleDestinationStudioAddressByPageDraft] = useState<Record<number, string>>({});
   const [salesSampleArticleRows, setSalesSampleArticleRows] = useState<Array<Record<string, string>>>([]);
@@ -230,6 +232,15 @@ export function PurchaseOrderScanPage() {
     }
     setSalesSampleTermsByPageDraft(nextSalesSampleTerms);
 
+    const nextSalesSampleTermsOfDelivery: Record<number, string> = {};
+    for (const r of d?.salesSampleTermsOfDeliveryByPage ?? []) {
+      const p = Number((r?.page ?? '').toString().trim());
+      if (!Number.isFinite(p) || p <= 0) continue;
+      const v = (r?.termsOfDelivery ?? '').toString();
+      if (v.trim().length > 0) nextSalesSampleTermsOfDelivery[p] = v;
+    }
+    setSalesSampleTermsOfDeliveryByPageDraft(nextSalesSampleTermsOfDelivery);
+
     const nextSalesSampleTod: Record<number, string> = {};
     for (const r of d?.salesSampleTimeOfDeliveryByPage ?? []) {
       const p = Number((r?.page ?? '').toString().trim());
@@ -279,6 +290,17 @@ export function PurchaseOrderScanPage() {
     }
     return '';
   }, [activePage, salesSampleTermsByPageDraft]);
+
+  const salesSampleTermsOfDeliveryForActivePage = useMemo(() => {
+    const direct = (salesSampleTermsOfDeliveryByPageDraft?.[activePage] ?? '').toString();
+    if (direct.trim().length > 0) return direct;
+    for (const p of Object.keys(salesSampleTermsOfDeliveryByPageDraft ?? {})) {
+      const v = (salesSampleTermsOfDeliveryByPageDraft as any)?.[p];
+      const t = (v ?? '').toString();
+      if (t.trim().length > 0) return t;
+    }
+    return '';
+  }, [activePage, salesSampleTermsOfDeliveryByPageDraft]);
 
   const salesSampleTimeOfDeliveryForActivePage = useMemo(() => {
     const direct = (salesSampleTimeOfDeliveryByPageDraft?.[activePage] ?? '').toString();
@@ -1726,6 +1748,17 @@ useEffect(() => {
               onChange={(e) => {
                 const v = e.target.value;
                 setSalesSampleTermsByPageDraft((prev) => ({ ...prev, [activePage]: v }));
+              }}
+            />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+            <textarea
+              className='w-full min-h-[84px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+              value={salesSampleTermsOfDeliveryForActivePage}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSalesSampleTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: v }));
               }}
             />
           </div>

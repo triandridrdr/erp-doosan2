@@ -79,6 +79,12 @@ export interface OcrNewDocumentAnalysisResponseData {
   salesSampleTermsByPage?: Array<Record<string, string>>;
 
   /**
+   * Sales Sample: Terms of Delivery content per page (static courier/account block)
+   * Row keys: page, termsOfDelivery
+   */
+  salesSampleTermsOfDeliveryByPage?: Array<Record<string, string>>;
+
+  /**
    * Sales Sample: Time Of Delivery content per page
    * Row keys: page, timeOfDelivery
    */

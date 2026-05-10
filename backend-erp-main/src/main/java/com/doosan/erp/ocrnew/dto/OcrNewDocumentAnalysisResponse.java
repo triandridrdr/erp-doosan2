@@ -69,6 +69,12 @@ public class OcrNewDocumentAnalysisResponse {
      */
     private List<Map<String, String>> salesSampleTermsByPage;
 
+    /**
+     * Sales Sample: Terms of Delivery content per page (static courier/account block).
+     * Row keys: page, termsOfDelivery
+     */
+    private List<Map<String, String>> salesSampleTermsOfDeliveryByPage;
+
     private List<Map<String, String>> salesSampleTimeOfDeliveryByPage;
 
     private List<Map<String, String>> salesSampleDestinationStudioAddressByPage;
