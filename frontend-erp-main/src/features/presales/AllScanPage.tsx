@@ -146,6 +146,7 @@ export function AllScanPage() {
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
     Array<{
       countryOfDestination: string;
+      articleNo?: string;
       type: string;
       color: string;
       size: string;
@@ -221,6 +222,7 @@ export function AllScanPage() {
   const pivotDetailRows = (backendDetail: Array<Record<string, any>>) => {
     const out: Array<{
       countryOfDestination: string;
+      articleNo?: string;
       type: string;
       color: string;
       size: string;
@@ -234,6 +236,7 @@ export function AllScanPage() {
     for (const row of backendDetail ?? []) {
       const type = (row?.type ?? '').toString();
       const countryOfDestination = (row?.countryOfDestination ?? row?.destinationCountry ?? '').toString();
+      const articleNo = (row?.articleNo ?? '').toString();
       const color = (row?.color ?? '').toString();
       const total = (row?.total ?? '').toString();
       const noOfAsst = (row?.noOfAsst ?? '').toString();
@@ -242,11 +245,11 @@ export function AllScanPage() {
       for (const k of SIZE_KEYS) {
         if (row?.[k] === undefined) continue;
         const qty = (row?.[k] ?? '').toString();
-        out.push({ countryOfDestination, type, color, size: k, qty, total, noOfAsst, editable: true });
+        out.push({ countryOfDestination, articleNo, type, color, size: k, qty, total, noOfAsst, editable: true });
         emittedAny = true;
       }
       if (!emittedAny) {
-        out.push({ countryOfDestination, type, color, size: '', qty: '', total, noOfAsst, editable: true });
+        out.push({ countryOfDestination, articleNo, type, color, size: '', qty: '', total, noOfAsst, editable: true });
       }
     }
     return out;
@@ -2414,6 +2417,7 @@ export function AllScanPage() {
                           ...prev,
                           {
                             countryOfDestination: assortmentActiveCountry || '',
+                            articleNo: '',
                             type: 'Assortment',
                             color: '',
                             size: '',
@@ -2477,6 +2481,7 @@ export function AllScanPage() {
                         <thead className='bg-white sticky top-0 z-10'>
                           <tr>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article No</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
@@ -2494,6 +2499,14 @@ export function AllScanPage() {
                                     setSalesOrderDetailDraftRows((prev) =>
                                       prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
                                     )
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.articleNo ?? ''}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, articleNo: e.target.value } : r)))
                                   }
                                 />
                               </td>
@@ -2564,6 +2577,7 @@ export function AllScanPage() {
                           ...prev,
                           {
                             countryOfDestination: solidActiveCountry || '',
+                            articleNo: '',
                             type: 'Solid',
                             color: '',
                             size: '',
@@ -2627,6 +2641,7 @@ export function AllScanPage() {
                         <thead className='bg-white sticky top-0 z-10'>
                           <tr>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                            <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article No</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Color</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Size</th>
                             <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
@@ -2644,6 +2659,14 @@ export function AllScanPage() {
                                     setSalesOrderDetailDraftRows((prev) =>
                                       prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
                                     )
+                                  }
+                                />
+                              </td>
+                              <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                                <Input
+                                  value={row.articleNo ?? ''}
+                                  onChange={(e) =>
+                                    setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, articleNo: e.target.value } : r)))
                                   }
                                 />
                               </td>

@@ -3909,8 +3909,31 @@ public class OcrNewService {
             String color = globalColor;
             if (color == null || color.isBlank()) color = "";
 
+            // Some PDFs contain multiple articles in the same Section 2 table, with qty columns per-article.
+            // Detect article numbers so we can split size rows into one output row per article.
+            List<String> articleNos = new ArrayList<>();
+            {
+                Pattern articleHdr = Pattern.compile("(?i)^\\s*article\\s*no\\s*[:#]?\\s*(.+?)\\s*$");
+                for (int i = Math.max(0, idxHeader - 40); i < Math.min(texts.size(), idxHeader + 5); i++) {
+                    String t = oneLine(texts.get(i));
+                    if (t.isBlank()) continue;
+                    Matcher ah = articleHdr.matcher(t);
+                    if (!ah.matches()) continue;
+                    String tail = nvl(ah.group(1));
+                    Matcher am = Pattern.compile("\\b\\d{3}\\b").matcher(tail);
+                    while (am.find()) {
+                        String a = am.group().trim();
+                        if (!a.isBlank() && !articleNos.contains(a)) articleNos.add(a);
+                    }
+                    if (!articleNos.isEmpty()) break;
+                }
+                if (articleNos.isEmpty()) {
+                    articleNos.add("");
+                }
+            }
+
             @SuppressWarnings("unchecked")
-            final Map<String, String>[] currentRow = (Map<String, String>[]) new Map[]{null};
+            final Map<String, Map<String, String>>[] currentRowsByArticle = (Map<String, Map<String, String>>[]) new Map[]{new LinkedHashMap<>()};
             final boolean[] sawAnySize = new boolean[]{false};
 
             for (int i = idxHeader; i < texts.size(); i++) {
@@ -3919,27 +3942,47 @@ public class OcrNewService {
 
                 String lower = t.toLowerCase(Locale.ROOT);
                 // Log all lines to trace processing order
-                log.info("[LINE-TRACE] page={} idx={} currentRowType={} line='{}'", 
-                        e.getKey(), i, 
-                        currentRow[0] == null ? "null" : currentRow[0].get("type"), 
+                String curType = "null";
+                if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                    try {
+                        Map<String, String> anyRow = currentRowsByArticle[0].values().iterator().next();
+                        String v = anyRow == null ? "" : anyRow.getOrDefault("type", "");
+                        if (v != null && !v.isBlank()) curType = v;
+                    } catch (Exception ignored) {}
+                }
+                log.info("[LINE-TRACE] page={} idx={} currentRowType={} line='{}'",
+                        e.getKey(), i,
+                        curType,
                         t.length() > 100 ? t.substring(0, 100) + "..." : t);
                 if (lower.startsWith("bill of material")) break;
 
                 if (lower.equals("assortment") || lower.startsWith("assortment ") ||
                         lower.equals("solid") || lower.startsWith("solid ") ||
                         lower.equals("total") || lower.startsWith("total ")) {
-                    if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
-                        ensureSizeDefaults(currentRow[0]);
-                        out.add(currentRow[0]);
+                    if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                        for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                            if (r == null) continue;
+                            if (sawAnySize[0] || r.containsKey("total") || r.containsKey("type")) {
+                                ensureSizeDefaults(r);
+                                out.add(r);
+                            }
+                        }
                     }
                     String type = lower.startsWith("assortment") ? "Assortment" : (lower.startsWith("solid") ? "Solid" : "Total");
-                    currentRow[0] = new LinkedHashMap<>();
+                    currentRowsByArticle[0] = new LinkedHashMap<>();
                     sawAnySize[0] = false;
-                    if (!type.isBlank()) currentRow[0].put("type", type);
-                    if (!color.isBlank()) currentRow[0].put("color", color);
-                    if (!destinationCountry.isBlank()) {
-                        currentRow[0].put("destinationCountry", destinationCountry);
-                        currentRow[0].put("countryOfDestination", destinationCountry);
+                    for (String a : articleNos) {
+                        Map<String, String> row = new LinkedHashMap<>();
+                        if (!type.isBlank()) row.put("type", type);
+                        if (!color.isBlank()) row.put("color", color);
+                        if (!destinationCountry.isBlank()) {
+                            row.put("destinationCountry", destinationCountry);
+                            row.put("countryOfDestination", destinationCountry);
+                        }
+                        if (a != null && !a.isBlank()) {
+                            row.put("articleNo", a);
+                        }
+                        currentRowsByArticle[0].put(nvl(a), row);
                     }
                     continue;
                 }
@@ -3947,17 +3990,35 @@ public class OcrNewService {
                 // Capture 'No of Asst:' value — must run even when currentRow is null
                 // so that the backfill path can attach it to the last emitted Assortment row.
                 if (lower.startsWith("no of asst")) {
-                    String n = parseInlineOrNextNumber(t, texts, i + 1);
-                    if (n != null && !n.isBlank()) {
-                        if (currentRow[0] != null) {
-                            currentRow[0].put("noOfAsst", n);
+                    String tail = "";
+                    Matcher m = Pattern.compile("(\\d[\\d\\s]*?)\\s*$").matcher(t);
+                    if (m.find()) tail = nvl(m.group(1));
+                    List<String> vals = splitMultiArticleNumbers(tail, articleNos.size());
+                    if (vals.isEmpty()) {
+                        String n = parseInlineOrNextNumber(t, texts, i + 1);
+                        vals = splitMultiArticleNumbers(n, articleNos.size());
+                    }
+                    if (!vals.isEmpty()) {
+                        if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                            if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                                for (int ai = 0; ai < articleNos.size(); ai++) {
+                                    Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                    if (r != null) r.put("noOfAsst", vals.get(ai));
+                                }
+                            } else {
+                                String v = vals.get(0);
+                                for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                    if (r != null) r.put("noOfAsst", v);
+                                }
+                            }
                         } else {
                             // If the Assortment row was already emitted (e.g., upon 'Quantity:'),
                             // backfill into the last Assortment row for this page.
+                            String v = vals.get(0);
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
                                 if ("Assortment".equals(r.getOrDefault("type", ""))) {
-                                    r.put("noOfAsst", n);
+                                    r.put("noOfAsst", v);
                                     break;
                                 }
                             }
@@ -3966,7 +4027,7 @@ public class OcrNewService {
                     continue;
                 }
 
-                if (currentRow[0] == null) {
+                if (currentRowsByArticle[0] == null || currentRowsByArticle[0].isEmpty()) {
                     // Try to backfill size lines that appear after Quantity into the last emitted row
                     String tUp = t.toUpperCase(Locale.ROOT);
                     if (tUp.contains("XS") || tUp.contains("XL") || tUp.matches(".*\\b[SML]\\s*\\(.*")) {
@@ -4018,20 +4079,41 @@ public class OcrNewService {
 
                 Matcher qm = QUANTITY_LINE.matcher(t);
                 if (qm.matches()) {
-                    String q = normalizeNumber(qm.group(1));
-                    if (q != null && !q.isBlank()) currentRow[0].put("total", q);
-                    ensureSizeDefaults(currentRow[0]);
-                    out.add(currentRow[0]);
-                    currentRow[0] = null;
+                    List<String> vals = splitMultiArticleNumbers(qm.group(1), articleNos.size());
+
+                    if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                        if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                            for (int ai = 0; ai < articleNos.size(); ai++) {
+                                Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                if (r != null) r.put("total", vals.get(ai));
+                            }
+                        } else if (!vals.isEmpty()) {
+                            String v = vals.get(0);
+                            for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                if (r != null) r.put("total", v);
+                            }
+                        }
+                        for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                            if (r == null) continue;
+                            ensureSizeDefaults(r);
+                            out.add(r);
+                        }
+                    }
+                    currentRowsByArticle[0] = new LinkedHashMap<>();
                     sawAnySize[0] = false;
                     continue;
                 }
 
                 // Fallback: bare "Quantity:" without a parseable number — still emit the row
                 if (lower.startsWith("quantity") || lower.startsWith("qty")) {
-                    ensureSizeDefaults(currentRow[0]);
-                    out.add(currentRow[0]);
-                    currentRow[0] = null;
+                    if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                        for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                            if (r == null) continue;
+                            ensureSizeDefaults(r);
+                            out.add(r);
+                        }
+                    }
+                    currentRowsByArticle[0] = new LinkedHashMap<>();
                     sawAnySize[0] = false;
                     continue;
                 }
@@ -4040,7 +4122,6 @@ public class OcrNewService {
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
                     String sizeRaw = sm.group(1);
-                    String v = normalizeNumber(sm.group(2));
                     String size = normalizeSizeKey(sizeRaw);
                     if (size == null) {
                         Matcher pm = Pattern.compile("\\(\\s*([A-Za-z]{1,2})\\s*(?:\\/\\s*P)?\\s*\\)").matcher(t);
@@ -4049,9 +4130,22 @@ public class OcrNewService {
                             size = normalizeSizeKey(inside);
                         }
                     }
-                    if (size != null && v != null && !v.isBlank()) {
-                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE matched: line='{}' -> size={} value={}", t, size, v);
-                        currentRow[0].put(size, v);
+                    List<String> vals = splitMultiArticleNumbers(sm.group(2), articleNos.size());
+
+                    if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                        if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                            for (int ai = 0; ai < articleNos.size(); ai++) {
+                                Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                if (r != null) r.put(size, vals.get(ai));
+                            }
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                        } else {
+                            String v = vals.get(0);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE matched: line='{}' -> size={} value={}", t, size, v);
+                            for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                if (r != null) r.put(size, v);
+                            }
+                        }
                         sawAnySize[0] = true;
                     }
                     continue;
@@ -4061,11 +4155,23 @@ public class OcrNewService {
                 Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
                 if (sp.matches()) {
                     String inside = sp.group(1);
-                    String v = normalizeNumber(sp.group(2));
                     String size = normalizeSizeKey(inside);
-                    if (size != null && v != null && !v.isBlank()) {
-                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS matched: line='{}' -> size={} value={}", t, size, v);
-                        currentRow[0].put(size, v);
+                    List<String> vals = splitMultiArticleNumbers(sp.group(2), articleNos.size());
+
+                    if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                        if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                            for (int ai = 0; ai < articleNos.size(); ai++) {
+                                Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                if (r != null) r.put(size, vals.get(ai));
+                            }
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                        } else {
+                            String v = vals.get(0);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS matched: line='{}' -> size={} value={}", t, size, v);
+                            for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                if (r != null) r.put(size, v);
+                            }
+                        }
                         sawAnySize[0] = true;
                     }
                 } else {
@@ -4073,11 +4179,23 @@ public class OcrNewService {
                     Matcher sf = SIZE_VALUE_LINE_FLEX.matcher(t);
                     if (sf.find()) {
                         String sizeRaw = sf.group(1);
-                        String v = normalizeNumber(sf.group(2));
                         String size = normalizeSizeKey(sizeRaw);
-                        if (size != null && v != null && !v.isBlank()) {
-                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX matched: line='{}' -> size={} value={}", t, size, v);
-                            currentRow[0].put(size, v);
+                        List<String> vals = splitMultiArticleNumbers(sf.group(2), articleNos.size());
+
+                        if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                            if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                                for (int ai = 0; ai < articleNos.size(); ai++) {
+                                    Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                    if (r != null) r.put(size, vals.get(ai));
+                                }
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                            } else {
+                                String v = vals.get(0);
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX matched: line='{}' -> size={} value={}", t, size, v);
+                                for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                    if (r != null) r.put(size, v);
+                                }
+                            }
                             sawAnySize[0] = true;
                         }
                     } else {
@@ -4090,7 +4208,9 @@ public class OcrNewService {
                             String size = normalizeSizeKey(sizeRaw);
                             if (size != null && v != null && !v.isBlank()) {
                                 log.info("[SIZE-PARSE] SIZE_VALUE_LINE_OCR_FIX matched: line='{}' -> size={} rawVal='{}' fixedVal={}", t, size, rawVal, v);
-                                currentRow[0].put(size, v);
+                                for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                    if (r != null) r.put(size, v);
+                                }
                                 sawAnySize[0] = true;
                             }
                         } else {
@@ -4104,9 +4224,14 @@ public class OcrNewService {
                 }
             }
 
-            if (currentRow[0] != null && (sawAnySize[0] || currentRow[0].containsKey("total") || currentRow[0].containsKey("type"))) {
-                ensureSizeDefaults(currentRow[0]);
-                out.add(currentRow[0]);
+            if (currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                    if (r == null) continue;
+                    if (sawAnySize[0] || r.containsKey("total") || r.containsKey("type")) {
+                        ensureSizeDefaults(r);
+                        out.add(r);
+                    }
+                }
             }
 
             // IMPORTANT: reconcile Solid FIRST, so fillMissingAssortmentValues
@@ -4146,90 +4271,102 @@ public class OcrNewService {
     private static void reconcileSolidWithTotal(List<Map<String, String>> rows, int startIdx) {
         if (rows == null || startIdx >= rows.size()) return;
 
-        Map<String, String> assortment = null, solid = null, total = null;
+        Map<String, Map<String, String>> assortmentByArticle = new LinkedHashMap<>();
+        Map<String, Map<String, String>> solidByArticle = new LinkedHashMap<>();
+        Map<String, Map<String, String>> totalByArticle = new LinkedHashMap<>();
         for (int i = startIdx; i < rows.size(); i++) {
-            String type = rows.get(i).getOrDefault("type", "");
-            if ("Assortment".equals(type) && assortment == null) assortment = rows.get(i);
-            else if ("Solid".equals(type) && solid == null) solid = rows.get(i);
-            else if ("Total".equals(type) && total == null) total = rows.get(i);
+            Map<String, String> r = rows.get(i);
+            String articleNo = r.getOrDefault("articleNo", "");
+            String type = r.getOrDefault("type", "");
+            if ("Assortment".equals(type) && !assortmentByArticle.containsKey(articleNo)) assortmentByArticle.put(articleNo, r);
+            else if ("Solid".equals(type) && !solidByArticle.containsKey(articleNo)) solidByArticle.put(articleNo, r);
+            else if ("Total".equals(type) && !totalByArticle.containsKey(articleNo)) totalByArticle.put(articleNo, r);
         }
-
-        if (solid == null || total == null) return;
 
         List<String> sizes = List.of("XS", "S", "M", "L", "XL");
 
-        // (1) Skip if Solid is already self-consistent (per-size sum == Quantity).
-        // Prevents corrupting correctly-parsed rows (e.g., Sweden, Switzerland).
-        int solidTotal;
-        try {
-            solidTotal = Integer.parseInt(solid.getOrDefault("total", "0").replaceAll("\\s+", ""));
-        } catch (NumberFormatException e) {
-            return;
-        }
-        int solidSum = 0;
-        for (String sz : sizes) {
+        Set<String> articles = new LinkedHashSet<>();
+        articles.addAll(assortmentByArticle.keySet());
+        articles.addAll(solidByArticle.keySet());
+        articles.addAll(totalByArticle.keySet());
+
+        for (String articleNo : articles) {
+            Map<String, String> assortment = assortmentByArticle.get(articleNo);
+            Map<String, String> solid = solidByArticle.get(articleNo);
+            Map<String, String> total = totalByArticle.get(articleNo);
+            if (solid == null || total == null) continue;
+
+            int solidTotal;
             try {
-                solidSum += Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
-        }
-        if (solidTotal > 0 && solidSum == solidTotal) return;
+                solidTotal = Integer.parseInt(solid.getOrDefault("total", "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            int solidSum = 0;
+            for (String sz : sizes) {
+                try {
+                    solidSum += Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+            }
+            if (solidTotal > 0 && solidSum == solidTotal) continue;
 
         // (2) Only trust Total if its per-size values sum equals its "total" field.
-        int totalExpected;
-        try {
-            totalExpected = Integer.parseInt(total.getOrDefault("total", "0").replaceAll("\\s+", ""));
-        } catch (NumberFormatException e) {
-            return;
-        }
-        if (totalExpected <= 0) return;
-
-        int totalSum = 0;
-        for (String sz : sizes) {
+            int totalExpected;
             try {
-                totalSum += Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
-        }
-        if (totalSum != totalExpected) return; // Total row not self-consistent, don't trust it
+                totalExpected = Integer.parseInt(total.getOrDefault("total", "0").replaceAll("\\s+", ""));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            if (totalExpected <= 0) continue;
+
+            int totalSum = 0;
+            for (String sz : sizes) {
+                try {
+                    totalSum += Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+            }
+            if (totalSum != totalExpected) continue;
 
         // (3) Parse No of Asst (number of assortment packs). Defaults to 0.
-        int noOfAsst = 0;
-        if (assortment != null) {
-            try {
-                noOfAsst = Integer.parseInt(assortment.getOrDefault("noOfAsst", "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
-        }
+            int noOfAsst = 0;
+            if (assortment != null) {
+                try {
+                    noOfAsst = Integer.parseInt(assortment.getOrDefault("noOfAsst", "0").replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+            }
 
         // (4) Reconcile using: Solid[size] = Total[size] - (Assortment[size] * NoOfAsst)
-        boolean changed = false;
-        int newSolidSum = 0;
-        for (String sz : sizes) {
-            int totVal = 0, assortVal = 0, solidVal = 0;
-            try {
-                totVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
-            try {
-                if (assortment != null) {
-                    assortVal = Integer.parseInt(assortment.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+            boolean changed = false;
+            int newSolidSum = 0;
+            for (String sz : sizes) {
+                int totVal = 0, assortVal = 0, solidVal = 0;
+                try {
+                    totVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+                try {
+                    if (assortment != null) {
+                        assortVal = Integer.parseInt(assortment.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                    }
+                } catch (NumberFormatException ignored) {}
+                try {
+                    solidVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                } catch (NumberFormatException ignored) {}
+
+                int assortContribution = assortVal * noOfAsst;
+                int expectedSolid = Math.max(0, totVal - assortContribution);
+                if (solidVal != expectedSolid) {
+                    log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}*noOfAsst={}) country={} articleNo={}",
+                            sz, solidVal, expectedSolid, totVal, assortVal, noOfAsst,
+                            solid.getOrDefault("destinationCountry", ""), articleNo);
+                    solid.put(sz, String.valueOf(expectedSolid));
+                    changed = true;
                 }
-            } catch (NumberFormatException ignored) {}
-            try {
-                solidVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
-
-            int assortContribution = assortVal * noOfAsst;
-            int expectedSolid = Math.max(0, totVal - assortContribution);
-            if (solidVal != expectedSolid) {
-                log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}*noOfAsst={}) country={}",
-                        sz, solidVal, expectedSolid, totVal, assortVal, noOfAsst,
-                        solid.getOrDefault("destinationCountry", ""));
-                solid.put(sz, String.valueOf(expectedSolid));
-                changed = true;
+                newSolidSum += expectedSolid;
             }
-            newSolidSum += expectedSolid;
-        }
 
-        if (changed) {
-            solid.put("total", String.valueOf(newSolidSum));
+            if (changed) {
+                solid.put("total", String.valueOf(newSolidSum));
+            }
         }
     }
 
@@ -4356,69 +4493,92 @@ public class OcrNewService {
         }
 
         // Find Assortment, Solid, Total rows added for this page
-        Map<String, String> assortment = null, solid = null, total = null;
+        Map<String, Map<String, String>> assortmentByArticle = new LinkedHashMap<>();
+        Map<String, Map<String, String>> solidByArticle = new LinkedHashMap<>();
+        Map<String, Map<String, String>> totalByArticle = new LinkedHashMap<>();
         for (int i = startIdx; i < rows.size(); i++) {
-            String type = rows.get(i).getOrDefault("type", "");
-            if ("Assortment".equals(type) && assortment == null) assortment = rows.get(i);
-            else if ("Solid".equals(type) && solid == null) solid = rows.get(i);
-            else if ("Total".equals(type) && total == null) total = rows.get(i);
+            Map<String, String> r = rows.get(i);
+            String articleNo = r.getOrDefault("articleNo", "");
+            String type = r.getOrDefault("type", "");
+            if ("Assortment".equals(type) && !assortmentByArticle.containsKey(articleNo)) assortmentByArticle.put(articleNo, r);
+            else if ("Solid".equals(type) && !solidByArticle.containsKey(articleNo)) solidByArticle.put(articleNo, r);
+            else if ("Total".equals(type) && !totalByArticle.containsKey(articleNo)) totalByArticle.put(articleNo, r);
         }
 
-        if (assortment == null || solid == null || total == null) return;
+        Set<String> articles = new LinkedHashSet<>();
+        articles.addAll(assortmentByArticle.keySet());
+        articles.addAll(solidByArticle.keySet());
+        articles.addAll(totalByArticle.keySet());
+        if (articles.isEmpty()) return;
 
-        // Skip only if Assortment already has any positive (>0) size value
         List<String> sizes = List.of("XS", "S", "M", "L", "XL");
-        for (String sz : sizes) {
-            String v = assortment.get(sz);
-            if (v != null && !v.isBlank()) {
-                try {
-                    int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
-                    if (iv > 0) return; // already meaningful, do not override
-                } catch (NumberFormatException ignored) { return; }
-            }
-        }
 
-        // Build diffs and compute GCD across positive diffs
-        int gcd = 0;
-        int[] diffs = new int[sizes.size()];
-        for (int i = 0; i < sizes.size(); i++) {
-            String sz = sizes.get(i);
-            try {
-                int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                int diff = Math.max(0, tVal - sVal);
-                diffs[i] = diff;
-                if (diff > 0) gcd = (gcd == 0) ? diff : gcd(gcd, diff);
-            } catch (NumberFormatException ignored) {}
-        }
+        for (String articleNo : articles) {
+            Map<String, String> assortment = assortmentByArticle.get(articleNo);
+            Map<String, String> solid = solidByArticle.get(articleNo);
+            Map<String, String> total = totalByArticle.get(articleNo);
+            if (assortment == null || solid == null || total == null) continue;
 
-        if (gcd <= 0) return;
-
-        // Prefer using GCD; only switch to 'Quantity' if it divides diffs AND
-        // the resulting per-pack sizes sum equals the Quantity value.
-        int divisor = gcd;
-        if (qtyAssort != null && qtyAssort > 0) {
-            boolean allDivisible = true;
-            for (int d : diffs) { if (d % qtyAssort != 0) { allDivisible = false; break; } }
-            if (allDivisible) {
-                int sumIfQty = 0;
-                for (int d : diffs) sumIfQty += d / qtyAssort;
-                if (sumIfQty == qtyAssort) {
-                    divisor = qtyAssort;
-                } else {
-                    divisor = gcd; // keep gcd when more plausible
+            for (String sz : sizes) {
+                String v = assortment.get(sz);
+                if (v != null && !v.isBlank()) {
+                    try {
+                        int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
+                        if (iv > 0) {
+                            assortment = null;
+                            break;
+                        }
+                    } catch (NumberFormatException ignored) {
+                        assortment = null;
+                        break;
+                    }
                 }
             }
-        }
+            if (assortment == null) continue;
 
-        int sum = 0;
-        for (int i = 0; i < sizes.size(); i++) {
-            int val = (divisor > 0) ? (diffs[i] / divisor) : 0;
-            if (val < 0) val = 0;
-            if (val > 0) sum += val;
-            assortment.put(sizes.get(i), String.valueOf(val));
+            int gcd = 0;
+            int[] diffs = new int[sizes.size()];
+            for (int i = 0; i < sizes.size(); i++) {
+                String sz = sizes.get(i);
+                try {
+                    int tVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                    int sVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
+                    int diff = Math.max(0, tVal - sVal);
+                    diffs[i] = diff;
+                    if (diff > 0) gcd = (gcd == 0) ? diff : gcd(gcd, diff);
+                } catch (NumberFormatException ignored) {}
+            }
+            if (gcd <= 0) continue;
+
+            int divisor = gcd;
+            if (qtyAssort != null && qtyAssort > 0) {
+                boolean allDivisible = true;
+                for (int d : diffs) {
+                    if (d % qtyAssort != 0) {
+                        allDivisible = false;
+                        break;
+                    }
+                }
+                if (allDivisible) {
+                    int sumIfQty = 0;
+                    for (int d : diffs) sumIfQty += d / qtyAssort;
+                    if (sumIfQty == qtyAssort) {
+                        divisor = qtyAssort;
+                    } else {
+                        divisor = gcd;
+                    }
+                }
+            }
+
+            int sum = 0;
+            for (int i = 0; i < sizes.size(); i++) {
+                int val = (divisor > 0) ? (diffs[i] / divisor) : 0;
+                if (val < 0) val = 0;
+                if (val > 0) sum += val;
+                assortment.put(sizes.get(i), String.valueOf(val));
+            }
+            assortment.put("total", String.valueOf(sum));
         }
-        assortment.put("total", String.valueOf(sum));
     }
 
     private static int gcd(int a, int b) {
@@ -4452,6 +4612,43 @@ public class OcrNewService {
             }
         }
         return null;
+    }
+
+    private static List<String> splitMultiArticleNumbers(String raw, int expectedCount) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) return out;
+        String s = raw.trim();
+        if (s.isBlank()) return out;
+
+        if (expectedCount <= 1) {
+            String v = normalizeNumberToken(s);
+            if (!v.isBlank()) out.add(v);
+            return out;
+        }
+
+        String[] toks = s.split("\\s+");
+        if (toks.length == expectedCount) {
+            for (String t : toks) {
+                String v = normalizeNumberToken(t);
+                if (!v.isBlank()) out.add(v);
+            }
+            return out;
+        }
+
+        // Handle thousand-separated numbers like: "2 578 2 496 1 385" for 3 articles.
+        if (toks.length == expectedCount * 2) {
+            for (int i = 0; i < expectedCount; i++) {
+                String joined = toks[i * 2] + " " + toks[i * 2 + 1];
+                String v = normalizeNumberToken(joined);
+                if (!v.isBlank()) out.add(v);
+            }
+            return out;
+        }
+
+        // Fallback: treat as a single number.
+        String v = normalizeNumberToken(s);
+        if (!v.isBlank()) out.add(v);
+        return out;
     }
 
     private static void ensureSizeDefaults(Map<String, String> row) {
