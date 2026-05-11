@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '../../components/ui/Button';
@@ -40,7 +40,7 @@ export function TotalCountryBreakdownScanPage() {
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<
-    Array<{ country: string; countryOfDestination?: string; pmCode: string; total: string; editable: boolean }>
+    Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }>
   >([]);
 
   const [section2cDraftRows, setSection2cDraftRows] = useState<Array<{ article: string; size: string; qty: string; editable: boolean }>>([]);
@@ -49,6 +49,75 @@ export function TotalCountryBreakdownScanPage() {
     const d = (v ?? '').toString().replace(/[^0-9]/g, '');
     return d.length ? d : '';
   };
+
+  const countryBreakdownArticleKeys = useMemo(() => {
+    const rows = data?.totalCountryBreakdown ?? [];
+    if (!Array.isArray(rows) || rows.length === 0) return [] as string[];
+    const keys = Object.keys(rows[0] ?? {});
+    const low = (s: string) => (s ?? '').toString().toLowerCase();
+    const fixed = new Set(['country', 'destinationcountry', 'countryofdestination', 'pmcode', 'pm', 'pm_code', 'total', 'tot', 'page', 'editable']);
+    return keys.filter((k) => !fixed.has(low(k)));
+  }, [data]);
+
+  const buildTotalCountryBreakdownPayload = useCallback(
+    (
+      rows: Array<{
+        country: string;
+        countryOfDestination?: string;
+        pmCode: string;
+        article: string;
+        qty: string;
+      }>
+    ) => {
+      const parseArticleNo = (s: string) => {
+        const t = (s ?? '').toString().trim();
+        const m = t.match(/\b(\d{3})\b/);
+        return (m?.[1] ?? t).toString();
+      };
+
+      const articleKeyByNo = new Map<string, string>();
+      for (const k of countryBreakdownArticleKeys ?? []) {
+        const art = parseArticleNo(k);
+        if (art && !articleKeyByNo.has(art)) articleKeyByNo.set(art, k);
+      }
+
+      const normalizeDigitsLocal = (v: any) => (v ?? '').toString().replace(/[^0-9]/g, '');
+      const byGroup = new Map<string, { country: string; pmCode: string; countryOfDestination: string; byArticle: Map<string, number> }>();
+
+      for (const r of rows ?? []) {
+        const country = (r?.country ?? '').toString();
+        const pmCode = (r?.pmCode ?? '').toString();
+        const cod = (r?.countryOfDestination ?? '').toString();
+        const gk = `${country}||${pmCode}||${cod}`;
+        const agg = byGroup.get(gk) ?? { country, pmCode, countryOfDestination: cod, byArticle: new Map<string, number>() };
+        byGroup.set(gk, agg);
+
+        const art = parseArticleNo((r?.article ?? '').toString());
+        const qty = Number(normalizeDigitsLocal(r?.qty ?? ''));
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        agg.byArticle.set(art, (agg.byArticle.get(art) ?? 0) + qty);
+      }
+
+      const out: Array<Record<string, string>> = [];
+      for (const agg of byGroup.values()) {
+        const m: Record<string, string> = {
+          country: agg.country,
+          pmCode: agg.pmCode,
+          total: '0',
+        };
+        let total = 0;
+        for (const [art, qty] of agg.byArticle.entries()) {
+          total += qty;
+          const key = articleKeyByNo.get(art) ?? `Article:${art}`;
+          m[key] = String(qty);
+        }
+        m.total = String(total);
+        out.push(m);
+      }
+      return out;
+    },
+    [countryBreakdownArticleKeys]
+  );
 
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
@@ -69,13 +138,31 @@ export function TotalCountryBreakdownScanPage() {
       const kCountryOfDestination = findKey(['countryofdestination', 'destinationcountry']) ?? '';
       const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
       const kTotal = findKey(['total', 'tot']) ?? 'total';
-      const out = (rows as any[]).map((m) => ({
-        country: toVal(m, kCountry),
-        countryOfDestination: kCountryOfDestination ? toVal(m, kCountryOfDestination) : '',
-        pmCode: toVal(m, kPm),
-        total: toVal(m, kTotal),
-        editable: true,
-      }));
+      const fixed = new Set([kCountry.toLowerCase(), kPm.toLowerCase(), kTotal.toLowerCase(), 'page', 'editable']);
+      if (kCountryOfDestination) fixed.add(kCountryOfDestination.toLowerCase());
+      const articleKeys = keys.filter((k) => !fixed.has(k.toLowerCase()));
+
+      const extractArticleNoFromKey = (k: string): string => {
+        const s = (k ?? '').toString();
+        const m = s.match(/\barticle\s*[:#-]?\s*(\d{3})\b/i);
+        if (m?.[1]) return m[1];
+        const m2 = s.match(/\b(\d{3})\b/);
+        if (m2?.[1]) return m2[1];
+        return s;
+      };
+
+      const out: Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }> = [];
+      for (const m of rows as any[]) {
+        const country = toVal(m, kCountry);
+        const countryOfDestination = kCountryOfDestination ? toVal(m, kCountryOfDestination) : '';
+        const pmCode = toVal(m, kPm);
+        for (const ak of articleKeys) {
+          const article = extractArticleNoFromKey(ak);
+          const qty = toVal(m, ak);
+          if (!qty.trim()) continue;
+          out.push({ country, countryOfDestination, pmCode, article, qty, editable: true });
+        }
+      }
       setCountryBreakdownDraftRows(out);
     }
 
@@ -161,7 +248,7 @@ export function TotalCountryBreakdownScanPage() {
         source: 'presales-total-country-breakdown',
         analyzedFileName: results[activeFileIndex]?.fileName ?? selectedFiles[activeFileIndex]?.name ?? '',
         formFields: salesOrderHeaderDraft,
-        totalCountryBreakdown: countryBreakdownDraftRows,
+        totalCountryBreakdown: buildTotalCountryBreakdownPayload(countryBreakdownDraftRows as any),
         section2cColourSizeBreakdown: section2cDraftRows,
         raw: data,
       };
@@ -296,7 +383,7 @@ export function TotalCountryBreakdownScanPage() {
               variant='primary'
               disabled={!data}
               onClick={() => {
-                setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', total: '', editable: true }]);
+                setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', countryOfDestination: '', article: '', qty: '', editable: true }]);
               }}
             >
               Add row
@@ -315,7 +402,9 @@ export function TotalCountryBreakdownScanPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PM Code</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Total</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country of Destination</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -330,9 +419,22 @@ export function TotalCountryBreakdownScanPage() {
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                         <Input
-                          value={formatIdThousands(row.total)}
+                          value={(row.countryOfDestination ?? '').toString()}
                           onChange={(e) =>
-                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(e.target.value) } : r)))
+                            setCountryBreakdownDraftRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
+                            )
+                          }
+                        />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                        <Input value={(row.article ?? '').toString()} onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: e.target.value } : r)))} />
+                      </td>
+                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
+                        <Input
+                          value={formatIdThousands((row.qty ?? '').toString())}
+                          onChange={(e) =>
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(e.target.value) } : r)))
                           }
                           style={{ textAlign: 'left' }}
                         />
