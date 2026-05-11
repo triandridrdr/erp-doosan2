@@ -697,10 +697,8 @@ export function AllScanPage() {
 
     const META_KEYS = new Set(['article', 'total']);
     const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
-    let articleLabel = '';
     for (const row of source.rows) {
       const article = (row?.article ?? '').toString().trim();
-      if (!articleLabel && article) articleLabel = article;
       for (const [key, val] of Object.entries(row ?? {})) {
         if (META_KEYS.has(key.toLowerCase())) continue;
         const qty = (val ?? '').toString().trim();
@@ -709,7 +707,7 @@ export function AllScanPage() {
       }
     }
     if (exploded.length === 0) return null;
-    return { fileName: source.fileName, rows: exploded, articleLabel };
+    return { fileName: source.fileName, rows: exploded, articleLabel: '' };
   }, [data, results, activeFileIndex]);
 
   useEffect(() => {
@@ -792,10 +790,10 @@ export function AllScanPage() {
 
   useEffect(() => {
     if (backendColourSizeBreakdown) {
-      const articleLabel = section2cArticleLabelFromTcb || backendColourSizeBreakdown.articleLabel;
+      const fallbackArticleLabel = section2cArticleLabelFromTcb || backendColourSizeBreakdown.articleLabel;
       setSection2cDraftRows(
         backendColourSizeBreakdown.rows.map((r) => ({
-          article: articleLabel || r.article,
+          article: r.article || fallbackArticleLabel,
           size: r.size,
           qty: r.qty,
           editable: true,
