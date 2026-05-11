@@ -2168,7 +2168,26 @@ public class OcrNewService {
 
         // If we have a clear end marker like "Ship by ..." or "Origin Delivery Information", trim anything after it.
         if (lastRelevantIdx >= 0 && lastRelevantIdx < out.size() - 1) {
-            out = new ArrayList<>(out.subList(0, lastRelevantIdx + 1));
+            int cut = lastRelevantIdx;
+            while (cut + 1 < out.size()) {
+                String prev = nvl(out.get(cut)).trim();
+                String next = nvl(out.get(cut + 1)).trim();
+                if (next.isBlank()) break;
+
+                String nextLow = next.toLowerCase(Locale.ROOT);
+                boolean continuation = nextLow.startsWith("charges")
+                        || nextLow.startsWith("customs")
+                        || nextLow.startsWith("clearance")
+                        || nextLow.startsWith("duty")
+                        || nextLow.startsWith("freight")
+                        || nextLow.startsWith("are ")
+                        || nextLow.startsWith("intercom")
+                        || (!prev.endsWith("."))
+                        || prev.endsWith(",");
+                if (!continuation) break;
+                cut++;
+            }
+            out = new ArrayList<>(out.subList(0, cut + 1));
         }
 
         // If still no marker, drop trailing numeric/article-like lines (common OCR spillover)
@@ -5632,6 +5651,16 @@ public class OcrNewService {
             String[] p0 = existing0.split("\\R", 2);
             String first0 = p0.length > 0 ? p0[0].trim() : "";
             String body0 = p0.length > 1 ? p0[1].trim() : "";
+
+            // Some PDFs (especially store purchase orders) use a planning-market style header line like:
+            // "NL/OE, OU, OG, ..." which is NOT a simple country-code list. In these cases we must not
+            // prepend/replace with inferred 2-letter country codes from Time-of-Delivery; doing so pollutes
+            // the header and makes the UI show an invalid/too-long codes list.
+            Pattern slashTokenPat0 = Pattern.compile("\\b[A-Z]{2}\\s*/\\s*[A-Z0-9]{2}\\b");
+            if (slashTokenPat0.matcher(first0.toUpperCase(Locale.ROOT)).find()) {
+                return existing0;
+            }
+
             Pattern leadingCountryLinePat0 = Pattern.compile("^(?:[A-Z]{2}\\s*,\\s*)*[A-Z]{2}$");
             if (leadingCountryLinePat0.matcher(first0.toUpperCase(Locale.ROOT)).matches() && !body0.isBlank()) {
                 String low0 = body0.toLowerCase(Locale.ROOT);
