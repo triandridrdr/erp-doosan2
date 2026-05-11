@@ -1128,6 +1128,13 @@ export function AllScanPage() {
     return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
   }, [activePage, quantityPerArticleRows]);
 
+  const quantityPerArticleActivePageUsesOptionNo = useMemo(() => {
+    return quantityPerArticleRowsForActivePage.some((r) => {
+      const v = (r as any)?.optionNo;
+      return v != null && String(v).trim().length > 0;
+    });
+  }, [quantityPerArticleRowsForActivePage]);
+
   const invoiceAvgPriceRowsForActivePage = useMemo(() => {
     const p = String(activePage);
     return (invoiceAvgPriceRows ?? []).filter((r) => {
@@ -1147,12 +1154,19 @@ export function AllScanPage() {
     return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === '1');
   }, [quantityPerArticleRows]);
 
+  const quantityPerArticlePage1UsesOptionNo = useMemo(() => {
+    return quantityPerArticleRowsForPage1.some((r) => {
+      const v = (r as any)?.optionNo;
+      return v != null && String(v).trim().length > 0;
+    });
+  }, [quantityPerArticleRowsForPage1]);
+
   const invoiceAvgPriceRowsForPage1 = useMemo(() => {
     return (invoiceAvgPriceRows ?? []).filter((r) => {
       const rp = (r?.page ?? '1').toString();
       return rp === '1' || rp.trim() === '';
     });
-  }, [invoiceAvgPriceRows]);
+  }, [invoiceAvgPriceRows, quantityPerArticleRows]);
 
   useEffect(() => {
     if (results.length <= 1) return;
@@ -1328,7 +1342,15 @@ export function AllScanPage() {
                             onClick={() => {
                               setQuantityPerArticleRows((prev) => [
                                 ...(prev ?? []),
-                                { articleNo: '', hmColourCode: '', ptArticleNumber: '', colour: '', optionNo: '', cost: '', qtyArticle: '' },
+                                {
+                                  articleNo: '',
+                                  hmColourCode: '',
+                                  ptArticleNumber: '',
+                                  colour: '',
+                                  graphicalAppearance: '',
+                                  cost: '',
+                                  qtyArticle: '',
+                                },
                               ]);
                             }}
                           >
@@ -1344,7 +1366,9 @@ export function AllScanPage() {
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                                {quantityPerArticlePage1UsesOptionNo ? 'Option No' : 'GraphicalAppearance'}
+                              </th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -1367,7 +1391,11 @@ export function AllScanPage() {
                                     <Input value={row.colour ?? ''} onChange={() => {}} disabled />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
-                                    <Input value={row.optionNo ?? ''} onChange={() => {}} disabled />
+                                    <Input
+                                      value={(quantityPerArticlePage1UsesOptionNo ? (row as any)?.optionNo : (row as any)?.graphicalAppearance) ?? ''}
+                                      onChange={() => {}}
+                                      disabled
+                                    />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
                                     <Input value={row.cost ?? ''} onChange={() => {}} disabled />
@@ -1573,7 +1601,7 @@ export function AllScanPage() {
                                   hmColourCode: '',
                                   ptArticleNumber: '',
                                   colour: '',
-                                  optionNo: '',
+                                  graphicalAppearance: '',
                                   cost: '',
                                   qtyArticle: '',
                                 },
@@ -1592,7 +1620,9 @@ export function AllScanPage() {
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                              <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                                {quantityPerArticleActivePageUsesOptionNo ? 'Option No' : 'GraphicalAppearance'}
+                              </th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                               <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -1656,13 +1686,19 @@ export function AllScanPage() {
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
                                     <Input
-                                      value={row.optionNo ?? ''}
+                                      value={(quantityPerArticleActivePageUsesOptionNo ? (row as any)?.optionNo : (row as any)?.graphicalAppearance) ?? ''}
                                       onChange={(e) => {
                                         const v = e.target.value;
                                         const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
                                         const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
                                         setQuantityPerArticleRows((prev) =>
-                                          (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                          (prev ?? []).map((x, i) =>
+                                            i === idxToUpdate
+                                              ? quantityPerArticleActivePageUsesOptionNo
+                                                ? { ...(x as any), optionNo: v }
+                                                : { ...(x as any), graphicalAppearance: v }
+                                              : x
+                                          )
                                         );
                                       }}
                                     />
@@ -1867,7 +1903,7 @@ export function AllScanPage() {
                                     hmColourCode: '',
                                     ptArticleNumber: '',
                                     colour: '',
-                                    optionNo: '',
+                                    graphicalAppearance: '',
                                     cost: '',
                                     qtyArticle: '',
                                   },
@@ -1886,7 +1922,9 @@ export function AllScanPage() {
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                                <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>
+                                  {quantityPerArticleActivePageUsesOptionNo ? 'Option No' : 'GraphicalAppearance'}
+                                </th>
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                                 <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -1950,13 +1988,19 @@ export function AllScanPage() {
                                     </td>
                                     <td className='px-3 py-2 border-b border-gray-100'>
                                       <Input
-                                        value={row.optionNo ?? ''}
+                                        value={(quantityPerArticleActivePageUsesOptionNo ? (row as any)?.optionNo : (row as any)?.graphicalAppearance) ?? ''}
                                         onChange={(e) => {
                                           const v = e.target.value;
                                           const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
                                           const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
                                           setQuantityPerArticleRows((prev) =>
-                                            (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                            (prev ?? []).map((x, i) =>
+                                              i === idxToUpdate
+                                                ? quantityPerArticleActivePageUsesOptionNo
+                                                  ? { ...(x as any), optionNo: v }
+                                                  : { ...(x as any), graphicalAppearance: v }
+                                                : x
+                                            )
                                           );
                                         }}
                                       />

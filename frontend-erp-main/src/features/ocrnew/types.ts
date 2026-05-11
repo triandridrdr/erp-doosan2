@@ -56,7 +56,7 @@ export interface OcrNewDocumentAnalysisResponseData {
   purchaseOrderTimeOfDelivery?: Array<Record<string, string>>;
   /**
    * Purchase Order: Quantity per Article table
-   * Columns: articleNo, hmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle
+   * Columns: articleNo, hmColourCode, ptArticleNumber, colour, (optionNo | graphicalAppearance), cost, qtyArticle
    */
   purchaseOrderQuantityPerArticle?: Array<Record<string, string>>;
   /**

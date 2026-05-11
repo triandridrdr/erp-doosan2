@@ -2525,7 +2525,21 @@ public class OcrNewService {
 
         int headerPage = allLines.get(headerIdx).getPage();
         Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
-        final int colourColLeftMin = 900;
+
+        int colourLeftMin = 900;
+        int colourLeftMax = Integer.MAX_VALUE;
+        for (int i = headerIdx; i < Math.min(allLines.size(), headerIdx + 15); i++) {
+            OcrNewLine l = allLines.get(i);
+            if (l == null || l.getText() == null) continue;
+            if (l.getPage() != headerPage) break;
+            String low = oneLine(l.getText()).toLowerCase(Locale.ROOT);
+            if (low.equals("colour") || low.startsWith("colour ") || low.contains(" colour ")) {
+                colourLeftMin = Math.max(0, l.getLeft() - 60);
+            }
+            if (low.contains("graphicalappearance") || low.contains("graphical appearance")) {
+                colourLeftMax = Math.max(colourLeftMin + 100, l.getLeft() - 30);
+            }
+        }
 
         StringBuilder colourBuf = new StringBuilder();
         for (int i = headerIdx + 1; i < Math.min(allLines.size(), headerIdx + 40); i++) {
@@ -2539,11 +2553,13 @@ public class OcrNewService {
 
             if (low.contains("total quantity") || low.contains("invoice average") || low.contains("time of delivery")) break;
             if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost") || low.equals("colour")) continue;
+            if (low.contains("graphicalappearance") || low.contains("graphical appearance")) continue;
             if (low.contains("total quantity") || low.contains("invoice average") || low.contains("time of delivery")) break;
             if (costQtyPat.matcher(s).find()) continue;
 
             // Only capture text from the Colour column region (avoids accidentally concatenating other columns).
-            if (l.getLeft() < colourColLeftMin) continue;
+            if (l.getLeft() < colourLeftMin) continue;
+            if (l.getLeft() >= colourLeftMax) continue;
 
             if (colourBuf.length() > 0) colourBuf.append(" ");
             colourBuf.append(s);
@@ -2568,6 +2584,49 @@ public class OcrNewService {
             }
             if (overwrite) {
                 r.put("colour", colour);
+            }
+        }
+    }
+
+    private static void normalizePurchaseOrderQuantityPerArticleGraphicalAppearance(List<Map<String, String>> rows) {
+        if (rows == null || rows.isEmpty()) return;
+
+        // Common Graphical Appearance values observed in H&M Purchase Order PDFs.
+        Pattern trailingGaPat = Pattern.compile("^(.*?)(?:\\s+)(All\\s+over\\s+pattern|Solid|Placement\\s+print|Stripe|Check)\\s*$", Pattern.CASE_INSENSITIVE);
+
+        for (Map<String, String> r : rows) {
+            if (r == null) continue;
+
+            String colour = nvl(r.get("colour")).replaceAll("\\s+", " ").trim();
+            String ga = nvl(r.get("graphicalAppearance")).replaceAll("\\s+", " ").trim();
+            String optionNo = nvl(r.get("optionNo")).replaceAll("\\s+", " ").trim();
+
+            // If this row already has Option No (some PO templates), do not try to derive GraphicalAppearance
+            // from the colour tail.
+            if (!optionNo.isBlank()) continue;
+
+            // If Colour already contains the GraphicalAppearance tail, split it out.
+            if (!colour.isBlank() && ga.isBlank()) {
+                Matcher m = trailingGaPat.matcher(colour);
+                if (m.find()) {
+                    String c = nvl(m.group(1)).replaceAll("\\s+", " ").trim();
+                    String g = nvl(m.group(2)).replaceAll("\\s+", " ").trim();
+                    if (!c.isBlank() && !g.isBlank()) {
+                        r.put("colour", c);
+                        r.put("graphicalAppearance", g);
+                        continue;
+                    }
+                }
+            }
+
+            // If both are present but colour ends with ga, de-duplicate.
+            if (!colour.isBlank() && !ga.isBlank()) {
+                String lowColour = colour.toLowerCase(Locale.ROOT);
+                String lowGa = ga.toLowerCase(Locale.ROOT);
+                if (lowColour.endsWith(" " + lowGa)) {
+                    String c = colour.substring(0, colour.length() - (ga.length() + 1)).trim();
+                    if (!c.isBlank()) r.put("colour", c);
+                }
             }
         }
     }
@@ -4962,15 +5021,36 @@ public class OcrNewService {
                 List<Map<String, String>> poQuantityFromPdf = extractPurchaseOrderQuantityPerArticleFromPdfBytes(fileBytes);
                 if (poQuantityFromPdf != null && !poQuantityFromPdf.isEmpty()) {
                     if (poQuantityPerArticle == null) poQuantityPerArticle = new ArrayList<>();
+
+                    // Header/awal table (page 1) should prefer PDF text layer only (more accurate than OCR).
+                    // If PDFBox has page=1 rows, replace any existing page-1 rows with PDFBox results.
+                    List<Map<String, String>> pdfPage1 = new ArrayList<>();
+                    for (Map<String, String> r : poQuantityFromPdf) {
+                        if (r == null) continue;
+                        if ("1".equals(nvl(r.get("page")).trim())) {
+                            pdfPage1.add(r);
+                        }
+                    }
+                    if (!pdfPage1.isEmpty()) {
+                        List<Map<String, String>> keep = new ArrayList<>();
+                        for (Map<String, String> r : poQuantityPerArticle) {
+                            if (r == null) continue;
+                            String p = nvl(r.get("page")).trim();
+                            if (!"1".equals(p)) keep.add(r);
+                        }
+                        keep.addAll(pdfPage1);
+                        poQuantityPerArticle = keep;
+                    }
+
                     Set<String> existingKeys = new HashSet<>();
                     for (Map<String, String> r : poQuantityPerArticle) {
                         if (r == null) continue;
-                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("graphicalAppearance")) + "|" + nvl(r.get("qtyArticle")));
                         existingKeys.add(k);
                     }
                     for (Map<String, String> r : poQuantityFromPdf) {
                         if (r == null) continue;
-                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("optionNo")) + "|" + nvl(r.get("qtyArticle")));
+                        String k = (nvl(r.get("page")) + "|" + nvl(r.get("articleNo")) + "|" + nvl(r.get("hmColourCode")) + "|" + nvl(r.get("ptArticleNumber")) + "|" + nvl(r.get("graphicalAppearance")) + "|" + nvl(r.get("qtyArticle")));
                         if (!existingKeys.contains(k)) {
                             poQuantityPerArticle.add(r);
                             existingKeys.add(k);
@@ -4985,6 +5065,7 @@ public class OcrNewService {
                 }
             }
             fillMissingPurchaseOrderQuantityPerArticleColour(poQuantityPerArticle, allLines);
+            normalizePurchaseOrderQuantityPerArticleGraphicalAppearance(poQuantityPerArticle);
 
             // IMPORTANT: Use the global extractor to keep the proven-valid pairing logic
             // (price-only line + country-only line, multi-country lists, etc.).
@@ -7699,7 +7780,7 @@ public class OcrNewService {
 
     /**
      * Extract "Quantity per Article" table from Purchase Order PDF.
-     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle
+     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, graphicalAppearance, cost, qtyArticle
      */
     private static List<Map<String, String>> extractPurchaseOrderQuantityPerArticle(List<OcrNewLine> allLines) {
         List<Map<String, String>> out = new ArrayList<>();
@@ -7775,15 +7856,22 @@ public class OcrNewService {
         }
 
         Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
+        Pattern costOnlyPat = Pattern.compile("^(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})$");
+        Pattern qtyOnlyPat = Pattern.compile("^[\\d\\s]{2,}$");
+        Pattern optionNoTailPat = Pattern.compile("\\b([0-9A-Z]{3,})\\s*\\((V\\d+)\\)\\s*$");
+        Pattern trailingGaPat = Pattern.compile("^(.*?)(?:\\s+)(All\\s+over\\s+pattern|Solid|Placement\\s+print|Stripe|Check)\\s*$", Pattern.CASE_INSENSITIVE);
         Pattern articleStartPat = Pattern.compile("^(\\d{3})\\s+([\\d\\-]+)\\s*(.*)$");
         Pattern hmColourPrefixPat = Pattern.compile("^\\d{2}-\\d{2}$");
         Pattern hmSplitFixPat = Pattern.compile("^(\\d)\\s+(.*)$");
         Pattern hmSplitFixCompactPat = Pattern.compile("^(\\d)(\\d{2})(.*)$");
 
         String lastColourLine = "";
+        String lastColourNameFromLabel = "";
+        String lastGraphicalFromLabel = "";
         String pendingArticleNo = "";
         String pendingHmColourCode = "";
         String pendingMiddle = "";
+        String pendingCost = "";
 
         for (int i = headerIdx + 1; i < Math.min(texts.size(), headerIdx + 120); i++) {
             String line = texts.get(i).trim();
@@ -7799,8 +7887,34 @@ public class OcrNewService {
                 break;
             }
 
+            if (low.startsWith("colour name:")) {
+                String v = line.substring(Math.min(line.length(), "Colour Name:".length())).trim();
+                if (!v.isBlank()) {
+                    lastColourNameFromLabel = v;
+                }
+                continue;
+            }
+            if (low.startsWith("graphical appearance:")) {
+                String v = line.substring(Math.min(line.length(), "Graphical Appearance:".length())).trim();
+                if (!v.isBlank()) {
+                    lastGraphicalFromLabel = v;
+                }
+                continue;
+            }
+
+            // Don't absorb cost-only ("5.34 USD") or qty-only ("9 554") lines into pendingMiddle —
+            // they belong to the 3-line row reassembly handler below. Without this guard, the cost/qty
+            // lines pollute pendingMiddle and prevent the row from ever being emitted, leaving
+            // pendingMiddle to be reused on the next article row (causing "Colour Option No ..." pollution).
+            boolean isCostOnly = !pendingArticleNo.isBlank() && costOnlyPat.matcher(line).matches();
+            boolean isQtyOnly = !pendingArticleNo.isBlank() && !pendingCost.isBlank()
+                    && qtyOnlyPat.matcher(line).matches()
+                    && line.replaceAll("[^0-9]", "").length() >= 2;
+
             if (!line.matches("^\\d{3}\\b.*")
                     && !costQtyPat.matcher(line).find()
+                    && !isCostOnly
+                    && !isQtyOnly
                     && !low.contains("article no")
                     && !low.contains("colour code")
                     && !low.contains("qty/article")
@@ -7809,6 +7923,18 @@ public class OcrNewService {
                     pendingMiddle = pendingMiddle.isBlank() ? line : (pendingMiddle + " " + line);
                 } else {
                     if (!line.matches("^[A-Z]{2}$")) {
+                        // Avoid poisoning colour with table header artefacts like "Colour Option No".
+                        // OCR sometimes misreads it (e.g. "Colour Optior"), so use a broader heuristic.
+                        if (low.startsWith("colour") && low.length() <= 25) {
+                            continue;
+                        }
+                        // If we recently saw a 'Colour Name:' line and this is a short continuation token
+                        // (e.g. 'Light'), append it to complete the colour.
+                        if (!lastColourNameFromLabel.isBlank() && line.matches("^[A-Za-z]{2,15}$")
+                                && (lastGraphicalFromLabel.isBlank() || lastGraphicalFromLabel.length() < 2)) {
+                            lastColourNameFromLabel = (lastColourNameFromLabel + " " + line).replaceAll("\\s+", " ").trim();
+                            continue;
+                        }
                         lastColourLine = lastColourLine.isBlank() ? line : (lastColourLine + " " + line);
                     }
                 }
@@ -7819,8 +7945,119 @@ public class OcrNewService {
             if (start.find()) {
                 pendingArticleNo = start.group(1).trim();
                 pendingHmColourCode = start.group(2).trim();
-                pendingMiddle = start.group(3).trim();
+                pendingMiddle = (start.group(3) == null ? "" : start.group(3).trim());
+                pendingCost = "";
                 continue;
+            }
+
+            // Support tables where cost and qty are on separate lines (common with hOCR output):
+            // line A: "001 12-220 02" + "White Dusty Light 1GPOO (V2)"
+            // line B: "5.34 USD"
+            // line C: "9 554"
+            if (!pendingArticleNo.isBlank()) {
+                Matcher costOnly = costOnlyPat.matcher(line);
+                if (costOnly.find()) {
+                    pendingCost = costOnly.group(1).trim() + " " + costOnly.group(2).trim();
+                    continue;
+                }
+                String qtyDigits = line.replaceAll("[^0-9]", "");
+                if (!pendingCost.isBlank() && qtyOnlyPat.matcher(line).matches() && qtyDigits.length() >= 2) {
+                    String cost = pendingCost;
+                    String qtyArticle = line.replaceAll("\\s+", " ").trim();
+
+                    String ptArticleNumber = "";
+                    String graphicalAppearance = "";
+                    String optionNo = "";
+                    String colour = lastColourLine.trim();
+
+                    String middle = pendingMiddle == null ? "" : pendingMiddle;
+                    String[] parts = middle.trim().isEmpty() ? new String[0] : middle.trim().split("\\s+");
+                    if (parts.length >= 1) {
+                        ptArticleNumber = parts[0];
+                    }
+
+                    String remainder = "";
+                    if (!middle.isBlank() && !ptArticleNumber.isBlank()) {
+                        remainder = middle.trim();
+                        if (remainder.startsWith(ptArticleNumber)) {
+                            remainder = remainder.substring(ptArticleNumber.length()).trim();
+                        } else if (parts.length >= 2) {
+                            StringBuilder b = new StringBuilder();
+                            for (int pi = 1; pi < parts.length; pi++) {
+                                if (b.length() > 0) b.append(' ');
+                                b.append(parts[pi]);
+                            }
+                            remainder = b.toString().trim();
+                        }
+                    }
+
+                    if (!remainder.isBlank()) {
+                        Matcher optTail = optionNoTailPat.matcher(remainder);
+                        if (optTail.find()) {
+                            optionNo = (optTail.group(1).trim() + " (" + optTail.group(2).trim() + ")").trim();
+                            colour = remainder.substring(0, optTail.start()).replaceAll("\\s+", " ").trim();
+                        } else {
+                            Matcher gaTail = trailingGaPat.matcher(remainder);
+                            if (gaTail.find()) {
+                                colour = nvl(gaTail.group(1)).replaceAll("\\s+", " ").trim();
+                                graphicalAppearance = nvl(gaTail.group(2)).replaceAll("\\s+", " ").trim();
+                            } else {
+                                colour = remainder.replaceAll("\\s+", " ").trim();
+                            }
+                        }
+                    }
+
+                    if (!optionNo.isBlank()) {
+                        String lowColour = nvl(colour).toLowerCase(Locale.ROOT);
+                        boolean looksPolluted = lowColour.startsWith("colour") || lowColour.contains("article no") || lowColour.matches(".*\\b\\d{3}\\b.*");
+                        if (looksPolluted) {
+                            String midAll = nvl(pendingMiddle).replaceAll("\\s+", " ").trim();
+                            if (!midAll.isBlank()) {
+                                String a = Pattern.quote(nvl(pendingArticleNo).trim());
+                                String h = Pattern.quote(nvl(pendingHmColourCode).trim());
+                                String ptn = Pattern.quote(nvl(ptArticleNumber).trim());
+                                String opt = Pattern.quote(nvl(optionNo).trim());
+                                Pattern rowSig = Pattern.compile("\\b" + a + "\\s+" + h + "\\s+" + ptn + "\\s+(.*?)\\s+" + opt + "\\b");
+                                Matcher rm = rowSig.matcher(midAll);
+                                if (rm.find()) {
+                                    String c = nvl(rm.group(1)).replaceAll("\\s+", " ").trim();
+                                    if (!c.isBlank()) {
+                                        colour = c;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!lastColourNameFromLabel.isBlank()) {
+                        colour = lastColourNameFromLabel.trim();
+                    }
+                    if (!lastGraphicalFromLabel.isBlank()) {
+                        graphicalAppearance = lastGraphicalFromLabel.trim();
+                    }
+
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("articleNo", pendingArticleNo);
+                    row.put("hmColourCode", pendingHmColourCode);
+                    row.put("ptArticleNumber", ptArticleNumber);
+                    row.put("colour", colour);
+                    row.put("graphicalAppearance", graphicalAppearance);
+                    row.put("optionNo", optionNo);
+                    row.put("cost", cost);
+                    row.put("qtyArticle", qtyArticle);
+                    out.add(row);
+                    log.info("[PO-QTY-ARTICLE] Extracted row: {} | {} | {} | {} | {} | {} | {}",
+                            pendingArticleNo, pendingHmColourCode, ptArticleNumber, colour, (optionNo.isBlank() ? graphicalAppearance : optionNo), cost, qtyArticle);
+
+                    pendingArticleNo = "";
+                    pendingHmColourCode = "";
+                    pendingMiddle = "";
+                    pendingCost = "";
+                    lastColourLine = "";
+                    lastColourNameFromLabel = "";
+                    lastGraphicalFromLabel = "";
+                    continue;
+                }
             }
             if (!pendingArticleNo.isBlank()) {
                 if (hmColourPrefixPat.matcher(pendingHmColourCode).find()) {
@@ -7855,6 +8092,7 @@ public class OcrNewService {
                 String combinedMiddle = pendingMiddle;
 
                 String ptArticleNumber = "";
+                String graphicalAppearance = "";
                 String optionNo = "";
                 String colour = lastColourLine.trim();
 
@@ -7863,16 +8101,76 @@ public class OcrNewService {
                 String[] parts = middle.trim().isEmpty() ? new String[0] : middle.trim().split("\\s+");
                 if (parts.length >= 1) {
                     ptArticleNumber = parts[0];
-                    if (parts.length >= 2) {
-                        ptArticleNumber = parts[0] + " " + parts[1];
+                }
+
+                // For templates where the Colour/OptionNo are in-table (e.g. "Colour Option No" header),
+                // derive colour/optionNo from the middle string (everything after ptArticleNumber).
+                String remainder = "";
+                if (middle != null && !middle.isBlank() && !ptArticleNumber.isBlank()) {
+                    remainder = middle.trim();
+                    if (remainder.startsWith(ptArticleNumber)) {
+                        remainder = remainder.substring(ptArticleNumber.length()).trim();
+                    } else {
+                        // If OCR inserted extra spacing or the first token logic drifted, fallback to joining from parts[1].
+                        if (parts.length >= 2) {
+                            StringBuilder b = new StringBuilder();
+                            for (int pi = 1; pi < parts.length; pi++) {
+                                if (b.length() > 0) b.append(' ');
+                                b.append(parts[pi]);
+                            }
+                            remainder = b.toString().trim();
+                        }
                     }
                 }
-                if (middle.contains("(")) {
-                    int parenIdx = middle.indexOf('(');
-                    optionNo = middle.substring(parenIdx).replaceAll("[()]", "").trim();
-                } else if (middle.matches(".*\\b[0-9A-Z]{3,}\\b.*")) {
-                    Matcher opt = Pattern.compile("\\b([0-9A-Z]{3,})\\b").matcher(middle);
-                    if (opt.find()) optionNo = opt.group(1).trim();
+
+                if (!remainder.isBlank()) {
+                    Matcher optTail = optionNoTailPat.matcher(remainder);
+                    if (optTail.find()) {
+                        optionNo = (optTail.group(1).trim() + " (" + optTail.group(2).trim() + ")").trim();
+                        colour = remainder.substring(0, optTail.start()).replaceAll("\\s+", " ").trim();
+                    } else {
+                        Matcher gaTail = trailingGaPat.matcher(remainder);
+                        if (gaTail.find()) {
+                            colour = nvl(gaTail.group(1)).replaceAll("\\s+", " ").trim();
+                            graphicalAppearance = nvl(gaTail.group(2)).replaceAll("\\s+", " ").trim();
+                        } else {
+                            // If we only have the colour token(s) in remainder.
+                            colour = remainder.replaceAll("\\s+", " ").trim();
+                        }
+                    }
+                }
+
+                // If colour got polluted by header/table concatenation (e.g. "Colour Option No 001 ..."),
+                // re-extract colour by locating the specific row signature in the full middle string.
+                // This is a defensive fix for OCR layouts where multiple rows collapse into one logical line.
+                if (!optionNo.isBlank()) {
+                    String lowColour = nvl(colour).toLowerCase(Locale.ROOT);
+                    boolean looksPolluted = lowColour.startsWith("colour") || lowColour.contains("article no") || lowColour.matches(".*\\b\\d{3}\\b.*");
+                    if (looksPolluted) {
+                        String midAll = nvl(pendingMiddle).replaceAll("\\s+", " ").trim();
+                        if (!midAll.isBlank()) {
+                            String a = Pattern.quote(nvl(pendingArticleNo).trim());
+                            String h = Pattern.quote(nvl(pendingHmColourCode).trim());
+                            String ptn = Pattern.quote(nvl(ptArticleNumber).trim());
+                            String opt = Pattern.quote(nvl(optionNo).trim());
+                            Pattern rowSig = Pattern.compile("\\b" + a + "\\s+" + h + "\\s+" + ptn + "\\s+(.*?)\\s+" + opt + "\\b");
+                            Matcher rm = rowSig.matcher(midAll);
+                            if (rm.find()) {
+                                String c = nvl(rm.group(1)).replaceAll("\\s+", " ").trim();
+                                if (!c.isBlank()) {
+                                    colour = c;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Prefer the labelled values when present (stable on H&M docs).
+                if (!lastColourNameFromLabel.isBlank()) {
+                    colour = lastColourNameFromLabel.trim();
+                }
+                if (!lastGraphicalFromLabel.isBlank()) {
+                    graphicalAppearance = lastGraphicalFromLabel.trim();
                 }
 
                 Map<String, String> row = new LinkedHashMap<>();
@@ -7880,17 +8178,20 @@ public class OcrNewService {
                 row.put("hmColourCode", pendingHmColourCode);
                 row.put("ptArticleNumber", ptArticleNumber);
                 row.put("colour", colour);
+                row.put("graphicalAppearance", graphicalAppearance);
                 row.put("optionNo", optionNo);
                 row.put("cost", cost);
                 row.put("qtyArticle", qtyArticle);
                 out.add(row);
                 log.info("[PO-QTY-ARTICLE] Extracted row: {} | {} | {} | {} | {} | {} | {}",
-                        pendingArticleNo, pendingHmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle);
+                        pendingArticleNo, pendingHmColourCode, ptArticleNumber, colour, (optionNo.isBlank() ? graphicalAppearance : optionNo), cost, qtyArticle);
 
                 pendingArticleNo = "";
                 pendingHmColourCode = "";
                 pendingMiddle = "";
                 lastColourLine = "";
+                lastColourNameFromLabel = "";
+                lastGraphicalFromLabel = "";
                 continue;
             }
 
@@ -7913,8 +8214,10 @@ public class OcrNewService {
             stripper.setSortByPosition(true);
 
             Pattern articlePrefixPat = Pattern.compile("^(\\d{3})\\s+(\\d{2}-\\d{3})\\s+(\\d{2})\\s+(.*)$");
-            Pattern optionPat = Pattern.compile("\\b([0-9A-Z]{3,})\\s*\\((V\\d+)\\)");
+            Pattern articlePrefixOnlyPat = Pattern.compile("^\\d{3}\\s+\\d{2}-\\d{3}\\s+\\d{2}\\b.*$");
             Pattern costQtyPat = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s+([A-Z]{3})\\s+([\\d\\s]+)$");
+            Pattern optionNoPat = Pattern.compile("\\b([0-9A-Z]{3,})\\s*\\((V\\d+)\\)\\s*$");
+            Pattern trailingGaPat = Pattern.compile("^(.*?)(?:\\s+)(All\\s+over\\s+pattern|Solid|Placement\\s+print|Stripe|Check)\\s*$", Pattern.CASE_INSENSITIVE);
 
             int pageCount = doc.getNumberOfPages();
             for (int page = 1; page <= pageCount; page++) {
@@ -7934,6 +8237,7 @@ public class OcrNewService {
                 }
                 if (headerIdx < 0) continue;
 
+                String pendingPrefixLine = "";
                 for (int i = headerIdx + 1; i < Math.min(lines.length, headerIdx + 200); i++) {
                     String raw = lines[i];
                     if (raw == null) continue;
@@ -7947,9 +8251,27 @@ public class OcrNewService {
                     if (low.contains("article no") || low.contains("colour code") || low.contains("qty/article") || low.contains("cost")) {
                         continue;
                     }
-                    if (!line.matches("^\\d{3}\\b.*") || !costQtyPat.matcher(line).find()) {
+
+                    // Some PDFs split the row into two lines:
+                    // - line A: "001 12-220 02 White Dusty Light 1GPOO (V2)"
+                    // - line B: "5.34 USD 9 554"
+                    boolean isPrefixOnly = articlePrefixOnlyPat.matcher(line).matches() && !costQtyPat.matcher(line).find();
+                    if (isPrefixOnly) {
+                        pendingPrefixLine = line;
                         continue;
                     }
+
+                    boolean hasCostQty = costQtyPat.matcher(line).find();
+                    boolean isFullRow = line.matches("^\\d{3}\\b.*") && hasCostQty;
+                    if (!isFullRow && hasCostQty && !pendingPrefixLine.isBlank()) {
+                        // Combine two-line format
+                        line = (pendingPrefixLine + " " + line).replaceAll("\\s+", " ").trim();
+                        low = line.toLowerCase(Locale.ROOT);
+                        pendingPrefixLine = "";
+                        isFullRow = line.matches("^\\d{3}\\b.*") && costQtyPat.matcher(line).find();
+                    }
+
+                    if (!isFullRow) continue;
 
                     Matcher cq = costQtyPat.matcher(line);
                     if (!cq.find()) continue;
@@ -7967,13 +8289,24 @@ public class OcrNewService {
                     String remainder = prefixM.group(4) == null ? "" : prefixM.group(4).trim();
 
                     String colour = "";
+                    String graphicalAppearance = "";
                     String optionNo = "";
-                    Matcher optM = optionPat.matcher(remainder);
+                    String rem = remainder.replaceAll("\\s+", " ").trim();
+
+                    // Some templates have an explicit Option No column like: "White Dusty Light 1GPOO (V2)".
+                    // Prefer capturing that into optionNo; otherwise treat tail tokens as GraphicalAppearance.
+                    Matcher optM = optionNoPat.matcher(rem);
                     if (optM.find()) {
                         optionNo = (optM.group(1).trim() + " (" + optM.group(2).trim() + ")").trim();
-                        colour = remainder.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
+                        colour = rem.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
                     } else {
-                        colour = remainder.replaceAll("\\s+", " ").trim();
+                        Matcher gaM = trailingGaPat.matcher(rem);
+                        if (gaM.find()) {
+                            colour = nvl(gaM.group(1)).replaceAll("\\s+", " ").trim();
+                            graphicalAppearance = nvl(gaM.group(2)).replaceAll("\\s+", " ").trim();
+                        } else {
+                            colour = rem;
+                        }
                     }
 
                     Map<String, String> row = new LinkedHashMap<>();
@@ -7982,6 +8315,7 @@ public class OcrNewService {
                     row.put("hmColourCode", hmColourCode);
                     row.put("ptArticleNumber", ptArticleNumber);
                     row.put("colour", colour);
+                    row.put("graphicalAppearance", graphicalAppearance);
                     row.put("optionNo", optionNo);
                     row.put("cost", cost);
                     row.put("qtyArticle", qtyArticle);

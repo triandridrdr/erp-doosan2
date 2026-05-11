@@ -47,7 +47,7 @@ public class OcrNewDocumentAnalysisResponse {
 
     /**
      * Purchase Order: Quantity per Article table
-     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, optionNo, cost, qtyArticle
+     * Columns: articleNo, hmColourCode, ptArticleNumber, colour, (optionNo | graphicalAppearance), cost, qtyArticle
      */
     private List<Map<String, String>> purchaseOrderQuantityPerArticle;
 

@@ -959,7 +959,15 @@ useEffect(() => {
                     onClick={() => {
                       setQuantityPerArticleRows((prev) => [
                         ...(prev ?? []),
-                        { articleNo: '', hmColourCode: '', ptArticleNumber: '', colour: '', optionNo: '', cost: '', qtyArticle: '' },
+                        {
+                          articleNo: '',
+                          hmColourCode: '',
+                          ptArticleNumber: '',
+                          colour: '',
+                          graphicalAppearance: '',
+                          cost: '',
+                          qtyArticle: '',
+                        },
                       ]);
                     }}
                   >
@@ -975,7 +983,7 @@ useEffect(() => {
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                      <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>GraphicalAppearance</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                       <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -998,7 +1006,7 @@ useEffect(() => {
                             <Input value={row.colour ?? ''} onChange={() => {}} disabled />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
-                            <Input value={row.optionNo ?? ''} onChange={() => {}} disabled />
+                            <Input value={row.graphicalAppearance ?? ''} onChange={() => {}} disabled />
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input value={row.cost ?? ''} onChange={() => {}} disabled />
@@ -1201,7 +1209,7 @@ useEffect(() => {
                           hmColourCode: '',
                           ptArticleNumber: '',
                           colour: '',
-                          optionNo: '',
+                          graphicalAppearance: '',
                           cost: '',
                           qtyArticle: '',
                         },
@@ -1284,13 +1292,13 @@ useEffect(() => {
                           </td>
                           <td className='px-3 py-2 border-b border-gray-100'>
                             <Input
-                              value={row.optionNo ?? ''}
+                              value={row.graphicalAppearance ?? ''}
                               onChange={(e) => {
                                 const v = e.target.value;
                                 const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
                                 const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
                                 setQuantityPerArticleRows((prev) =>
-                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                  (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, graphicalAppearance: v } : x))
                                 );
                               }}
                             />
@@ -1495,7 +1503,7 @@ useEffect(() => {
                             hmColourCode: '',
                             ptArticleNumber: '',
                             colour: '',
-                            optionNo: '',
+                            graphicalAppearance: '',
                             cost: '',
                             qtyArticle: '',
                           },
@@ -1514,7 +1522,7 @@ useEffect(() => {
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>H&M Colour Code</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PT Article Number</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Colour</th>
-                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Option No</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>GraphicalAppearance</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Cost</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty/Article</th>
                         <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -1578,13 +1586,13 @@ useEffect(() => {
                             </td>
                             <td className='px-3 py-2 border-b border-gray-100'>
                               <Input
-                                value={row.optionNo ?? ''}
+                                value={row.graphicalAppearance ?? ''}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   const originalIdx = (quantityPerArticleRows ?? []).findIndex((x) => x === row);
                                   const idxToUpdate = originalIdx >= 0 ? originalIdx : rIdx;
                                   setQuantityPerArticleRows((prev) =>
-                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, optionNo: v } : x))
+                                    (prev ?? []).map((x, i) => (i === idxToUpdate ? { ...x, graphicalAppearance: v } : x))
                                   );
                                 }}
                               />
