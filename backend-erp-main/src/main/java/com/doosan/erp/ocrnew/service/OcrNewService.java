@@ -291,6 +291,134 @@ public class OcrNewService {
         return out;
     }
 
+    private static List<Map<String, String>> extractPurchaseOrderTimeOfDeliveryFromPdfBytes(byte[] pdfBytes, String fileName) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            if (doc.getNumberOfPages() <= 0) return out;
+
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            stripper.setStartPage(1);
+            stripper.setEndPage(1);
+            String pageText = stripper.getText(doc);
+            if (pageText == null || pageText.isBlank()) return out;
+
+            String[] lines = pageText.split("\\r?\\n");
+            boolean inTod = false;
+
+            Pattern qtyPercentPat = Pattern.compile("(\\d[\\d\\s]{0,15})\\s+(\\d+%|<\\d+%)\\s*$");
+
+            final String[] currentDate = new String[]{null};
+            final StringBuilder planBuf = new StringBuilder();
+            final String[] quantity = new String[]{""};
+            final String[] percentTotalQty = new String[]{""};
+
+            final Runnable flush = () -> {
+                if (currentDate[0] == null) return;
+                String planning = planBuf.toString()
+                        .replaceAll("\\s+", " ")
+                        .replaceAll("\\s*,\\s*", ", ")
+                        .trim();
+                if (!planning.isBlank() || (!quantity[0].isBlank() && !percentTotalQty[0].isBlank())) {
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("timeOfDelivery", currentDate[0]);
+                    row.put("planningMarkets", planning);
+                    row.put("quantity", nvl(quantity[0]).trim());
+                    row.put("percentTotalQty", nvl(percentTotalQty[0]).trim());
+                    row.put("_src", "pdfText");
+                    out.add(row);
+                }
+                currentDate[0] = null;
+                planBuf.setLength(0);
+                quantity[0] = "";
+                percentTotalQty[0] = "";
+            };
+
+            for (String raw : lines) {
+                if (raw == null) continue;
+                String s = raw.trim();
+                if (s.isBlank()) continue;
+                String low = s.toLowerCase(Locale.ROOT);
+
+                if (!inTod) {
+                    if (low.contains("time of delivery")) {
+                        inTod = true;
+                    }
+                    continue;
+                }
+
+                if (low.contains("quantity per artic") || low.contains("article no") || low.contains("total quantity") || low.startsWith("total:")) {
+                    break;
+                }
+
+                Matcher dm = DATE_PATTERN.matcher(s);
+                boolean hasDate = dm.find() && dm.start() == 0;
+                if (hasDate) {
+                    // Finish previous row if any
+                    flush.run();
+
+                    currentDate[0] = dm.group(0).trim();
+                    planBuf.setLength(0);
+                    quantity[0] = "";
+                    percentTotalQty[0] = "";
+
+                    String tail = s.substring(dm.end()).trim();
+                    if (!tail.isBlank()) {
+                        Matcher mqp = qtyPercentPat.matcher(tail);
+                        if (mqp.find()) {
+                            String planPart = tail.substring(0, mqp.start()).trim();
+                            if (!planPart.isBlank()) {
+                                planBuf.append(planPart);
+                            }
+                            quantity[0] = mqp.group(1).replaceAll("\\s+", " ").trim();
+                            percentTotalQty[0] = mqp.group(2).trim();
+                            // Row fully contained in one line
+                            flush.run();
+                        } else {
+                            planBuf.append(tail);
+                        }
+                    }
+                    continue;
+                }
+
+                if (currentDate[0] == null) continue;
+                if (low.contains("planning markets") || low.equals("quantity") || low.contains("% total")) continue;
+
+                Matcher mqp = qtyPercentPat.matcher(s);
+                if (mqp.find()) {
+                    String planPart = s.substring(0, mqp.start()).trim();
+                    if (!planPart.isBlank()) {
+                        if (planBuf.length() > 0) planBuf.append(" ");
+                        planBuf.append(planPart);
+                    }
+                    if (quantity[0].isBlank()) {
+                        quantity[0] = mqp.group(1).replaceAll("\\s+", " ").trim();
+                    }
+                    if (percentTotalQty[0].isBlank()) {
+                        percentTotalQty[0] = mqp.group(2).trim();
+                    }
+                    flush.run();
+                    continue;
+                }
+
+                if (planBuf.length() > 0) planBuf.append(" ");
+                planBuf.append(s);
+            }
+
+            flush.run();
+
+            if (!out.isEmpty()) {
+                log.info("[PO-TIME-DELIVERY][PDFBOX] file={} extractedRows={}", fileName, out.size());
+            }
+        } catch (Exception ex) {
+            log.warn("[PO-TIME-DELIVERY][PDFBOX] file={} failed: {}", fileName, ex.getMessage());
+        }
+
+        return out;
+    }
+
     private static List<Map<String, String>> extractSalesSampleTermsByPageFromPdfBytes(byte[] pdfBytes) {
         List<Map<String, String>> out = new ArrayList<>();
         if (pdfBytes == null || pdfBytes.length == 0) return out;
@@ -4768,11 +4896,20 @@ public class OcrNewService {
             }
 
             // ── Purchase Order specific extractions ────────────────────────────
-            List<Map<String, String>> poTimeOfDelivery = extractPurchaseOrderTimeOfDelivery(allLines);
-            if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty() && pageImages != null && !pageImages.isEmpty()) {
+            boolean poTodFromPdfText = false;
+            List<Map<String, String>> poTimeOfDelivery = List.of();
+            if (isPdf(file)) {
+                poTimeOfDelivery = extractPurchaseOrderTimeOfDeliveryFromPdfBytes(fileBytes, fname);
+                poTodFromPdfText = poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty();
+            }
+            if (poTimeOfDelivery == null || poTimeOfDelivery.isEmpty()) {
+                poTimeOfDelivery = extractPurchaseOrderTimeOfDelivery(allLines);
+            }
+            // Only run fill-missing heuristics when the main extractor was OCR-based.
+            if (!poTodFromPdfText && isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty() && pageImages != null && !pageImages.isEmpty()) {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromRegionOcr(poTimeOfDelivery, allLines, pageImages.get(0), ocrEngine, fname);
             }
-            if (isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
+            if (!poTodFromPdfText && isPdf(file) && poTimeOfDelivery != null && !poTimeOfDelivery.isEmpty()) {
                 fillMissingPurchaseOrderTimeOfDeliveryPlanningMarketsFromPdfBytes(poTimeOfDelivery, fileBytes, fname);
             }
 
