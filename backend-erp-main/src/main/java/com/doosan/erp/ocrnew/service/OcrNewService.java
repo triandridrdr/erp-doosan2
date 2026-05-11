@@ -4686,7 +4686,24 @@ public class OcrNewService {
 
             List<OcrNewKeyValuePairDto> pairs = keyValueParser.parseKeyValuePairs(allLines);
             Map<String, String> formFields = keyValueParser.toFieldMap(pairs);
+
+            if (isPdf(file)) {
+                Map<String, String> pdfHeaderFields = extractPurchaseOrderHeaderFieldsFromPdfBytes(fileBytes);
+                if (pdfHeaderFields != null && !pdfHeaderFields.isEmpty()) {
+                    for (Map.Entry<String, String> en : pdfHeaderFields.entrySet()) {
+                        String k = en.getKey();
+                        String v = nvl(en.getValue()).trim();
+                        if (k == null || k.isBlank() || v.isBlank()) continue;
+                        String cur = nvl(formFields.get(k)).trim();
+                        if (cur.isBlank()) {
+                            formFields.put(k, v);
+                        }
+                    }
+                }
+            }
+
             enrichDeliveryFields(formFields, allLines);
+            enrichPurchaseOrderHeaderFields(formFields, allLines);
             List<OcrNewTableDto> tables;
             if (useHocr) {
                 rawLinesForTables.sort(Comparator
@@ -6741,6 +6758,192 @@ public class OcrNewService {
                 formFields.put("Time of Delivery", timeValue);
             }
         }
+    }
+
+    static void enrichPurchaseOrderHeaderFields(Map<String, String> formFields, List<OcrNewLine> allLines) {
+        if (formFields == null || allLines == null || allLines.isEmpty()) return;
+
+        java.util.function.Function<String, String> get = (String k) -> {
+            if (k == null) return "";
+            String v = formFields.get(k);
+            return v == null ? "" : v.toString().trim();
+        };
+        java.util.function.BiConsumer<String, String> putIfBlank = (String k, String v) -> {
+            if (k == null || v == null) return;
+            String cur = get.apply(k);
+            String tv = v.trim();
+            if (cur.isBlank() && !tv.isBlank()) {
+                formFields.put(k, tv);
+            }
+        };
+
+        // 1) Customer Group
+        {
+            String cg = get.apply("Customs Customer Group");
+            if (cg.isBlank()) cg = get.apply("Customer Group");
+            if (cg.isBlank()) {
+                // Try to salvage from any key that looks like customer group
+                for (Map.Entry<String, String> en : formFields.entrySet()) {
+                    String k = nvl(en.getKey());
+                    String v = nvl(en.getValue()).trim();
+                    if (v.isBlank()) continue;
+                    String lowK = k.toLowerCase(Locale.ROOT);
+                    if (lowK.contains("customer") && lowK.contains("group")) {
+                        cg = v;
+                        break;
+                    }
+                }
+            }
+            if (cg.isBlank()) {
+                // OCR fallback: find label and read the value to the right in the same row
+                String recovered = extractValueRightOfLabel(allLines,
+                        (t) -> t.contains("customer") && t.contains("group"),
+                        (t) -> !t.contains("customer") && !t.contains("group"));
+                cg = recovered;
+            }
+
+            if (cg.isBlank()) {
+                // Common OCR miss: label "Customs Customer Group" isn't detected at all,
+                // but the value (e.g. "Women") is placed at the far-right of the "Supplier Name" row.
+                String recovered = extractValueRightOfLabel(allLines,
+                        (t) -> t.contains("supplier") && t.contains("name"),
+                        (t) -> true);
+                cg = recovered;
+            }
+            putIfBlank.accept("Customs Customer Group", cg);
+            putIfBlank.accept("Customer Group", cg);
+        }
+
+        // 2) Country of Origin
+        {
+            String coo = get.apply("Country of Origin");
+            if (coo.isBlank()) {
+                // Some OCR output splits "Country of Ori" + "gin: Mainland China" and the parser stores key "gin".
+                String gin = get.apply("gin");
+                if (!gin.isBlank()) {
+                    coo = gin;
+                }
+            }
+            if (coo.isBlank()) {
+                // Also try any key that looks like country of origin
+                for (Map.Entry<String, String> en : formFields.entrySet()) {
+                    String k = nvl(en.getKey());
+                    String v = nvl(en.getValue()).trim();
+                    if (v.isBlank()) continue;
+                    String lowK = k.toLowerCase(Locale.ROOT);
+                    if (lowK.contains("country") && lowK.contains("origin")) {
+                        coo = v;
+                        break;
+                    }
+                }
+            }
+            if (coo.isBlank()) {
+                String recovered = extractValueRightOfLabel(allLines,
+                        (t) -> t.contains("country") && t.contains("ori"),
+                        (t) -> true);
+                // strip possible "gin:" prefix if the OCR merged label tail
+                coo = nvl(recovered).replaceFirst("(?i)^gin\\s*:\\s*", "").trim();
+            }
+            putIfBlank.accept("Country of Origin", coo);
+        }
+
+        // 3) No of Pieces
+        {
+            String nop = get.apply("No of Pieces");
+            if (nop.isBlank()) nop = get.apply("No Pieces");
+            if (nop.isBlank()) {
+                String recovered = extractValueRightOfLabel(allLines,
+                        (t) -> t.contains("no") && t.contains("pieces"),
+                        (t) -> true);
+                nop = recovered;
+            }
+            // keep only numeric-ish content if the OCR includes noise
+            if (nop != null) {
+                String cleaned = nop.replaceAll("[^0-9]", "").trim();
+                if (!cleaned.isBlank()) nop = cleaned;
+            }
+            putIfBlank.accept("No of Pieces", nop);
+        }
+    }
+
+    private static String extractValueRightOfLabel(
+            List<OcrNewLine> allLines,
+            java.util.function.Predicate<String> isLabel,
+            java.util.function.Predicate<String> isValueCandidate
+    ) {
+        if (allLines == null || allLines.isEmpty()) return "";
+
+        OcrNewLine label = null;
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            String low = t.toLowerCase(Locale.ROOT);
+            if (isLabel.test(low)) {
+                label = l;
+                break;
+            }
+        }
+        if (label == null) return "";
+
+        int page = label.getPage();
+        int top = label.getTop();
+        int right = label.getRight();
+        int bestDx = Integer.MAX_VALUE;
+        String best = "";
+
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            if (l.getPage() != page) continue;
+            // same row band
+            if (Math.abs(l.getTop() - top) > 14) continue;
+            if (l.getLeft() <= right + 5) continue;
+
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+            String low = t.toLowerCase(Locale.ROOT);
+            if (!isValueCandidate.test(low)) continue;
+
+            int dx = l.getLeft() - right;
+            if (dx < bestDx) {
+                bestDx = dx;
+                best = t;
+            }
+        }
+        return best == null ? "" : best.trim();
+    }
+
+    private static Map<String, String> extractPurchaseOrderHeaderFieldsFromPdfBytes(byte[] pdfBytes) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (pdfBytes == null || pdfBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            if (doc.getNumberOfPages() <= 0) return out;
+
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            stripper.setStartPage(1);
+            stripper.setEndPage(1);
+            String text = nvl(stripper.getText(doc));
+            if (text.isBlank()) return out;
+
+            // Keep patterns narrow to avoid accidentally matching other sections.
+            Matcher mCg = Pattern.compile("(?is)\\bCustoms\\s+Customer\\s+Group\\s*:\\s*([^\\r\\n]+)").matcher(text);
+            if (mCg.find()) {
+                String v = nvl(mCg.group(1)).trim();
+                if (!v.isBlank()) out.put("Customs Customer Group", v);
+            }
+
+            Matcher mPieces = Pattern.compile("(?is)\\bNo\\s+of\\s+Pieces\\s*:\\s*([0-9]{1,9})").matcher(text);
+            if (mPieces.find()) {
+                String v = nvl(mPieces.group(1)).trim();
+                if (!v.isBlank()) out.put("No of Pieces", v);
+            }
+        } catch (Exception ignore) {
+            // ignore
+        }
+
+        return out;
     }
 
     /**
