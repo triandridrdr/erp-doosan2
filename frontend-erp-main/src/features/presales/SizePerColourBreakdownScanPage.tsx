@@ -149,7 +149,7 @@ export function SizePerColourBreakdownScanPage() {
             const status = st?.data?.status;
             if (status === 'SUCCEEDED' || status === 'FAILED') return st;
             if (performance.now() - started > 15 * 60 * 1000) throw new Error('OCR job timeout');
-            await new Promise((r) => setTimeout(r, 1200));
+            await new Promise((r) => setTimeout(r, 600));
           }
         };
 

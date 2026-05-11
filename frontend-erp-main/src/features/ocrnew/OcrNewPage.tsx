@@ -227,17 +227,12 @@ export function OcrNewPage() {
 
           const pollUntilDone = async () => {
             const started = performance.now();
-            let attempt = 0;
             for (;;) {
-              attempt += 1;
               const st = await ocrNewApi.getJob(jobId);
               const status = st?.data?.status;
-              const pct = st?.data?.progressPercent ?? null;
-              appendLog(`JOB_STATUS file=${f.name} jobId=${jobId} status=${status} progress=${pct}`);
-
               if (status === 'SUCCEEDED' || status === 'FAILED') return st;
               if (performance.now() - started > 15 * 60 * 1000) throw new Error('OCR job timeout');
-              await new Promise((r) => setTimeout(r, 1200));
+              await new Promise((r) => setTimeout(r, 600));
             }
           };
 

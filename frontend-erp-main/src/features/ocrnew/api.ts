@@ -2,11 +2,12 @@ import { client } from '../../api/client';
 import type { OcrNewDocumentAnalysisResponse, OcrNewJobStatusResponse } from './types';
 
 export const ocrNewApi = {
-  analyze: async (file: File) => {
+  analyze: async (file: File, opts?: { debug?: boolean }) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await client.post<OcrNewDocumentAnalysisResponse>('/api/v1/ocr-new/analyze?debug=true', formData, {
+    const debug = opts?.debug === true;
+    const response = await client.post<OcrNewDocumentAnalysisResponse>(`/api/v1/ocr-new/analyze?debug=${debug ? 'true' : 'false'}` , formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -15,12 +16,14 @@ export const ocrNewApi = {
     return response.data;
   },
 
-  submitJob: async (file: File) => {
+  submitJob: async (file: File, opts?: { debug?: boolean }) => {
     const formData = new FormData();
     formData.append('file', file);
 
+    const debug = opts?.debug === true;
+
     const response = await client.post<{ success: boolean; data: string; message: string; timestamp: string }>(
-      '/api/v1/ocr-new/jobs?debug=true',
+      `/api/v1/ocr-new/jobs?debug=${debug ? 'true' : 'false'}`,
       formData,
       {
         headers: {
