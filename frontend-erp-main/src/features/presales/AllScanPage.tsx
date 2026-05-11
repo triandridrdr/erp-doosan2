@@ -140,7 +140,14 @@ export function AllScanPage() {
   const [miscellaneousTableRows, setMiscellaneousTableRows] = useState<string[][]>([]);
 
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<
-    Array<{ country: string; countryOfDestination?: string; pmCode: string; total: string; editable: boolean }>
+    Array<{
+      country: string;
+      countryOfDestination?: string;
+      pmCode: string;
+      total: string;
+      editable: boolean;
+      [k: string]: any;
+    }>
   >([]);
 
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<
@@ -385,11 +392,14 @@ export function AllScanPage() {
       const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
       const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
       const kTotal = findKey(['total', 'tot']) ?? 'total';
+      const fixed = new Set([kCountry.toLowerCase(), kPm.toLowerCase(), kTotal.toLowerCase(), 'page', 'editable']);
+      const articleKeys = keys.filter((k) => !fixed.has(k.toLowerCase()));
       const out = (rows2b as any[]).map((m) => ({
         country: toVal(m, kCountry),
         countryOfDestination: '',
         pmCode: toVal(m, kPm),
         total: toVal(m, kTotal),
+        ...Object.fromEntries(articleKeys.map((k) => [k, toVal(m, k)])),
         editable: true,
       }));
       setCountryBreakdownDraftRows(out);
@@ -593,14 +603,23 @@ export function AllScanPage() {
     };
 
     const curFile = results[activeFileIndex]?.fileName ?? '';
-    if (isTcbName(curFile) && (data?.totalCountryBreakdown ?? []).length > 0) {
+    if ((data?.totalCountryBreakdown ?? []).length > 0) {
       return { fileName: curFile, rows: data?.totalCountryBreakdown ?? [] };
     }
 
-    const tcb = results.find((r) => isTcbName(r.fileName ?? '') && (r?.data?.totalCountryBreakdown ?? []).length > 0);
+    const tcb = results.find((r) => (r?.data?.totalCountryBreakdown ?? []).length > 0);
     if (!tcb) return null;
     return { fileName: tcb.fileName ?? '', rows: tcb?.data?.totalCountryBreakdown ?? [] };
   }, [data, results, activeFileIndex]);
+
+  const countryBreakdownArticleKeys = useMemo(() => {
+    const rows = backendCountryBreakdown?.rows ?? [];
+    if (!Array.isArray(rows) || rows.length === 0) return [] as string[];
+    const keys = Object.keys(rows[0] ?? {});
+    const low = (s: string) => (s ?? '').toString().toLowerCase();
+    const fixed = new Set(['country', 'destinationcountry', 'countryofdestination', 'pmcode', 'pm', 'pm_code', 'total', 'tot', 'page', 'editable']);
+    return keys.filter((k) => !fixed.has(low(k)));
+  }, [backendCountryBreakdown]);
 
   const bomProdUnitsNoDetails = useMemo(() => {
     const rows = bomProdUnitsRows ?? [];
@@ -721,11 +740,14 @@ export function AllScanPage() {
     const kCountry = findKey(['country', 'destinationcountry', 'countryofdestination']) ?? 'country';
     const kPm = findKey(['pmcode', 'pm', 'pm_code']) ?? 'pmCode';
     const kTotal = findKey(['total', 'tot']) ?? 'total';
+    const fixed = new Set([kCountry.toLowerCase(), kPm.toLowerCase(), kTotal.toLowerCase(), 'page', 'editable']);
+    const articleKeys = keys.filter((k) => !fixed.has(k.toLowerCase()));
     const rows = backendCountryBreakdown.rows.map((m) => ({
       country: toVal(m, kCountry),
       countryOfDestination: '',
       pmCode: toVal(m, kPm),
       total: toVal(m, kTotal),
+      ...Object.fromEntries(articleKeys.map((k) => [k, toVal(m, k)])),
       editable: true,
     }));
     setCountryBreakdownDraftRows(rows);
@@ -2737,7 +2759,17 @@ export function AllScanPage() {
             variant='primary'
             disabled={!data || !backendCountryBreakdown}
             onClick={() => {
-              setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', countryOfDestination: '', total: '', editable: true }]);
+              setCountryBreakdownDraftRows((prev) => [
+                ...prev,
+                {
+                  country: '',
+                  pmCode: '',
+                  countryOfDestination: '',
+                  total: '',
+                  ...Object.fromEntries((countryBreakdownArticleKeys ?? []).map((k) => [k, ''])),
+                  editable: true,
+                },
+              ]);
             }}
           >
             Add row
@@ -2757,6 +2789,14 @@ export function AllScanPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
+                    {(countryBreakdownArticleKeys ?? []).map((k) => (
+                      <th
+                        key={k}
+                        className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'
+                      >
+                        {k}
+                      </th>
+                    ))}
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -2805,6 +2845,20 @@ export function AllScanPage() {
                           style={{ textAlign: 'left' }}
                         />
                       </td>
+                      {(countryBreakdownArticleKeys ?? []).map((k) => (
+                        <td key={k} className='px-3 py-2 align-top'>
+                          <Input
+                            value={formatIdThousands((row?.[k] ?? '').toString())}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setCountryBreakdownDraftRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, [k]: normalizeDigits(v) } : r))
+                              );
+                            }}
+                            style={{ textAlign: 'left' }}
+                          />
+                        </td>
+                      ))}
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'

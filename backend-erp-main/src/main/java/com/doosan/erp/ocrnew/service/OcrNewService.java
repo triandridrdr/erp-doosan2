@@ -181,15 +181,39 @@ public class OcrNewService {
             String s = normLines.get(i).toLowerCase(Locale.ROOT);
             // Avoid over-broad triggers like "Invoice Average Price Country" that appear in other sections.
             // This fallback should only activate when the document contains the explicit Country Breakdown section.
-            if (s.contains("colour / country breakdown")
-                    || s.contains("color / country breakdown")
-                    || s.contains("country breakdown")) {
+            String s2 = s.replaceAll("\\s+", " ");
+            if (s2.contains("colour / country breakdown")
+                    || s2.contains("color / country breakdown")
+                    || s2.contains("colour/country breakdown")
+                    || s2.contains("color/country breakdown")
+                    || (s2.contains("country") && s2.contains("breakdown") && (s2.contains("colour") || s2.contains("color")))
+                    || s2.equals("country breakdown")
+                    || s2.endsWith("country breakdown")) {
                 startIdx = i;
                 break;
             }
         }
 
         if (startIdx < 0) return out;
+
+        // Try to pick up article columns from the header (e.g., "Article:001 12-220")
+        List<String> articleKeys = new ArrayList<>();
+        Pattern articlePat = Pattern.compile("(?i)\\barticle\\s*:?")
+                ;
+        Pattern articleKeyPat = Pattern.compile("(?i)\\barticle\\s*:?\\s*(\\d{3})\\b(?:\\s+(\\d{2}-\\d{3}))?");
+        for (int i = startIdx; i < Math.min(normLines.size(), startIdx + 16); i++) {
+            String line = normLines.get(i);
+            if (line == null) continue;
+            if (!articlePat.matcher(line).find()) continue;
+            Matcher m = articleKeyPat.matcher(line);
+            while (m.find()) {
+                String no = nvl(m.group(1)).trim();
+                if (no.isBlank()) continue;
+                String code = nvl(m.group(2)).trim();
+                String key = "Article:" + no + (code.isBlank() ? "" : (" " + code));
+                if (!articleKeys.contains(key)) articleKeys.add(key);
+            }
+        }
 
         // Accept codes like PM-UK, PMUK, OL-UK, OLUK, OLEEU, etc. Code is REQUIRED to avoid false positives.
         Pattern codePat = Pattern.compile("\\b(?:PM|OL)[- ]?[A-Z0-9]{2,6}\\b", Pattern.CASE_INSENSITIVE);
@@ -239,21 +263,46 @@ public class OcrNewService {
                 continue; // skip malformed code
             }
 
-            // Extract all numeric tokens; use last as total
-            List<String> nums = new ArrayList<>();
+            // Parse quantities. For multi-article docs, we expect: Total + N article columns
+            // Example OCR line: "US PM-US 6 459 2 578 2 496 1 385"
+            // We treat the numeric tail as (1 + articleCount) numbers.
+            int expectedCount = 1 + (articleKeys == null ? 0 : articleKeys.size());
+            String total = "";
+            Map<String, String> articleVals = new LinkedHashMap<>();
+
             Matcher numM = numPat.matcher(line);
-            while (numM.find()) {
-                String v = numM.group().trim();
-                if (!v.isBlank()) nums.add(v);
+            String rawTail = "";
+            if (numM.find()) {
+                rawTail = nvl(numM.group()).trim();
             }
-            if (nums.isEmpty()) continue;
-            // If last two numeric tokens are equal (ignoring group separators), keep one to avoid '1234 1234'
-            String last = nums.get(nums.size() - 1);
-            String penult = nums.size() >= 2 ? nums.get(nums.size() - 2) : null;
-            String lastN = normalizeNumberToken(last);
-            String penN = penult != null ? normalizeNumberToken(penult) : null;
-            String chosen = (penN != null && penN.equals(lastN)) ? penult : last;
-            String total = normalizeNumberToken(chosen);
+            if (rawTail.isBlank()) continue;
+
+            List<String> parts = splitMultiArticleNumbers(rawTail, expectedCount);
+            if (parts.isEmpty()) continue;
+
+            if (articleKeys != null && !articleKeys.isEmpty() && parts.size() >= expectedCount) {
+                total = nvl(parts.get(0)).trim();
+                for (int ai = 0; ai < articleKeys.size(); ai++) {
+                    String k = articleKeys.get(ai);
+                    String v = nvl(parts.get(ai + 1)).trim();
+                    articleVals.put(k, v);
+                }
+            } else {
+                // Fallback (single total column only): keep prior behavior of choosing last number
+                List<String> nums = new ArrayList<>();
+                Matcher numM2 = numPat.matcher(line);
+                while (numM2.find()) {
+                    String v = numM2.group().trim();
+                    if (!v.isBlank()) nums.add(v);
+                }
+                if (nums.isEmpty()) continue;
+                String last = nums.get(nums.size() - 1);
+                String penult = nums.size() >= 2 ? nums.get(nums.size() - 2) : null;
+                String lastN = normalizeNumberToken(last);
+                String penN = penult != null ? normalizeNumberToken(penult) : null;
+                String chosen = (penN != null && penN.equals(lastN)) ? penult : last;
+                total = normalizeNumberToken(chosen);
+            }
 
             // Country: prefer leading 2-letter token; else use token immediately before PM code if present
             String country = "";
@@ -277,6 +326,12 @@ public class OcrNewService {
             m.put("country", country);
             if (!pmCode.isBlank()) m.put("pmCode", pmCode);
             m.put("total", total);
+            if (articleVals != null && !articleVals.isEmpty()) {
+                for (Map.Entry<String, String> en : articleVals.entrySet()) {
+                    if (en == null) continue;
+                    m.put(en.getKey(), en.getValue());
+                }
+            }
 
             out.add(m);
 
@@ -288,6 +343,133 @@ public class OcrNewService {
         if (log.isDebugEnabled()) {
             log.debug("[TCB-LINES][SUMMARY] rowsParsed={}", out.size());
         }
+        return out;
+    }
+
+    private static List<Map<String, String>> deriveTotalCountryBreakdownFromSalesOrderDetail(
+            List<Map<String, String>> salesOrderDetailSizeBreakdown,
+            List<Map<String, String>> purchaseOrderQuantityPerArticle
+    ) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (salesOrderDetailSizeBreakdown == null || salesOrderDetailSizeBreakdown.isEmpty()) return out;
+
+        Map<String, String> articleToCode = new LinkedHashMap<>();
+        if (purchaseOrderQuantityPerArticle != null) {
+            for (Map<String, String> r : purchaseOrderQuantityPerArticle) {
+                if (r == null) continue;
+                String a = nvl(r.get("articleNo")).trim();
+                String c = nvl(r.get("hmColourCode")).trim();
+                if (a.isBlank()) continue;
+                if (!articleToCode.containsKey(a)) articleToCode.put(a, c);
+            }
+        }
+
+        Pattern pmPat = Pattern.compile("(?i)\\b(?:PM|OL)[- ]?[A-Z]{2,3}\\b");
+        Pattern countryPat = Pattern.compile("\\b([A-Z]{2,3})\\b\\s*\\(\\s*(?i:(?:PM|OL)[- ]?[A-Z]{2,3})\\b");
+
+        class Agg {
+            String country = "";
+            String pmCode = "";
+            Map<String, Long> byArticle = new LinkedHashMap<>();
+            long total = 0L;
+        }
+
+        Map<String, Agg> byPm = new LinkedHashMap<>();
+
+        for (Map<String, String> row : salesOrderDetailSizeBreakdown) {
+            if (row == null) continue;
+            String type = nvl(row.get("type")).trim();
+            if (!type.equalsIgnoreCase("total")) continue;
+
+            String dest = nvl(row.get("destinationCountry")).trim();
+            if (dest.isBlank()) dest = nvl(row.get("countryOfDestination")).trim();
+            if (dest.isBlank()) dest = nvl(row.get("countryOfDestinationText")).trim();
+
+            String pmCode = "";
+            Matcher pmM = pmPat.matcher(dest);
+            if (pmM.find()) {
+                pmCode = pmM.group().toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+                if (!pmCode.contains("-") && pmCode.length() >= 4) {
+                    pmCode = pmCode.substring(0, 2) + "-" + pmCode.substring(2);
+                }
+            }
+            if (pmCode.isBlank()) {
+                pmCode = nvl(row.get("pmCode")).trim();
+            }
+            if (pmCode.isBlank()) continue;
+
+            String country = "";
+            Matcher cM = countryPat.matcher(dest);
+            if (cM.find()) {
+                country = nvl(cM.group(1)).trim();
+            }
+            if (country.isBlank()) {
+                country = nvl(row.get("country")).trim();
+            }
+            if (country.isBlank()) {
+                // Fallback: use suffix of PM code (PM-US -> US)
+                country = pmCode.replaceFirst("(?i)^(PM|OL)-?", "");
+            }
+
+            String articleNo = nvl(row.get("articleNo")).trim();
+
+            long qty = 0L;
+            String rawTotal = nvl(row.get("total")).trim();
+            String normTotal = normalizeNumberToken(rawTotal);
+            if (!normTotal.isBlank()) {
+                try {
+                    qty = Long.parseLong(normTotal);
+                } catch (Exception ignored) {
+                }
+            }
+            if (qty <= 0) {
+                // Fallback: sum size keys
+                long sum = 0L;
+                for (String k : List.of("XS", "S", "M", "L", "XL")) {
+                    String v = normalizeNumberToken(nvl(row.get(k)).trim());
+                    if (v.isBlank()) continue;
+                    try {
+                        sum += Long.parseLong(v);
+                    } catch (Exception ignored) {
+                    }
+                }
+                qty = sum;
+            }
+
+            Agg agg = byPm.computeIfAbsent(pmCode, k -> new Agg());
+            if (agg.pmCode.isBlank()) agg.pmCode = pmCode;
+            if (agg.country.isBlank()) agg.country = country;
+
+            agg.total += Math.max(0L, qty);
+            if (!articleNo.isBlank()) {
+                agg.byArticle.put(articleNo, agg.byArticle.getOrDefault(articleNo, 0L) + Math.max(0L, qty));
+            }
+        }
+
+        if (byPm.isEmpty()) return out;
+
+        // Determine article order from QPA first, then from aggregated keys
+        List<String> articleOrder = new ArrayList<>(articleToCode.keySet());
+        for (Agg a : byPm.values()) {
+            for (String art : a.byArticle.keySet()) {
+                if (!articleOrder.contains(art)) articleOrder.add(art);
+            }
+        }
+
+        for (Agg a : byPm.values()) {
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("country", nvl(a.country));
+            m.put("pmCode", nvl(a.pmCode));
+            m.put("total", a.total <= 0 ? "" : Long.toString(a.total));
+            for (String art : articleOrder) {
+                String code = nvl(articleToCode.get(art)).trim();
+                String key = "Article:" + art + (code.isBlank() ? "" : (" " + code));
+                Long v = a.byArticle.get(art);
+                m.put(key, v == null || v <= 0 ? "" : Long.toString(v));
+            }
+            out.add(m);
+        }
+
         return out;
     }
 
@@ -5264,15 +5446,22 @@ public class OcrNewService {
             fillMissingPurchaseOrderQuantityPerArticleColour(poQuantityPerArticle, allLines);
             normalizePurchaseOrderQuantityPerArticleGraphicalAppearance(poQuantityPerArticle);
 
-            // IMPORTANT: Use the global extractor to keep the proven-valid pairing logic
-            // (price-only line + country-only line, multi-country lists, etc.).
-            // Then annotate each extracted row with a best-effort page number so the frontend
-            // can still filter by active page.
-            List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
-            List<Map<String, String>> poInvoiceAvgPrice = null;
-            if (isPdf(file)) {
-                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(fileBytes);
+            // Fallback: derive from the already-parsed sales order detail size breakdown (per destination country)
+            if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) {
+                totalCountryBreakdown = deriveTotalCountryBreakdownFromSalesOrderDetail(salesOrderDetailSizeBreakdown, poQuantityPerArticle);
+                if (effectiveDebug) {
+                    log.info("[TCB][DERIVE] derivedRows={} detailRows={} qpaRows={}",
+                            totalCountryBreakdown == null ? 0 : totalCountryBreakdown.size(),
+                            salesOrderDetailSizeBreakdown == null ? 0 : salesOrderDetailSizeBreakdown.size(),
+                            poQuantityPerArticle == null ? 0 : poQuantityPerArticle.size());
+                    if (totalCountryBreakdown != null && !totalCountryBreakdown.isEmpty()) {
+                        log.info("[TCB][DERIVE] firstRow={}", totalCountryBreakdown.get(0));
+                    }
+                }
             }
+
+            List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
+            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
             }
