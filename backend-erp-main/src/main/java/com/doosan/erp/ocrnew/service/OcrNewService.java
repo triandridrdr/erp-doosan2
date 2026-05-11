@@ -353,6 +353,37 @@ public class OcrNewService {
         List<Map<String, String>> out = new ArrayList<>();
         if (salesOrderDetailSizeBreakdown == null || salesOrderDetailSizeBreakdown.isEmpty()) return out;
 
+        // Some OCR layouts merge multi-article totals into a single token like:
+        // "1 640 1 592 925" (per-article values separated only by spaces).
+        // When normalizeNumberToken() is applied directly, it becomes "16401592925".
+        // Split such sequences into number groups and choose the group matching the current article.
+        java.util.function.Function<String, List<String>> splitNumberGroups = (raw) -> {
+            if (raw == null) return List.of();
+            String s = raw.replaceAll("[^0-9]", " ").replaceAll("\\s+", " ").trim();
+            if (s.isBlank()) return List.of();
+            String[] toks = s.split(" ");
+            List<String> groups = new ArrayList<>();
+            StringBuilder cur = new StringBuilder();
+            for (String t : toks) {
+                if (t == null || t.isBlank()) continue;
+                // Continue a group when the next token looks like a thousands chunk (3 digits)
+                // and the group already started (e.g. 1 + 640).
+                boolean isThousandChunk = t.length() == 3;
+                boolean groupStarted = cur.length() > 0;
+                if (!groupStarted) {
+                    cur.append(t);
+                } else if (isThousandChunk) {
+                    cur.append(t);
+                } else {
+                    groups.add(cur.toString());
+                    cur.setLength(0);
+                    cur.append(t);
+                }
+            }
+            if (cur.length() > 0) groups.add(cur.toString());
+            return groups;
+        };
+
         Map<String, String> articleToCode = new LinkedHashMap<>();
         if (purchaseOrderQuantityPerArticle != null) {
             for (Map<String, String> r : purchaseOrderQuantityPerArticle) {
@@ -375,6 +406,7 @@ public class OcrNewService {
         }
 
         Map<String, Agg> byPm = new LinkedHashMap<>();
+        Map<String, List<String>> articleOrderByPm = new LinkedHashMap<>();
 
         for (Map<String, String> row : salesOrderDetailSizeBreakdown) {
             if (row == null) continue;
@@ -412,10 +444,48 @@ public class OcrNewService {
             }
 
             String articleNo = nvl(row.get("articleNo")).trim();
+            if (!articleNo.isBlank()) {
+                List<String> ord = articleOrderByPm.computeIfAbsent(pmCode, k -> new ArrayList<>());
+                if (!ord.contains(articleNo)) ord.add(articleNo);
+            }
 
             long qty = 0L;
             String rawTotal = nvl(row.get("total")).trim();
-            String normTotal = normalizeNumberToken(rawTotal);
+            String chosenTotal = rawTotal;
+            List<String> groups = splitNumberGroups.apply(rawTotal);
+            if (!articleNo.isBlank() && groups.size() > 1) {
+                // If articleNo is a simple sequence like 001/002/003, map directly to group index.
+                // This is more reliable than using a partially-built article order while iterating.
+                String artDigits = articleNo.replaceAll("[^0-9]", "");
+                if (!artDigits.isBlank()) {
+                    try {
+                        int artIdx1 = Integer.parseInt(artDigits);
+                        if (artIdx1 >= 1 && artIdx1 <= groups.size() && groups.size() <= 10) {
+                            chosenTotal = groups.get(artIdx1 - 1);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                // Otherwise: try to align groups with observed per-PM article order.
+                List<String> ord = articleOrderByPm.getOrDefault(pmCode, List.of());
+                int idx = ord.indexOf(articleNo);
+                if (idx >= 0 && !ord.isEmpty()) {
+                    if (groups.size() == ord.size()) {
+                        chosenTotal = groups.get(idx);
+                    } else if (groups.size() > ord.size()) {
+                        List<String> tail = groups.subList(groups.size() - ord.size(), groups.size());
+                        if (idx < tail.size()) chosenTotal = tail.get(idx);
+                    } else {
+                        // groups < ord.size(): pick the first group to avoid concatenation
+                        chosenTotal = groups.get(0);
+                    }
+                } else {
+                    // No index match: pick the last group (often the smallest)
+                    chosenTotal = groups.get(groups.size() - 1);
+                }
+            }
+            String normTotal = normalizeNumberToken(chosenTotal);
             if (!normTotal.isBlank()) {
                 try {
                     qty = Long.parseLong(normTotal);
@@ -4815,6 +4885,44 @@ public class OcrNewService {
                 if (!v.isBlank()) out.add(v);
             }
             return out;
+        }
+
+        // General-case grouping for layouts that merge numbers with spaces, e.g.
+        // expectedCount=3 and raw="1 640 1592 925" should become [1640, 1592, 925]
+        // (instead of normalizeNumberToken => 16401592925).
+        {
+            String digitsOnly = s.replaceAll("[^0-9]", " ").replaceAll("\\s+", " ").trim();
+            if (!digitsOnly.isBlank()) {
+                String[] dtoks = digitsOnly.split(" ");
+                List<String> groups = new ArrayList<>();
+                StringBuilder cur = new StringBuilder();
+                for (String t : dtoks) {
+                    if (t == null || t.isBlank()) continue;
+                    boolean groupStarted = cur.length() > 0;
+                    boolean isThousandChunk = t.length() == 3;
+                    if (!groupStarted) {
+                        cur.append(t);
+                    } else if (isThousandChunk && cur.length() <= 3) {
+                        // Treat 3-digit tokens as a continuation of the previous number (thousand separator)
+                        cur.append(t);
+                    } else {
+                        groups.add(cur.toString());
+                        cur.setLength(0);
+                        cur.append(t);
+                    }
+                }
+                if (cur.length() > 0) groups.add(cur.toString());
+
+                if (groups.size() == expectedCount) {
+                    out.addAll(groups);
+                    return out;
+                }
+                if (groups.size() > expectedCount && expectedCount > 1) {
+                    // If there are extra groups, take the tail (often the right-most values are per-article)
+                    out.addAll(groups.subList(groups.size() - expectedCount, groups.size()));
+                    return out;
+                }
+            }
         }
 
         // Handle thousand-separated numbers like: "2 578 2 496 1 385" for 3 articles.
