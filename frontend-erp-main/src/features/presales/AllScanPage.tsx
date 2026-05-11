@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Upload } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '../../components/ui/Button';
@@ -144,7 +144,8 @@ export function AllScanPage() {
       country: string;
       countryOfDestination?: string;
       pmCode: string;
-      total: string;
+      article: string;
+      qty: string;
       editable: boolean;
       [k: string]: any;
     }>
@@ -394,17 +395,120 @@ export function AllScanPage() {
       const kTotal = findKey(['total', 'tot']) ?? 'total';
       const fixed = new Set([kCountry.toLowerCase(), kPm.toLowerCase(), kTotal.toLowerCase(), 'page', 'editable']);
       const articleKeys = keys.filter((k) => !fixed.has(k.toLowerCase()));
-      const out = (rows2b as any[]).map((m) => ({
-        country: toVal(m, kCountry),
-        countryOfDestination: '',
-        pmCode: toVal(m, kPm),
-        total: toVal(m, kTotal),
-        ...Object.fromEntries(articleKeys.map((k) => [k, toVal(m, k)])),
-        editable: true,
-      }));
+
+      const extractArticleNoFromKey = (k: string): string => {
+        const s = (k ?? '').toString();
+        const m = s.match(/\barticle\s*[:#-]?\s*(\d{3})\b/i);
+        if (m?.[1]) return m[1];
+        const m2 = s.match(/\b(\d{3})\b/);
+        if (m2?.[1]) return m2[1];
+        return s;
+      };
+
+      const out: Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }> = [];
+      for (const m of rows2b as any[]) {
+        const country = toVal(m, kCountry);
+        const pmCode = toVal(m, kPm);
+        for (const ak of articleKeys) {
+          const article = extractArticleNoFromKey(ak);
+          const qty = toVal(m, ak);
+          // Skip completely blank article cells to reduce noise
+          if ((article ?? '').toString().trim().length === 0 && (qty ?? '').toString().trim().length === 0) continue;
+          out.push({ country, countryOfDestination: '', pmCode, article, qty, editable: true });
+        }
+      }
       setCountryBreakdownDraftRows(out);
     }
   };
+
+  const backendCountryBreakdown = useMemo(() => {
+    const isTcbName = (name: string) => {
+      const n = (name || '').toLowerCase();
+      return (
+        n.includes('totalcountrybreakdown') ||
+        n.includes('total_country_breakdown') ||
+        (n.includes('total') && n.includes('country') && n.includes('breakdown'))
+      );
+    };
+
+    const curFile = results[activeFileIndex]?.fileName ?? '';
+    if ((data?.totalCountryBreakdown ?? []).length > 0) {
+      return { fileName: curFile, rows: data?.totalCountryBreakdown ?? [] };
+    }
+
+    const tcb = results.find((r) => (r?.data?.totalCountryBreakdown ?? []).length > 0);
+    if (!tcb) return null;
+    return { fileName: tcb.fileName ?? '', rows: tcb?.data?.totalCountryBreakdown ?? [] };
+  }, [data, results, activeFileIndex]);
+
+  const countryBreakdownArticleKeys = useMemo(() => {
+    const rows = backendCountryBreakdown?.rows ?? [];
+    if (!Array.isArray(rows) || rows.length === 0) return [] as string[];
+    const keys = Object.keys(rows[0] ?? {});
+    const low = (s: string) => (s ?? '').toString().toLowerCase();
+    const fixed = new Set(['country', 'destinationcountry', 'countryofdestination', 'pmcode', 'pm', 'pm_code', 'total', 'tot', 'page', 'editable']);
+    return keys.filter((k) => !fixed.has(low(k)));
+  }, [backendCountryBreakdown]);
+
+  const buildTotalCountryBreakdownPayload = useCallback(
+    (
+      rows: Array<{
+        country: string;
+        countryOfDestination?: string;
+        pmCode: string;
+        article: string;
+        qty: string;
+      }>
+    ) => {
+      const parseArticleNo = (s: string) => {
+        const t = (s ?? '').toString().trim();
+        const m = t.match(/\b(\d{3})\b/);
+        return (m?.[1] ?? t).toString();
+      };
+
+      const articleKeyByNo = new Map<string, string>();
+      for (const k of countryBreakdownArticleKeys ?? []) {
+        const art = parseArticleNo(k);
+        if (art && !articleKeyByNo.has(art)) articleKeyByNo.set(art, k);
+      }
+
+      const normalizeDigitsLocal = (v: any) => (v ?? '').toString().replace(/[^0-9]/g, '');
+      const byGroup = new Map<string, { country: string; pmCode: string; countryOfDestination: string; byArticle: Map<string, number> }>();
+
+      for (const r of rows ?? []) {
+        const country = (r?.country ?? '').toString();
+        const pmCode = (r?.pmCode ?? '').toString();
+        const cod = (r?.countryOfDestination ?? '').toString();
+        const gk = `${country}||${pmCode}||${cod}`;
+        const agg = byGroup.get(gk) ?? { country, pmCode, countryOfDestination: cod, byArticle: new Map<string, number>() };
+        byGroup.set(gk, agg);
+
+        const art = parseArticleNo((r?.article ?? '').toString());
+        const qty = Number(normalizeDigitsLocal(r?.qty ?? ''));
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        agg.byArticle.set(art, (agg.byArticle.get(art) ?? 0) + qty);
+      }
+
+      const out: Array<Record<string, string>> = [];
+      for (const agg of byGroup.values()) {
+        const m: Record<string, string> = {
+          country: agg.country,
+          pmCode: agg.pmCode,
+          total: '0',
+        };
+        let total = 0;
+        for (const [art, qty] of agg.byArticle.entries()) {
+          total += qty;
+          const key = articleKeyByNo.get(art) ?? `Article:${art}`;
+          m[key] = String(qty);
+        }
+        m.total = String(total);
+        out.push(m);
+      }
+      return out;
+    },
+    [countryBreakdownArticleKeys]
+  );
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
     const mergedFf: Record<string, any> = {};
@@ -592,35 +696,6 @@ export function AllScanPage() {
     setSalesOrderDetailDraftRows(detailRows);
   };
 
-  const backendCountryBreakdown = useMemo(() => {
-    const isTcbName = (name: string) => {
-      const n = (name || '').toLowerCase();
-      return (
-        n.includes('totalcountrybreakdown') ||
-        n.includes('total_country_breakdown') ||
-        (n.includes('total') && n.includes('country') && n.includes('breakdown'))
-      );
-    };
-
-    const curFile = results[activeFileIndex]?.fileName ?? '';
-    if ((data?.totalCountryBreakdown ?? []).length > 0) {
-      return { fileName: curFile, rows: data?.totalCountryBreakdown ?? [] };
-    }
-
-    const tcb = results.find((r) => (r?.data?.totalCountryBreakdown ?? []).length > 0);
-    if (!tcb) return null;
-    return { fileName: tcb.fileName ?? '', rows: tcb?.data?.totalCountryBreakdown ?? [] };
-  }, [data, results, activeFileIndex]);
-
-  const countryBreakdownArticleKeys = useMemo(() => {
-    const rows = backendCountryBreakdown?.rows ?? [];
-    if (!Array.isArray(rows) || rows.length === 0) return [] as string[];
-    const keys = Object.keys(rows[0] ?? {});
-    const low = (s: string) => (s ?? '').toString().toLowerCase();
-    const fixed = new Set(['country', 'destinationcountry', 'countryofdestination', 'pmcode', 'pm', 'pm_code', 'total', 'tot', 'page', 'editable']);
-    return keys.filter((k) => !fixed.has(low(k)));
-  }, [backendCountryBreakdown]);
-
   const bomProdUnitsNoDetails = useMemo(() => {
     const rows = bomProdUnitsRows ?? [];
     if (rows.length === 0) return false;
@@ -742,14 +817,27 @@ export function AllScanPage() {
     const kTotal = findKey(['total', 'tot']) ?? 'total';
     const fixed = new Set([kCountry.toLowerCase(), kPm.toLowerCase(), kTotal.toLowerCase(), 'page', 'editable']);
     const articleKeys = keys.filter((k) => !fixed.has(k.toLowerCase()));
-    const rows = backendCountryBreakdown.rows.map((m) => ({
-      country: toVal(m, kCountry),
-      countryOfDestination: '',
-      pmCode: toVal(m, kPm),
-      total: toVal(m, kTotal),
-      ...Object.fromEntries(articleKeys.map((k) => [k, toVal(m, k)])),
-      editable: true,
-    }));
+
+    const extractArticleNoFromKey = (k: string): string => {
+      const s = (k ?? '').toString();
+      const m = s.match(/\barticle\s*[:#-]?\s*(\d{3})\b/i);
+      if (m?.[1]) return m[1];
+      const m2 = s.match(/\b(\d{3})\b/);
+      if (m2?.[1]) return m2[1];
+      return s;
+    };
+
+    const rows: Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }> = [];
+    for (const m of backendCountryBreakdown.rows) {
+      const country = toVal(m, kCountry);
+      const pmCode = toVal(m, kPm);
+      for (const ak of articleKeys) {
+        const article = extractArticleNoFromKey(ak);
+        const qty = toVal(m, ak);
+        if ((qty ?? '').toString().trim().length === 0) continue;
+        rows.push({ country, countryOfDestination: '', pmCode, article, qty, editable: true });
+      }
+    }
     setCountryBreakdownDraftRows(rows);
   }, [backendCountryBreakdown]);
 
@@ -932,7 +1020,7 @@ export function AllScanPage() {
         formFields: salesOrderHeaderDraft,
         bomDraftRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
-        totalCountryBreakdown: countryBreakdownDraftRows,
+        totalCountryBreakdown: buildTotalCountryBreakdownPayload(countryBreakdownDraftRows as any),
         section2cColourSizeBreakdown: section2cDraftRows,
         raw: data,
       };
@@ -2765,8 +2853,8 @@ export function AllScanPage() {
                   country: '',
                   pmCode: '',
                   countryOfDestination: '',
-                  total: '',
-                  ...Object.fromEntries((countryBreakdownArticleKeys ?? []).map((k) => [k, ''])),
+                  article: '',
+                  qty: '',
                   editable: true,
                 },
               ]);
@@ -2788,15 +2876,8 @@ export function AllScanPage() {
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>PM Code</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Total</th>
-                    {(countryBreakdownArticleKeys ?? []).map((k) => (
-                      <th
-                        key={k}
-                        className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'
-                      >
-                        {k}
-                      </th>
-                    ))}
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article</th>
+                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
                   </tr>
                 </thead>
@@ -2837,28 +2918,23 @@ export function AllScanPage() {
                       </td>
                       <td className='px-3 py-2 align-top'>
                         <Input
-                          value={formatIdThousands(row.total)}
+                          value={(row.article ?? '').toString()}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: normalizeDigits(v) } : r)));
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: v } : r)));
+                          }}
+                        />
+                      </td>
+                      <td className='px-3 py-2 align-top'>
+                        <Input
+                          value={formatIdThousands((row.qty ?? '').toString())}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
                           }}
                           style={{ textAlign: 'left' }}
                         />
                       </td>
-                      {(countryBreakdownArticleKeys ?? []).map((k) => (
-                        <td key={k} className='px-3 py-2 align-top'>
-                          <Input
-                            value={formatIdThousands((row?.[k] ?? '').toString())}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setCountryBreakdownDraftRows((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, [k]: normalizeDigits(v) } : r))
-                              );
-                            }}
-                            style={{ textAlign: 'left' }}
-                          />
-                        </td>
-                      ))}
                       <td className='px-3 py-2 align-top'>
                         <Button
                           type='button'
