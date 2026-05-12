@@ -312,6 +312,94 @@ public class OcrNewService {
         // Country token at start, allow 2-3 uppercase letters (e.g., OE, OL, OLE)
         Pattern country2Pat = Pattern.compile("^([A-Z]{2,3})\\b");
 
+        // Last-resort: infer missing article columns from the country rows themselves.
+        // In store layout, OCR sometimes only captures "Article:001" but still provides per-row numbers
+        // for Article 002/003 as separate lines (e.g. one line "6 459 2578" followed by "2 496", "1 385").
+        // If we detect more numeric groups than (1 + articleKeys.size()), synthesize Article:002.. keys.
+        if (articleKeys.size() <= 1) {
+            java.util.function.Function<String, List<String>> splitNumberGroups = (raw) -> {
+                if (raw == null) return List.of();
+                String s = raw.replaceAll("[^0-9]", " ").replaceAll("\\s+", " ").trim();
+                if (s.isBlank()) return List.of();
+                String[] toks = s.split(" ");
+                List<String> groups = new ArrayList<>();
+                StringBuilder cur = new StringBuilder();
+                for (String t : toks) {
+                    if (t == null || t.isBlank()) continue;
+                    boolean isThousandChunk = t.length() == 3;
+                    boolean groupStarted = cur.length() > 0;
+                    if (!groupStarted) {
+                        cur.append(t);
+                    } else if (isThousandChunk) {
+                        cur.append(t);
+                    } else {
+                        groups.add(cur.toString());
+                        cur.setLength(0);
+                        cur.append(t);
+                    }
+                }
+                if (cur.length() > 0) groups.add(cur.toString());
+                return groups;
+            };
+
+            int maxGroups = 0;
+            for (int i = startIdx; i < Math.min(normLines.size(), startIdx + 120); i++) {
+                String line = nvl(normLines.get(i));
+                String low = line.toLowerCase(Locale.ROOT);
+                if (low.startsWith("bill of material") || low.startsWith("labels") || low.startsWith("production units")) break;
+                if (low.startsWith("total:")) break;
+                if (low.contains("order no") || low.contains("product no") || low.contains("product name")
+                        || low.contains("date of order") || low.contains("supplier code") || low.contains("season:")
+                        || low.contains("supplier name") || low.startsWith("created:") || low.startsWith("page:")) {
+                    continue;
+                }
+
+                // require a PM/OL code similar to row detection
+                int searchFrom = 0;
+                Matcher c2peek = country2Pat.matcher(line);
+                if (c2peek.find()) searchFrom = c2peek.end();
+                String suffix = line.substring(Math.min(searchFrom, line.length()));
+                boolean hasCode = codeStrictPat.matcher(suffix).find() || codePat.matcher(suffix).find();
+                if (!hasCode) continue;
+
+                StringBuilder rawTailBuf2 = new StringBuilder();
+                java.util.function.Consumer<String> appendNums = (src) -> {
+                    if (src == null || src.isBlank()) return;
+                    String numsOnly = src.replaceAll("[^0-9]", " ");
+                    if (rawTailBuf2.length() > 0) rawTailBuf2.append(' ');
+                    rawTailBuf2.append(numsOnly);
+                };
+
+                appendNums.accept(line);
+                for (int j = i + 1; j < Math.min(normLines.size(), i + 6); j++) {
+                    String next = nvl(normLines.get(j));
+                    String nlow = next.toLowerCase(Locale.ROOT);
+                    if (nlow.startsWith("total:") || nlow.startsWith("created:") || nlow.startsWith("page:")) break;
+                    // stop if looks like new row
+                    int sf = 0;
+                    Matcher nc2 = country2Pat.matcher(next);
+                    if (nc2.find()) sf = nc2.end();
+                    String nsuffix = next.substring(Math.min(sf, next.length()));
+                    boolean looksNewRow = codeStrictPat.matcher(nsuffix).find() || codePat.matcher(nsuffix).find();
+                    if (looksNewRow) break;
+                    appendNums.accept(next);
+                }
+
+                List<String> groups = splitNumberGroups.apply(rawTailBuf2.toString());
+                if (groups.size() > maxGroups) maxGroups = groups.size();
+            }
+
+            int desiredArticles = Math.max(0, maxGroups - 1); // first group = total
+            int haveArticles = articleKeys == null ? 0 : articleKeys.size();
+            if (desiredArticles > haveArticles) {
+                for (int ai = haveArticles + 1; ai <= desiredArticles; ai++) {
+                    String no = String.format(Locale.ROOT, "%03d", ai);
+                    String key = "Article:" + no;
+                    if (!articleKeys.contains(key)) articleKeys.add(key);
+                }
+            }
+        }
+
         for (int i = startIdx; i < normLines.size(); i++) {
             String line = normLines.get(i);
             String low = line.toLowerCase(Locale.ROOT);
