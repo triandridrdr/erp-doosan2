@@ -4002,6 +4002,14 @@ public class OcrNewService {
     static Map<String, String> extractColourSizeBreakdownFromText(String pageText) {
         if (pageText == null || pageText.isEmpty()) return null;
 
+        List<Map<String, String>> rows = extractColourSizeBreakdownRowsFromText(pageText);
+        if (rows == null || rows.isEmpty()) return null;
+        return rows.get(0);
+    }
+
+    private static List<Map<String, String>> extractColourSizeBreakdownRowsFromText(String pageText) {
+        if (pageText == null || pageText.isEmpty()) return null;
+
         String lower = pageText.toLowerCase(Locale.ROOT);
         int hdrIdx = lower.indexOf("colour / size breakdown");
         if (hdrIdx < 0) hdrIdx = lower.indexOf("color / size breakdown");
@@ -4068,65 +4076,75 @@ public class OcrNewService {
         }
         int n = sizeKeys.size();
 
-        // Collect the data block until we hit a delimiter that ends the article row
-        // ("Total:", "Article Total:", or another "Article" header below).
-        List<String> blockTokens = new ArrayList<>();
+        List<Map<String, String>> out = new ArrayList<>();
+        Pattern artStart = Pattern.compile("^\\d{3}$");
+        Pattern artCode = Pattern.compile("^\\d{2}-\\d{3}$");
         while (t < tokens.size()) {
             String tok = tokens.get(t);
-            String low = tok.toLowerCase(Locale.ROOT);
-            if (low.equals("article") || low.startsWith("total")) break;
-            blockTokens.add(tok);
-            t++;
-        }
+            String lowTok = tok.toLowerCase(Locale.ROOT);
+            if (lowTok.equals("article")) break;
+            if (lowTok.startsWith("total")) break;
+            if (lowTok.equals("breakdown")) break;
 
-        // Within the block, take the LAST N integer tokens as size values; the
-        // tokens before the first such integer are the article identifier (which
-        // can legitimately start with a digit, e.g. "001 22-216").
-        List<Integer> intIndices = new ArrayList<>();
-        List<String> intValues = new ArrayList<>();
-        for (int i = 0; i < blockTokens.size(); i++) {
-            if (blockTokens.get(i).matches("\\d+")) {
-                intIndices.add(i);
-                intValues.add(blockTokens.get(i));
+            String a0 = tokens.get(t);
+            String a1 = (t + 1) < tokens.size() ? tokens.get(t + 1) : "";
+            String article;
+            if (artStart.matcher(a0).matches() && artCode.matcher(a1).matches()) {
+                article = a0 + " " + a1;
+                t += 2;
+            } else {
+                List<String> atoks = new ArrayList<>();
+                while (t < tokens.size()) {
+                    String ttok = tokens.get(t);
+                    String l2 = ttok.toLowerCase(Locale.ROOT);
+                    if (l2.equals("article") || l2.startsWith("total")) break;
+                    if (ttok.matches("\\d+")) break;
+                    if (SIZE_LABEL_PAT.matcher(ttok).matches()) {
+                        t++;
+                        continue;
+                    }
+                    atoks.add(ttok);
+                    t++;
+                }
+                article = String.join(" ", atoks).trim();
             }
-        }
-        if (intValues.size() < n) {
-            log.info("[CSB][PDFBOX] data block has only {} integers (need {}); block: {}",
-                    intValues.size(), n,
-                    truncate(String.join(" ", blockTokens), 300));
-            return null;
-        }
 
-        int firstSizeIdx = intIndices.get(intIndices.size() - n);
-        List<String> values = intValues.subList(intValues.size() - n, intValues.size());
+            if (article.isBlank()) {
+                if (t < tokens.size() && tokens.get(t).matches("\\d+")) {
+                    t++;
+                    continue;
+                }
+                break;
+            }
 
-        List<String> articleTokens = new ArrayList<>();
-        for (int i = 0; i < firstSizeIdx; i++) {
-            String tok = blockTokens.get(i);
-            if (tok.isEmpty()) continue;
-            if (tok.matches("\\W+")) continue;
-            if (SIZE_LABEL_PAT.matcher(tok).matches()) continue;
-            if ("article".equalsIgnoreCase(tok)) continue;
-            articleTokens.add(tok);
-        }
-        String article = String.join(" ", articleTokens).trim();
-        if (article.isEmpty()) {
-            log.info("[CSB][PDFBOX] empty article after block parse; block: {}",
-                    truncate(String.join(" ", blockTokens), 300));
-            return null;
-        }
+            List<String> values = new ArrayList<>();
+            while (t < tokens.size() && values.size() < n) {
+                String vtok = tokens.get(t);
+                String l3 = vtok.toLowerCase(Locale.ROOT);
+                if (l3.equals("article") || l3.startsWith("total")) break;
+                if (!vtok.matches("\\d+")) {
+                    t++;
+                    continue;
+                }
+                String vv = normalizeNumberToken(vtok);
+                if (!vv.isBlank()) values.add(vv);
+                t++;
+            }
+            if (values.size() < n) break;
 
-        Map<String, String> m = new LinkedHashMap<>();
-        m.put("article", article);
-        long sum = 0;
-        for (int s = 0; s < n; s++) {
-            String key = sizeKeys.get(s);
-            String val = values.get(s);
-            m.put(key, val);
-            try { sum += Long.parseLong(val); } catch (NumberFormatException ignore) { /* ignore */ }
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("article", article);
+            long sum = 0;
+            for (int s = 0; s < n; s++) {
+                String key = sizeKeys.get(s);
+                String val = values.get(s);
+                m.put(key, val);
+                try { sum += Long.parseLong(val); } catch (NumberFormatException ignore) { /* ignore */ }
+            }
+            m.put("total", String.valueOf(sum));
+            out.add(m);
         }
-        m.put("total", String.valueOf(sum));
-        return m;
+        return out;
     }
 
     /**
@@ -4173,11 +4191,11 @@ public class OcrNewService {
                                 sortByPos, p, truncate(dump, 800));
                     }
 
-                    Map<String, String> row = extractColourSizeBreakdownFromText(pageText);
-                    if (row != null) {
-                        log.info("[CSB][PDFBOX] sortByPos={} page={} parsed row {}",
-                                sortByPos, p, row);
-                        return List.of(row);
+                    List<Map<String, String>> rows = extractColourSizeBreakdownRowsFromText(pageText);
+                    if (rows != null && !rows.isEmpty()) {
+                        log.info("[CSB][PDFBOX] sortByPos={} page={} parsed rows={} firstRow={} ",
+                                sortByPos, p, rows.size(), rows.get(0));
+                        return rows;
                     }
                 }
 
@@ -4185,10 +4203,10 @@ public class OcrNewService {
                 stripper.setStartPage(1);
                 stripper.setEndPage(pageCount);
                 String allText = stripper.getText(doc);
-                Map<String, String> row = extractColourSizeBreakdownFromText(allText);
-                if (row != null) {
-                    log.info("[CSB][PDFBOX] sortByPos={} full-doc parsed row {}", sortByPos, row);
-                    return List.of(row);
+                List<Map<String, String>> rows = extractColourSizeBreakdownRowsFromText(allText);
+                if (rows != null && !rows.isEmpty()) {
+                    log.info("[CSB][PDFBOX] sortByPos={} full-doc parsed rows={} firstRow={}", sortByPos, rows.size(), rows.get(0));
+                    return rows;
                 }
             }
 
