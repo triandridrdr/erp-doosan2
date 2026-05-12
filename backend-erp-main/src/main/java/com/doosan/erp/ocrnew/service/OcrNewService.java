@@ -194,38 +194,14 @@ public class OcrNewService {
             }
         }
 
-        // If the explicit header isn't present (common on some TotalCountryBreakdown PDFs),
-        // fall back to scanning the whole document but only if we can find enough qualifying
-        // rows to avoid false positives.
-        if (startIdx < 0) {
-            Pattern probeCodePat = Pattern.compile("\\b(?:PM|OL)[- ]?[A-Z]{2,3}\\b", Pattern.CASE_INSENSITIVE);
-            Pattern probeNumPat = Pattern.compile("(?<![A-Za-z])\\d[\\d\\s.,]*");
-            int candidates = 0;
-            for (String l : normLines) {
-                if (l == null) continue;
-                String low = l.toLowerCase(Locale.ROOT);
-                if (low.contains("order no") || low.contains("product no") || low.contains("product name") || low.contains("date of order")
-                        || low.contains("supplier code") || low.contains("season") || low.contains("supplier name")
-                        || low.startsWith("created:") || low.startsWith("page:")) {
-                    continue;
-                }
-                if (probeCodePat.matcher(l).find() && probeNumPat.matcher(l).find()) {
-                    candidates++;
-                    if (candidates >= 3) break;
-                }
-            }
-            if (candidates < 3) return out;
-            startIdx = 0;
-        }
+        if (startIdx < 0) return out;
 
         // Try to pick up article columns from the header (e.g., "Article:001 12-220")
         List<String> articleKeys = new ArrayList<>();
         Pattern articlePat = Pattern.compile("(?i)\\barticle\\s*:?")
                 ;
         Pattern articleKeyPat = Pattern.compile("(?i)\\barticle\\s*:?\\s*(\\d{3})\\b(?:\\s+(\\d{2}-\\d{3}))?");
-        // Scan a wider window for article keys; when startIdx is 0 (no header),
-        // the header may appear anywhere near the top.
-        for (int i = startIdx; i < Math.min(normLines.size(), startIdx + (startIdx == 0 ? 60 : 16)); i++) {
+        for (int i = startIdx; i < Math.min(normLines.size(), startIdx + 16); i++) {
             String line = normLines.get(i);
             if (line == null) continue;
             if (!articlePat.matcher(line).find()) continue;
@@ -299,85 +275,15 @@ public class OcrNewService {
             if (numM.find()) {
                 rawTail = nvl(numM.group()).trim();
             }
-
-            // Some TotalCountryBreakdown PDFs render like:
-            //   "US PM-US"
-            //   "6 459 2 578"
-            //   "2 496"
-            //   "1 385"
-            // i.e., numeric columns are split into subsequent visual rows.
-            if (rawTail.isBlank()) {
-                StringBuilder sb = new StringBuilder();
-                int lookAheadLimit = Math.min(normLines.size() - 1, i + 8);
-                for (int j = i + 1; j <= lookAheadLimit; j++) {
-                    String nxt = nvl(normLines.get(j)).trim();
-                    if (nxt.isBlank()) continue;
-                    // Stop when the next destination code appears (start of next row)
-                    if (codeStrictPat.matcher(nxt).find() || codePat.matcher(nxt).find()) {
-                        break;
-                    }
-                    // Accept numeric-only lines or lines that contain a numeric tail
-                    Matcher nm = numPat.matcher(nxt);
-                    if (nm.find()) {
-                        if (sb.length() > 0) sb.append(' ');
-                        sb.append(nm.group().trim());
-                    } else {
-                        // Non-numeric: stop early to avoid eating unrelated sections
-                        break;
-                    }
-                }
-                rawTail = sb.toString().trim();
-            }
-
             if (rawTail.isBlank()) continue;
 
-            // If we don't have a reliable header for article columns, we cannot trust expectedCount.
-            // In that case, split the numeric tail into number groups first (handling thousand chunks)
-            // and treat it as: total + N article values.
-            List<String> parts;
-            if (articleKeys == null || articleKeys.isEmpty()) {
-                String digitsOnly = rawTail.replaceAll("[^0-9]", " ").replaceAll("\\s+", " ").trim();
-                List<String> groups = new ArrayList<>();
-                if (!digitsOnly.isBlank()) {
-                    String[] dtoks = digitsOnly.split(" ");
-                    StringBuilder cur = new StringBuilder();
-                    for (String t : dtoks) {
-                        if (t == null || t.isBlank()) continue;
-                        boolean groupStarted = cur.length() > 0;
-                        boolean isThousandChunk = t.length() == 3;
-                        if (!groupStarted) {
-                            cur.append(t);
-                        } else if (isThousandChunk && cur.length() <= 3) {
-                            cur.append(t);
-                        } else {
-                            groups.add(cur.toString());
-                            cur.setLength(0);
-                            cur.append(t);
-                        }
-                    }
-                    if (cur.length() > 0) groups.add(cur.toString());
-                }
-                parts = groups.size() >= 2 ? groups : splitMultiArticleNumbers(rawTail, expectedCount);
-            } else {
-                parts = splitMultiArticleNumbers(rawTail, expectedCount);
-            }
+            List<String> parts = splitMultiArticleNumbers(rawTail, expectedCount);
             if (parts.isEmpty()) continue;
 
             if (articleKeys != null && !articleKeys.isEmpty() && parts.size() >= expectedCount) {
                 total = nvl(parts.get(0)).trim();
                 for (int ai = 0; ai < articleKeys.size(); ai++) {
                     String k = articleKeys.get(ai);
-                    String v = nvl(parts.get(ai + 1)).trim();
-                    articleVals.put(k, v);
-                }
-            } else if (parts.size() >= 2) {
-                // If we don't have a reliable article header, synthesize article keys from part count.
-                // Format: total + N article values -> Article:001 .. Article:00N
-                total = nvl(parts.get(0)).trim();
-                int n = Math.max(0, parts.size() - 1);
-                for (int ai = 0; ai < n; ai++) {
-                    String no = String.format(Locale.ROOT, "%03d", ai + 1);
-                    String k = "Article:" + no;
                     String v = nvl(parts.get(ai + 1)).trim();
                     articleVals.put(k, v);
                 }
