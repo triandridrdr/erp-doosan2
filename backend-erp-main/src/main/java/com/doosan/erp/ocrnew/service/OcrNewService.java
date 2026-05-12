@@ -194,6 +194,28 @@ public class OcrNewService {
             }
         }
 
+        // Store-style Total Country Breakdown may not include the literal phrase "Country Breakdown".
+        // It may only show a header line like "Country" followed by one or more "Article:001" lines.
+        // Add a conservative secondary anchor: "Country" + nearby "Article:".
+        if (startIdx < 0) {
+            for (int i = 0; i < normLines.size(); i++) {
+                String s = nvl(normLines.get(i)).replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+                if (!s.equals("country")) continue;
+                boolean hasArticleNearby = false;
+                for (int j = i; j < Math.min(normLines.size(), i + 10); j++) {
+                    String sj = nvl(normLines.get(j)).toLowerCase(Locale.ROOT);
+                    if (sj.contains("article:")) {
+                        hasArticleNearby = true;
+                        break;
+                    }
+                }
+                if (hasArticleNearby) {
+                    startIdx = i;
+                    break;
+                }
+            }
+        }
+
         if (startIdx < 0) return out;
 
         // Try to pick up article columns from the header (e.g., "Article:001 12-220")
@@ -201,7 +223,11 @@ public class OcrNewService {
         Pattern articlePat = Pattern.compile("(?i)\\barticle\\s*:?")
                 ;
         Pattern articleKeyPat = Pattern.compile("(?i)\\barticle\\s*:?\\s*(\\d{3})\\b(?:\\s+(\\d{2}-\\d{3}))?");
-        for (int i = startIdx; i < Math.min(normLines.size(), startIdx + 16); i++) {
+        Pattern articleCodeOnlyPat = Pattern.compile("\\b(\\d{2}-\\d{3})\\b");
+        // Store layout sometimes splits header across lines:
+        // "Article:001" then next line "12-220".
+        // Also, the article header block can be longer than 16 lines.
+        for (int i = startIdx; i < Math.min(normLines.size(), startIdx + 40); i++) {
             String line = normLines.get(i);
             if (line == null) continue;
             if (!articlePat.matcher(line).find()) continue;
@@ -210,8 +236,71 @@ public class OcrNewService {
                 String no = nvl(m.group(1)).trim();
                 if (no.isBlank()) continue;
                 String code = nvl(m.group(2)).trim();
+                if (code.isBlank()) {
+                    // Lookahead for the article code on subsequent lines
+                    for (int j = i + 1; j < Math.min(normLines.size(), i + 4); j++) {
+                        String nx = nvl(normLines.get(j)).trim();
+                        if (nx.isBlank()) continue;
+                        Matcher cm = articleCodeOnlyPat.matcher(nx);
+                        if (cm.find()) {
+                            code = nvl(cm.group(1)).trim();
+                            break;
+                        }
+                    }
+                }
                 String key = "Article:" + no + (code.isBlank() ? "" : (" " + code));
                 if (!articleKeys.contains(key)) articleKeys.add(key);
+            }
+        }
+
+        // Some store PDFs do not OCR all "Article:002" / "Article:003" headers near the country table.
+        // However, they usually contain an "Article Total:" block later which lists all articles:
+        // "001 12-220 9 554", "002 55-104 9 386", ...
+        // Use that as a secondary source of article keys when header detection yields only one article.
+        if (articleKeys.size() <= 1) {
+            Pattern articleTotalAnchorPat = Pattern.compile("(?i)\\barticle\\s+total\\b");
+            Pattern articleTotalRowPat = Pattern.compile("^\\s*(\\d{3})\\s+(\\d{2}-\\d{3})\\b");
+            Pattern articleTotalRowAnyPat = Pattern.compile("\\b(\\d{3})\\s+(\\d{2}-\\d{3})\\b");
+            int anchor = -1;
+            for (int i = startIdx; i < normLines.size(); i++) {
+                String s = nvl(normLines.get(i)).replaceAll("\\s+", " ").trim();
+                if (s.isBlank()) continue;
+                if (articleTotalAnchorPat.matcher(s).find()) {
+                    anchor = i;
+                    break;
+                }
+            }
+            if (anchor >= 0) {
+                // Sometimes the entire block is in a single OCR line with separators (e.g. '|').
+                // Parse all occurrences from the anchor line itself.
+                {
+                    String s0 = nvl(normLines.get(anchor)).replaceAll("\\s+", " ").trim();
+                    Matcher mm = articleTotalRowAnyPat.matcher(s0);
+                    while (mm.find()) {
+                        String no = nvl(mm.group(1)).trim();
+                        String code = nvl(mm.group(2)).trim();
+                        if (no.isBlank()) continue;
+                        String key = "Article:" + no + (code.isBlank() ? "" : (" " + code));
+                        if (!articleKeys.contains(key)) articleKeys.add(key);
+                    }
+                }
+
+                for (int i = anchor + 1; i < Math.min(normLines.size(), anchor + 30); i++) {
+                    String s = nvl(normLines.get(i)).replaceAll("\\s+", " ").trim();
+                    if (s.isBlank()) continue;
+                    String low = s.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("size label") || low.startsWith("created:") || low.startsWith("page:")) break;
+
+                    Matcher m = articleTotalRowPat.matcher(s);
+                    if (m.find()) {
+                        String no = nvl(m.group(1)).trim();
+                        String code = nvl(m.group(2)).trim();
+                        if (!no.isBlank()) {
+                            String key = "Article:" + no + (code.isBlank() ? "" : (" " + code));
+                            if (!articleKeys.contains(key)) articleKeys.add(key);
+                        }
+                    }
+                }
             }
         }
 
@@ -270,14 +359,55 @@ public class OcrNewService {
             String total = "";
             Map<String, String> articleVals = new LinkedHashMap<>();
 
-            Matcher numM = numPat.matcher(line);
-            String rawTail = "";
-            if (numM.find()) {
-                rawTail = nvl(numM.group()).trim();
-            }
-            if (rawTail.isBlank()) continue;
+            // Some OCR layouts wrap the numeric tail onto the following lines:
+            // e.g. "US PM-US" then "6 459 2 578" then "2 496" then "1 385".
+            // Accumulate numeric fragments until we have enough parts (or we hit the next row).
+            StringBuilder rawTailBuf = new StringBuilder();
+            java.util.function.Consumer<String> appendNumsFromLine = (src) -> {
+                if (src == null || src.isBlank()) return;
+                Matcher m = numPat.matcher(src);
+                while (m.find()) {
+                    String g = nvl(m.group()).trim();
+                    if (g.isBlank()) continue;
+                    if (rawTailBuf.length() > 0) rawTailBuf.append(" ");
+                    rawTailBuf.append(g);
+                }
+            };
 
-            List<String> parts = splitMultiArticleNumbers(rawTail, expectedCount);
+            appendNumsFromLine.accept(line);
+
+            List<String> parts = splitMultiArticleNumbers(rawTailBuf.toString(), expectedCount);
+            if (parts.size() < expectedCount) {
+                for (int j = i + 1; j < Math.min(normLines.size(), i + 8); j++) {
+                    String nextLine = nvl(normLines.get(j));
+                    String nextLow = nextLine.toLowerCase(Locale.ROOT);
+                    if (nextLow.startsWith("bill of material") || nextLow.startsWith("labels") || nextLow.startsWith("production units")) {
+                        break;
+                    }
+                    if (nextLow.contains("order no") || nextLow.contains("product no") || nextLow.contains("product name")
+                            || nextLow.contains("date of order") || nextLow.contains("supplier code") || nextLow.contains("season:")
+                            || nextLow.contains("supplier name") || nextLow.startsWith("created:") || nextLow.startsWith("page:")) {
+                        continue;
+                    }
+
+                    // Stop accumulating when the next row starts (another country + PM/OL code).
+                    int nextSearchFrom = 0;
+                    Matcher nc2 = country2Pat.matcher(nextLine);
+                    if (nc2.find()) nextSearchFrom = nc2.end();
+                    String nextSuffix = nextLine.substring(Math.min(nextSearchFrom, nextLine.length()));
+                    boolean nextLooksLikeNewRow = codeStrictPat.matcher(nextSuffix).find() || codePat.matcher(nextSuffix).find();
+                    if (nextLooksLikeNewRow) break;
+
+                    appendNumsFromLine.accept(nextLine);
+                    parts = splitMultiArticleNumbers(rawTailBuf.toString(), expectedCount);
+                    if (parts.size() >= expectedCount) {
+                        // We consumed numeric continuation lines for this row; skip them in the outer loop.
+                        i = j;
+                        break;
+                    }
+                }
+            }
+
             if (parts.isEmpty()) continue;
 
             if (articleKeys != null && !articleKeys.isEmpty() && parts.size() >= expectedCount) {
