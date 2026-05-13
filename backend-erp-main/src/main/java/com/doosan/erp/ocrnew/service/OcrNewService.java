@@ -5053,6 +5053,22 @@ public class OcrNewService {
                             }
                         }
                     }
+                    // Kids size backfill: handle "0-1M (50)* 6", "1½-2Y (92)* 68" etc. after Quantity reset
+                    Matcher km2 = SIZE_VALUE_LINE_KIDS.matcher(t);
+                    if (km2.matches()) {
+                        String kidsKey = normalizeKidsSizeKey(km2.group(1), km2.group(2));
+                        String kv = normalizeNumber(km2.group(3));
+                        if (kidsKey != null && !kv.isBlank() && out.size() > pageOutStart) {
+                            for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                Map<String, String> r = out.get(ri);
+                                String existing = r.get(kidsKey);
+                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                    log.info("[LINE-BACKFILL] KIDS size={} value={} into row[{}] type={}", kidsKey, kv, ri, r.get("type"));
+                                    r.put(kidsKey, kv);
+                                }
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -6126,7 +6142,7 @@ public class OcrNewService {
                         }
 
                         String[] nativeLines = pageText.split("\\r?\\n");
-                        int syntheticTop = 0;
+                        int syntheticTop = 5000;
                         for (String nl : nativeLines) {
                             String trimmed = nl.trim();
                             if (trimmed.isBlank()) continue;
@@ -6142,14 +6158,19 @@ public class OcrNewService {
                             if (alreadyPresent) continue;
 
                             // Add as supplementary line with synthetic bounding box
-                            syntheticTop += 5;
-                            allLines.add(OcrNewLine.builder()
+                            syntheticTop += 100;
+                            OcrNewLine suppl = OcrNewLine.builder()
                                     .page(pageNum)
                                     .text(trimmed)
                                     .left(0).top(syntheticTop).right(1000).bottom(syntheticTop + 20)
                                     .confidence(99f)
                                     .words(List.of())
-                                    .build());
+                                    .build();
+                            allLines.add(suppl);
+                            rawLinesForDetail.add(suppl);
+                            if (rawLinesForTables != null && rawLinesForTables != allLines) {
+                                rawLinesForTables.add(suppl);
+                            }
                             log.info("[OCR-PDFBOX-SUPPLEMENT] file={} page={} added: {}", fname, pageNum, truncate(trimmed, 300));
                         }
                     }

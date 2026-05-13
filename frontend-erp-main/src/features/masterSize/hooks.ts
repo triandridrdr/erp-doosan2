@@ -21,10 +21,30 @@ export const CSB_META_KEYS: ReadonlySet<string> = new Set([
   'qty',
 ]);
 
-/** Return every key in a backend CSB row that is NOT a known meta field. */
+/** Extract cm value from a kids/baby size key like "1½-2Y(92)" → 92. Returns null for adult sizes. */
+function extractCmFromSizeKey(key: string): number | null {
+  const m = key.match(/\((\d+)\)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+const ADULT_SIZE_ORDER: Record<string, number> = {
+  XS: 10, S: 20, M: 30, L: 40, XL: 50, '1XL': 51, XXL: 60, '2XL': 61, XXXL: 70, '3XL': 71,
+};
+
+/** Numeric sort weight for a size key: cm value for kids, standard order for adults, 999 otherwise. */
+function sizeKeyOrder(key: string): number {
+  const cm = extractCmFromSizeKey(key);
+  if (cm !== null) return cm;
+  const upper = key.toUpperCase().replace(/\s+/g, '');
+  return ADULT_SIZE_ORDER[upper] ?? 999;
+}
+
+/** Return every key in a backend CSB row that is NOT a known meta field, sorted by size order. */
 export function extractSizeKeysFromRow(row: Record<string, any> | null | undefined): string[] {
   if (!row) return [];
-  return Object.keys(row).filter((k) => !CSB_META_KEYS.has(k.toLowerCase()));
+  return Object.keys(row)
+    .filter((k) => !CSB_META_KEYS.has(k.toLowerCase()))
+    .sort((a, b) => sizeKeyOrder(a) - sizeKeyOrder(b));
 }
 
 /** Flatten a list of CSB rows into the set of unique size labels. */
