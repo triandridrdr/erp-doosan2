@@ -5805,7 +5805,17 @@ public class OcrNewService {
             }
 
             List<String> poInvoiceAvgPriceTraceBuffer = effectiveDebug ? new ArrayList<>() : null;
-            List<Map<String, String>> poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+            List<Map<String, String>> poInvoiceAvgPrice = null;
+
+            // Prefer PDFBox native text for PDFs because Tesseract often loses the dense country list
+            // on page 1 (resulting in a single country like 'JP' instead of the full comma-separated list).
+            if (isPdf(file)) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceFromPdfBytes(fileBytes);
+            }
+
+            if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
+                poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPrice(allLines);
+            }
             if (poInvoiceAvgPrice == null || poInvoiceAvgPrice.isEmpty()) {
                 poInvoiceAvgPrice = extractPurchaseOrderInvoiceAvgPriceByPage(allLines);
             }
