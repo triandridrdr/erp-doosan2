@@ -564,6 +564,113 @@ public class OcrNewService {
         return out;
     }
 
+    private static Map<String, String> buildArticleColourNameByNoFromTables(List<OcrNewTableDto> tables) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (tables == null || tables.isEmpty()) return out;
+
+        List<String> articleNos = new ArrayList<>();
+        List<String> colourNames = new ArrayList<>();
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+
+        for (OcrNewTableDto t : tables) {
+            if (t == null || t.getRows() == null) continue;
+            for (List<String> row : t.getRows()) {
+                if (row == null || row.isEmpty()) continue;
+                String c0 = nvl(row.get(0)).trim();
+                if (c0.isBlank()) continue;
+                String low0 = c0.toLowerCase(Locale.ROOT);
+
+                if (articleNos.isEmpty() && low0.contains("article") && low0.contains("no")) {
+                    for (int i = 1; i < row.size(); i++) {
+                        String cell = nvl(row.get(i)).trim();
+                        Matcher m = aPat.matcher(cell);
+                        if (m.find()) articleNos.add(m.group(1));
+                    }
+                    continue;
+                }
+
+                if (colourNames.isEmpty() && low0.contains("colour") && low0.contains("name")) {
+                    for (int i = 1; i < row.size(); i++) {
+                        String cell = nvl(row.get(i)).trim();
+                        if (!cell.isBlank()) colourNames.add(cell);
+                    }
+                }
+
+                if (!articleNos.isEmpty() && !colourNames.isEmpty()) break;
+            }
+            if (!articleNos.isEmpty() && !colourNames.isEmpty()) break;
+        }
+
+        if (articleNos.isEmpty() || colourNames.isEmpty()) return out;
+
+        // OCR table extraction may split a single colour name across multiple cells.
+        // Try to merge cells so we end up with exactly one colour name per article.
+        int expected = articleNos.size();
+        List<String> merged = new ArrayList<>();
+        if (colourNames.size() == expected) {
+            merged.addAll(colourNames);
+        } else {
+            int i = 0;
+            while (i < colourNames.size() && merged.size() < expected) {
+                int remainingCells = colourNames.size() - i;
+                int remainingSlots = expected - merged.size();
+                String cur = nvl(colourNames.get(i)).trim();
+                if (cur.isBlank()) {
+                    i++;
+                    continue;
+                }
+
+                // If we have more cells than slots, try to merge obvious short fragments (e.g. "Light").
+                if (remainingCells > remainingSlots && i + 1 < colourNames.size()) {
+                    String next = nvl(colourNames.get(i + 1)).trim();
+                    boolean nextLooksFragment = !next.isBlank() && next.length() <= 8 && !next.contains(" ");
+                    if (nextLooksFragment) {
+                        cur = (cur + " " + next).replaceAll("\\s+", " ").trim();
+                        i += 2;
+                        merged.add(cur);
+                        continue;
+                    }
+                }
+
+                merged.add(cur);
+                i++;
+            }
+        }
+
+        // Fix overlap case where a cell contains the previous colour + a repeated suffix colour.
+        // Example (expected 3):
+        //   ["White Dusty Light", "Pink Medium", "Dusty White Dusty Light"]
+        // -> ["White Dusty Light", "Pink Medium Dusty", "White Dusty Light"]
+        if (merged.size() == expected && expected >= 2) {
+            for (int j = 0; j < merged.size(); j++) {
+                String base = nvl(merged.get(j)).trim();
+                if (base.isBlank()) continue;
+                for (int k = 0; k < merged.size(); k++) {
+                    if (k == j) continue;
+                    String cand = nvl(merged.get(k)).trim();
+                    if (cand.length() <= base.length()) continue;
+                    if (cand.endsWith(base)) {
+                        String prefix = cand.substring(0, cand.length() - base.length()).trim();
+                        if (!prefix.isBlank() && k - 1 >= 0) {
+                            String prev = nvl(merged.get(k - 1)).trim();
+                            merged.set(k - 1, (prev + " " + prefix).replaceAll("\\s+", " ").trim());
+                            merged.set(k, base);
+                        }
+                    }
+                }
+            }
+        }
+
+        int n = Math.min(articleNos.size(), merged.size());
+        for (int idx = 0; idx < n; idx++) {
+            String a3 = nvl(articleNos.get(idx)).trim();
+            String name = nvl(merged.get(idx)).trim();
+            if (a3.isBlank() || name.isBlank()) continue;
+            out.putIfAbsent(a3, name);
+        }
+        return out;
+    }
+
     private static Map<String, String> buildArticleLabelByNoFromHeader(Map<String, String> formFields) {
         Map<String, String> out = new LinkedHashMap<>();
         if (formFields == null || formFields.isEmpty()) return out;
@@ -754,6 +861,49 @@ public class OcrNewService {
 
             if (a.matches("^\\d{3}$") || a.matches("(?i)^article\\s*[:#-]?\\s*\\d{3}$")) {
                 r.put("article", label);
+            }
+        }
+    }
+
+    private static void fillDetailRowColourFieldsFromArticleMaps(
+            List<Map<String, String>> detailRows,
+            Map<String, String> hmColourCodeByArticleNo,
+            Map<String, String> colourNameByArticleNo
+    ) {
+        if (detailRows == null || detailRows.isEmpty()) return;
+        if ((hmColourCodeByArticleNo == null || hmColourCodeByArticleNo.isEmpty())
+                && (colourNameByArticleNo == null || colourNameByArticleNo.isEmpty())) return;
+
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+        for (Map<String, String> r : detailRows) {
+            if (r == null) continue;
+            String a0 = nvl(r.get("articleNo")).trim();
+            if (a0.isBlank()) continue;
+            Matcher m = aPat.matcher(a0);
+            if (!m.find()) continue;
+            String a3 = m.group(1);
+
+            if (hmColourCodeByArticleNo != null && !hmColourCodeByArticleNo.isEmpty()) {
+                String cur = nvl(r.get("hmColourCode")).trim();
+                if (cur.isBlank()) {
+                    String v = nvl(hmColourCodeByArticleNo.get(a3)).trim();
+                    if (!v.isBlank()) r.put("hmColourCode", v);
+                }
+            }
+            if (colourNameByArticleNo != null && !colourNameByArticleNo.isEmpty()) {
+                String v0 = nvl(colourNameByArticleNo.get(a3)).trim();
+                String v = v0.replaceAll("\\s*\\|\\s*", " ").replaceAll("\\s+", " ").trim();
+                if (!v.isBlank()) {
+                    String curUk = nvl(r.get("colour")).trim();
+                    if (!curUk.equalsIgnoreCase(v)) {
+                        r.put("colour", v);
+                    }
+                    // Frontend commonly binds to "color".
+                    String curUs = nvl(r.get("color")).trim();
+                    if (!curUs.equalsIgnoreCase(v)) {
+                        r.put("color", v);
+                    }
+                }
             }
         }
     }
@@ -5867,10 +6017,11 @@ public class OcrNewService {
             // Enrich the detail rows so Section 2C shows the PDF-visible article label
             // (Article No + H&M Colour Code), e.g. "001 22-216".
             Map<String, String> articleLabelByNo = buildArticleLabelByNoFromDetail(salesOrderDetailSizeBreakdown);
+            Map<String, String> articleLabelByNoFromTables = buildArticleLabelByNoFromTables(tables);
+            Map<String, String> colourNameByArticleNoFromTables = buildArticleColourNameByNoFromTables(tables);
             if (articleLabelByNo.isEmpty()) {
                 articleLabelByNo = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
-                Map<String, String> fromTables = buildArticleLabelByNoFromTables(tables);
-                for (Map.Entry<String, String> en : fromTables.entrySet()) {
+                for (Map.Entry<String, String> en : articleLabelByNoFromTables.entrySet()) {
                     articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
                 }
             } else {
@@ -5879,11 +6030,24 @@ public class OcrNewService {
                 for (Map.Entry<String, String> en : hdr.entrySet()) {
                     articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
                 }
-                Map<String, String> fromTables = buildArticleLabelByNoFromTables(tables);
-                for (Map.Entry<String, String> en : fromTables.entrySet()) {
+                for (Map.Entry<String, String> en : articleLabelByNoFromTables.entrySet()) {
                     articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
                 }
             }
+
+            Map<String, String> hmColourCodeByArticleNoFromTables = new LinkedHashMap<>();
+            if (articleLabelByNoFromTables != null && !articleLabelByNoFromTables.isEmpty()) {
+                Pattern cPat = Pattern.compile("\\b(\\d{2}-\\d{3})\\b");
+                for (Map.Entry<String, String> en : articleLabelByNoFromTables.entrySet()) {
+                    String a3 = nvl(en.getKey()).trim();
+                    String label = nvl(en.getValue()).trim();
+                    if (a3.isBlank() || label.isBlank()) continue;
+                    Matcher m = cPat.matcher(label);
+                    if (m.find()) hmColourCodeByArticleNoFromTables.putIfAbsent(a3, m.group(1));
+                }
+            }
+            fillDetailRowColourFieldsFromArticleMaps(salesOrderDetailSizeBreakdown, hmColourCodeByArticleNoFromTables, colourNameByArticleNoFromTables);
+
             if (!articleLabelByNo.isEmpty()) {
                 applyArticleLabelsToDetailRows(salesOrderDetailSizeBreakdown, articleLabelByNo);
             }
