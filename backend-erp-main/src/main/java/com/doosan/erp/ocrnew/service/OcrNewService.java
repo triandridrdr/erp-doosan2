@@ -564,6 +564,57 @@ public class OcrNewService {
         return out;
     }
 
+    private static Map<String, String> buildArticleColourNameByNoFromLines(List<OcrNewLine> allLines) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        List<String> articleNos = new ArrayList<>();
+        String colourJoined = "";
+
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+        Pattern stopPat = Pattern.compile("(?i)^(description|pt\\s*article|option\\s*no|cost|qty|quantity|assortment)\\b");
+
+        boolean inColour = false;
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String raw = oneLine(l.getText());
+            String t = nvl(raw).trim();
+            if (t.isBlank()) continue;
+
+            String low = t.toLowerCase(Locale.ROOT);
+
+            if (articleNos.isEmpty() && low.contains("article") && low.contains("no")) {
+                Matcher m = aPat.matcher(t);
+                while (m.find()) articleNos.add(m.group(1));
+                continue;
+            }
+
+            if (!inColour && low.contains("colour") && low.contains("name")) {
+                inColour = true;
+                int at = t.indexOf(':');
+                String after = at >= 0 ? t.substring(at + 1) : t;
+                colourJoined = (colourJoined + " " + after).replaceAll("\\s+", " ").trim();
+                continue;
+            }
+
+            if (inColour) {
+                if (stopPat.matcher(t).find()) break;
+                if (low.contains("article") && low.contains("no")) break;
+                if (low.contains("h&m") && low.contains("code")) break;
+                colourJoined = (colourJoined + " " + t).replaceAll("\\s+", " ").trim();
+            }
+        }
+
+        if (articleNos.isEmpty()) return out;
+        String v = nvl(colourJoined).replaceAll("\\s*\\|\\s*", " ").replaceAll("\\s+", " ").trim();
+        if (v.isBlank()) return out;
+
+        if (articleNos.size() == 1) {
+            out.putIfAbsent(articleNos.get(0), v);
+        }
+        return out;
+    }
+
     private static Map<String, String> buildArticleColourNameByNoFromTables(List<OcrNewTableDto> tables) {
         Map<String, String> out = new LinkedHashMap<>();
         if (tables == null || tables.isEmpty()) return out;
@@ -6019,6 +6070,8 @@ public class OcrNewService {
             Map<String, String> articleLabelByNo = buildArticleLabelByNoFromDetail(salesOrderDetailSizeBreakdown);
             Map<String, String> articleLabelByNoFromTables = buildArticleLabelByNoFromTables(tables);
             Map<String, String> colourNameByArticleNoFromTables = buildArticleColourNameByNoFromTables(tables);
+            Map<String, String> colourNameByArticleNoFromLines = buildArticleColourNameByNoFromLines(allLines);
+
             if (articleLabelByNo.isEmpty()) {
                 articleLabelByNo = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
                 for (Map.Entry<String, String> en : articleLabelByNoFromTables.entrySet()) {
@@ -6046,7 +6099,21 @@ public class OcrNewService {
                     if (m.find()) hmColourCodeByArticleNoFromTables.putIfAbsent(a3, m.group(1));
                 }
             }
-            fillDetailRowColourFieldsFromArticleMaps(salesOrderDetailSizeBreakdown, hmColourCodeByArticleNoFromTables, colourNameByArticleNoFromTables);
+            Map<String, String> colourNameByArticleNoMerged = new LinkedHashMap<>();
+            if (colourNameByArticleNoFromTables != null && !colourNameByArticleNoFromTables.isEmpty()) {
+                colourNameByArticleNoMerged.putAll(colourNameByArticleNoFromTables);
+            }
+            if (colourNameByArticleNoFromLines != null && !colourNameByArticleNoFromLines.isEmpty()) {
+                for (Map.Entry<String, String> en : colourNameByArticleNoFromLines.entrySet()) {
+                    String a3 = nvl(en.getKey()).trim();
+                    String v = nvl(en.getValue()).trim();
+                    if (a3.isBlank() || v.isBlank()) continue;
+                    // Prefer the line-based value when present, as it can contain wrapped long text.
+                    colourNameByArticleNoMerged.put(a3, v);
+                }
+            }
+
+            fillDetailRowColourFieldsFromArticleMaps(salesOrderDetailSizeBreakdown, hmColourCodeByArticleNoFromTables, colourNameByArticleNoMerged);
 
             if (!articleLabelByNo.isEmpty()) {
                 applyArticleLabelsToDetailRows(salesOrderDetailSizeBreakdown, articleLabelByNo);
