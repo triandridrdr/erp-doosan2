@@ -78,6 +78,13 @@ public class OcrNewService {
      */
     private static final Pattern SIZE_VALUE_LINE_KIDS = Pattern.compile(
             "(?i)^\\s*(\\d{1,2}(?:\u00BD|1/2)?-\\d{1,2}[MY])\\s*\\(\\s*(\\d{2,3})\\s*\\)\\s*[*+.,'\"\u2022]?\\s*(\\d[\\d\\s]{0,12})\\s*$");
+    // Matches numeric-only cm sizes: "50 (50)* 35", "86 (86)* 82" used in Italy/Spain, Australia pages
+    private static final Pattern SIZE_VALUE_LINE_NUMERIC_CM = Pattern.compile(
+            "(?i)^\\s*(\\d{2,3})\\s*\\(\\s*(\\d{2,3})\\s*\\)\\s*[*+.,'\"•]?\\s*(\\d[\\d\\s]{0,12})\\s*$");
+    // Universal fallback: any "label (value)* qty" line — fires only when in a valid section.
+    // Handles formats like "0M (50)* 2", "1½ (86)* 8", "ONE SIZE (OS)* 100", future unknown formats.
+    private static final Pattern SIZE_VALUE_LINE_ANY = Pattern.compile(
+            "^\\s*([A-Za-z0-9½¼¾][A-Za-z0-9½¼¾ \\-\\/]{0,19}?)\\s*\\(\\s*([^)]{1,20})\\s*\\)\\s*[*+.,'\"•]?\\s*(\\d[\\d ]{0,12})\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
     // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
     // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
@@ -5069,6 +5076,40 @@ public class OcrNewService {
                             }
                         }
                     }
+                    // Numeric cm size backfill: handle "50 (50)* 35", "86 (86)* 82" etc. after Quantity reset
+                    Matcher ncm2 = SIZE_VALUE_LINE_NUMERIC_CM.matcher(t);
+                    if (ncm2.matches()) {
+                        String label2 = ncm2.group(1).trim();
+                        String cm2 = ncm2.group(2).trim().replaceAll("[^0-9]", "");
+                        String numKey2 = label2 + "(" + cm2 + ")";
+                        String nv2 = normalizeNumber(ncm2.group(3));
+                        if (!nv2.isBlank() && out.size() > pageOutStart) {
+                            for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                Map<String, String> r = out.get(ri);
+                                String existing = r.get(numKey2);
+                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                    log.info("[LINE-BACKFILL] NUMERIC_CM size={} value={} into row[{}] type={}", numKey2, nv2, ri, r.get("type"));
+                                    r.put(numKey2, nv2);
+                                }
+                            }
+                        }
+                    }
+                    // Universal fallback backfill: "0M (50)* 2", "1½ (86)* 8", any other format
+                    Matcher ua2 = SIZE_VALUE_LINE_ANY.matcher(t);
+                    if (ua2.matches()) {
+                        String anyKey2 = normalizeGenericSizeKey(ua2.group(1), ua2.group(2));
+                        String av2 = normalizeNumber(ua2.group(3));
+                        if (anyKey2 != null && !av2.isBlank() && out.size() > pageOutStart) {
+                            for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                Map<String, String> r = out.get(ri);
+                                String existing = r.get(anyKey2);
+                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                    log.info("[LINE-BACKFILL] ANY size={} value={} into row[{}] type={}", anyKey2, av2, ri, r.get("type"));
+                                    r.put(anyKey2, av2);
+                                }
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -5140,6 +5181,34 @@ public class OcrNewService {
                             log.info("[SIZE-PARSE] SIZE_VALUE_LINE_KIDS matched: line='{}' -> size={} value={}", t, kidsKey, kv);
                             for (Map<String, String> r : currentRowsByArticle[0].values()) {
                                 if (r != null) r.put(kidsKey, kv);
+                            }
+                        }
+                        sawAnySize[0] = true;
+                        continue;
+                    }
+                }
+
+                // Numeric-only cm sizes: "50 (50)* 35", "86 (86)* 82" (Italy/Spain, Australia pages)
+                Matcher ncm = SIZE_VALUE_LINE_NUMERIC_CM.matcher(t);
+                if (ncm.matches()) {
+                    String label = ncm.group(1).trim();
+                    String cm = ncm.group(2).trim().replaceAll("[^0-9]", "");
+                    String numKey = label + "(" + cm + ")";
+                    List<String> nvals = splitMultiArticleNumbers(ncm.group(3), articleNos.size());
+                    if (!nvals.isEmpty()
+                            && currentRowsByArticle[0] != null
+                            && !currentRowsByArticle[0].isEmpty()) {
+                        if (nvals.size() == articleNos.size() && articleNos.size() > 1) {
+                            for (int ai = 0; ai < articleNos.size(); ai++) {
+                                Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                if (r != null) r.put(numKey, nvals.get(ai));
+                            }
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_NUMERIC_CM multi matched: line='{}' -> size={} valuesCount={}", t, numKey, nvals.size());
+                        } else {
+                            String nv = nvals.get(0);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_NUMERIC_CM matched: line='{}' -> size={} value={}", t, numKey, nv);
+                            for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                if (r != null) r.put(numKey, nv);
                             }
                         }
                         sawAnySize[0] = true;
@@ -5243,10 +5312,33 @@ public class OcrNewService {
                                 sawAnySize[0] = true;
                             }
                         } else {
-                            // Log lines that might look like size lines but didn't match any pattern
-                            String tUp = t.toUpperCase(Locale.ROOT);
-                            if (tUp.contains("XS") || tUp.contains("XL") || (tUp.contains("(") && tUp.contains(")"))) {
-                                log.info("[SIZE-PARSE] NO MATCH for potential size line: '{}'", t);
+                            // Fifth fallback: universal pattern — any "label (value)* qty" line in valid section
+                            Matcher ua = SIZE_VALUE_LINE_ANY.matcher(t);
+                            if (ua.matches() && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
+                                String anyKey = normalizeGenericSizeKey(ua.group(1), ua.group(2));
+                                List<String> avals = splitMultiArticleNumbers(ua.group(3), articleNos.size());
+                                if (anyKey != null && !avals.isEmpty()) {
+                                    if (avals.size() == articleNos.size() && articleNos.size() > 1) {
+                                        for (int ai = 0; ai < articleNos.size(); ai++) {
+                                            Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                            if (r != null) r.put(anyKey, avals.get(ai));
+                                        }
+                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY multi matched: line='{}' -> size={} valuesCount={}", t, anyKey, avals.size());
+                                    } else {
+                                        String av = avals.get(0);
+                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY matched: line='{}' -> size={} value={}", t, anyKey, av);
+                                        for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                            if (r != null) r.put(anyKey, av);
+                                        }
+                                    }
+                                    sawAnySize[0] = true;
+                                }
+                            } else {
+                                // Log lines that might look like size lines but didn't match any pattern
+                                String tUp = t.toUpperCase(Locale.ROOT);
+                                if (tUp.contains("XS") || tUp.contains("XL") || (tUp.contains("(") && tUp.contains(")"))) {
+                                    log.info("[SIZE-PARSE] NO MATCH for potential size line: '{}'", t);
+                                }
                             }
                         }
                     }
@@ -5951,6 +6043,25 @@ public class OcrNewService {
      * @param ageRange raw age-range token, e.g. "0-1M", "1½-2Y"
      * @param cm raw cm token (digits only), e.g. "50", "92" — may be null
      */
+    /**
+     * Normalize any generic size label + parenthetical value into a stable key.
+     * Returns a normalized letter-size key (e.g. "XS") for adult sizes,
+     * or "LABEL(VALUE)" for kids/baby/numeric sizes.
+     * Returns null if the label looks like a metadata field.
+     */
+    private static String normalizeGenericSizeKey(String label, String value) {
+        if (label == null) return null;
+        String lbl = label.trim().toUpperCase(Locale.ROOT).replaceAll("\\*+$", "").trim().replaceAll("\\s+", "");
+        String val = value == null ? "" : value.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9\u00BD\\-/]", "");
+        if (lbl.isEmpty()) return null;
+        if (lbl.contains(":") || lbl.contains("=")) return null;
+        String[] metaStarts = {"NO", "ARTICLE", "ORDER", "PRODUCT", "COLOUR", "COLOR", "OPTION", "SEASON", "PAGE", "VERSION"};
+        for (String ms : metaStarts) { if (lbl.startsWith(ms)) return null; }
+        String norm = normalizeSizeKey(lbl);
+        if (norm != null) return norm;
+        return val.isEmpty() ? lbl : lbl + "(" + val + ")";
+    }
+
     private static String normalizeKidsSizeKey(String ageRange, String cm) {
         if (ageRange == null) return null;
         String ar = ageRange.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", "").replaceAll("\\*+", "");
