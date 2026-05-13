@@ -602,33 +602,133 @@ public class OcrNewService {
         return buildArticleLabelByNoFromLines(allLines);
     }
 
+    private static Map<String, String> buildArticleLabelByNoFromTables(List<OcrNewTableDto> tables) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (tables == null || tables.isEmpty()) return out;
+
+        List<String> articleNos = new ArrayList<>();
+        List<String> colourCodes = new ArrayList<>();
+
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+        Pattern cPat = Pattern.compile("\\b(\\d{2}-\\d{3})\\b");
+
+        for (OcrNewTableDto t : tables) {
+            if (t == null || t.getRows() == null) continue;
+            for (List<String> row : t.getRows()) {
+                if (row == null || row.isEmpty()) continue;
+                String c0 = nvl(row.get(0)).trim();
+                if (c0.isBlank()) continue;
+                String low0 = c0.toLowerCase(Locale.ROOT);
+
+                if (articleNos.isEmpty() && low0.contains("article") && low0.contains("no")) {
+                    for (int i = 1; i < row.size(); i++) {
+                        String cell = nvl(row.get(i)).trim();
+                        Matcher m = aPat.matcher(cell);
+                        if (m.find()) articleNos.add(m.group(1));
+                    }
+                    continue;
+                }
+
+                if (colourCodes.isEmpty() && low0.contains("colour") && low0.contains("code")) {
+                    for (int i = 1; i < row.size(); i++) {
+                        String cell = nvl(row.get(i)).trim();
+                        Matcher m = cPat.matcher(cell);
+                        if (m.find()) colourCodes.add(m.group(1));
+                    }
+                }
+
+                if (!articleNos.isEmpty() && !colourCodes.isEmpty()) break;
+            }
+            if (!articleNos.isEmpty() && !colourCodes.isEmpty()) break;
+        }
+
+        if (articleNos.isEmpty() || colourCodes.isEmpty()) return out;
+        int n = Math.min(articleNos.size(), colourCodes.size());
+        for (int i = 0; i < n; i++) {
+            String a3 = nvl(articleNos.get(i)).trim();
+            String c23 = nvl(colourCodes.get(i)).trim();
+            if (a3.isBlank() || c23.isBlank()) continue;
+            out.putIfAbsent(a3, (a3 + " " + c23).trim());
+        }
+        return out;
+    }
+
     private static Map<String, String> buildArticleLabelByNoFromLines(List<OcrNewLine> allLines) {
         Map<String, String> out = new LinkedHashMap<>();
         if (allLines == null || allLines.isEmpty()) return out;
 
         Pattern aPat = Pattern.compile("(?i)\\barticle\\s*no\\s*[:#-]?\\s*(\\d{3})\\b");
         Pattern cPat = Pattern.compile("(?i)h\\s*&\\s*m\\s*colou?r\\s*code\\s*[:#-]?\\s*(\\d{2}-\\d{3})\\b");
+        Pattern pairPat = Pattern.compile("\\b(\\d{3})\\b\\s+(\\d{2}-\\d{3})\\b");
 
-        String a3 = "";
-        String c23 = "";
+        String pendingA3 = "";
+        List<String> headerArticleNos = new ArrayList<>();
+        List<String> headerColourCodes = new ArrayList<>();
         for (OcrNewLine l : allLines) {
             if (l == null || l.getText() == null) continue;
             String t = oneLine(l.getText()).trim();
             if (t.isBlank()) continue;
 
-            if (a3.isBlank()) {
-                Matcher am = aPat.matcher(t);
-                if (am.find()) a3 = am.group(1);
+            // Fast-path: many OCR layouts include a row like "001 12-220 02" (no explicit labels).
+            // Capture all pairs from such lines.
+            Matcher pm = pairPat.matcher(t);
+            while (pm.find()) {
+                String a3p = nvl(pm.group(1)).trim();
+                String c23p = nvl(pm.group(2)).trim();
+                if (!a3p.isBlank() && !c23p.isBlank()) {
+                    out.putIfAbsent(a3p, (a3p + " " + c23p).trim());
+                }
             }
-            if (c23.isBlank()) {
-                Matcher cm = cPat.matcher(t);
-                if (cm.find()) c23 = cm.group(1);
+
+            String low = t.toLowerCase(Locale.ROOT);
+            if (headerArticleNos.isEmpty() && low.contains("article no")) {
+                Matcher m = Pattern.compile("\\b(\\d{3})\\b").matcher(t);
+                while (m.find()) headerArticleNos.add(m.group(1));
             }
-            if (!a3.isBlank() && !c23.isBlank()) break;
+            if (headerColourCodes.isEmpty() && (low.contains("h&m") || low.contains("h & m")) && low.contains("colou") && low.contains("code")) {
+                Matcher m = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(t);
+                while (m.find()) headerColourCodes.add(m.group(1));
+            }
+
+            Matcher am = aPat.matcher(t);
+            Matcher cm = cPat.matcher(t);
+
+            String a3 = am.find() ? am.group(1) : "";
+            String c23 = cm.find() ? cm.group(1) : "";
+
+            if (!a3.isBlank() && !c23.isBlank()) {
+                out.putIfAbsent(a3, (a3 + " " + c23).trim());
+                pendingA3 = "";
+                continue;
+            }
+
+            if (!a3.isBlank()) {
+                pendingA3 = a3;
+                continue;
+            }
+
+            if (!c23.isBlank() && !pendingA3.isBlank()) {
+                String aa = pendingA3;
+                out.putIfAbsent(aa, (aa + " " + c23).trim());
+                pendingA3 = "";
+            }
         }
 
-        if (a3.isBlank() || c23.isBlank()) return out;
-        out.put(a3, (a3 + " " + c23).trim());
+        // Another common layout is a 2-row header:
+        //   "Article No: | 001 | 002 | 003"
+        //   "H&M Colour Code: | 12-220 | 55-104 | 12-220"
+        // Zip by column index.
+        if (!headerArticleNos.isEmpty() && !headerColourCodes.isEmpty()) {
+            int n = Math.min(headerArticleNos.size(), headerColourCodes.size());
+            for (int i = 0; i < n; i++) {
+                String a3 = nvl(headerArticleNos.get(i)).trim();
+                String c23 = nvl(headerColourCodes.get(i)).trim();
+                if (a3.isBlank() || c23.isBlank()) continue;
+                out.putIfAbsent(a3, (a3 + " " + c23).trim());
+            }
+        }
+
+        if (out.isEmpty()) return out;
         return out;
     }
 
@@ -5769,10 +5869,18 @@ public class OcrNewService {
             Map<String, String> articleLabelByNo = buildArticleLabelByNoFromDetail(salesOrderDetailSizeBreakdown);
             if (articleLabelByNo.isEmpty()) {
                 articleLabelByNo = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
+                Map<String, String> fromTables = buildArticleLabelByNoFromTables(tables);
+                for (Map.Entry<String, String> en : fromTables.entrySet()) {
+                    articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
+                }
             } else {
                 // Fill missing mappings from header when some articles are absent from detail rows.
                 Map<String, String> hdr = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
                 for (Map.Entry<String, String> en : hdr.entrySet()) {
+                    articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
+                }
+                Map<String, String> fromTables = buildArticleLabelByNoFromTables(tables);
+                for (Map.Entry<String, String> en : fromTables.entrySet()) {
                     articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
                 }
             }
