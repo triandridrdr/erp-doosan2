@@ -101,7 +101,8 @@ public class OcrNewJobService {
         try {
             MultipartFile mf = new InMemoryMultipartFile(job.getOriginalFileName(), job.getContentType(), job.getFileBytes());
             Boolean debug = job.getDebug();
-            boolean useHocr = job.getUseHocr() == null || Boolean.TRUE.equals(job.getUseHocr());
+            // Default to non-hOCR for speed; hOCR runs only if explicitly requested
+            boolean useHocr = Boolean.TRUE.equals(job.getUseHocr());
             boolean compareModes = Boolean.TRUE.equals(job.getCompareModes());
 
             job.setProgressPercent(10);

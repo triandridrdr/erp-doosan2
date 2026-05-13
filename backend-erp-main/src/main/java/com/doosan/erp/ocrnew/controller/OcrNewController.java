@@ -42,8 +42,8 @@ public class OcrNewController {
             )
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "debug", required = false) Boolean debug,
-            @Parameter(description = "Use hOCR mode for better handling of fragmented text (split words across lines)")
-            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr,
+            @Parameter(description = "Use hOCR mode for better handling of fragmented text (split words across lines). Default false for speed; PDFBox text layer + raw OCR is used. Pass true to force hOCR.")
+            @RequestParam(value = "useHocr", required = false, defaultValue = "false") Boolean useHocr,
             @Parameter(description = "Log hOCR and non-hOCR outputs side by side for debugging")
             @RequestParam(value = "compareModes", required = false, defaultValue = "false") Boolean compareModes
     ) {
@@ -64,7 +64,7 @@ public class OcrNewController {
     public ResponseEntity<ApiResponse<String>> submitJob(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "debug", required = false) Boolean debug,
-            @RequestParam(value = "useHocr", required = false, defaultValue = "true") Boolean useHocr,
+            @RequestParam(value = "useHocr", required = false, defaultValue = "false") Boolean useHocr,
             @RequestParam(value = "compareModes", required = false, defaultValue = "false") Boolean compareModes
     ) {
         String jobId = ocrNewJobService.submitJob(file, debug, useHocr, compareModes);

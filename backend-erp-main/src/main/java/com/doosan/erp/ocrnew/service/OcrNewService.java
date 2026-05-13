@@ -6067,6 +6067,10 @@ public class OcrNewService {
                 }
             }
 
+            // Split values that contain right-column labels embedded in them
+            // (PDFBox text layer reports two-column rows as one merged line).
+            splitMultiColumnHeaderValues(formFields);
+
             enrichDeliveryFields(formFields, allLines);
             enrichPurchaseOrderHeaderFields(formFields, allLines);
             List<OcrNewTableDto> tables;
@@ -8386,6 +8390,129 @@ public class OcrNewService {
         }
     }
 
+    /**
+     * H&M PO/SO header is laid out in two columns. PDFBox text layer reports
+     * each visual row as ONE line, so a value like
+     *   "Order No: 409456-1522 Product No: 1126584"
+     * is parsed as: key="Order No", value="409456-1522 Product No: 1126584"
+     * and the right-column key (Product No) is never extracted.
+     *
+     * This helper scans every value for known right-column labels followed by
+     * a colon, splits the value at the boundary, trims the left value to the
+     * portion BEFORE the embedded label, and registers the right key/value
+     * pair (without overwriting an existing non-blank value).
+     */
+    static void splitMultiColumnHeaderValues(Map<String, String> formFields) {
+        if (formFields == null || formFields.isEmpty()) return;
+
+        // Right-column labels seen in H&M PO/SO header pages.
+        // Order matters: longer/more-specific labels MUST come first because
+        // Java regex alternation tries left-to-right and takes the first match.
+        String[] labels = new String[] {
+                "Customs Customer Group",
+                "Customer Group",
+                "Type of Construction",
+                "Product Description",
+                "Product Name",
+                "Product No",
+                "PT Prod No",
+                "Packing Mode",
+                "No of Pieces",
+                "Sales Mode",
+                "Season"
+        };
+
+        StringBuilder alt = new StringBuilder();
+        for (int i = 0; i < labels.length; i++) {
+            if (i > 0) alt.append('|');
+            alt.append(Pattern.quote(labels[i]));
+        }
+        // (?i) case-insensitive; \\b ensures label starts at a word boundary
+        Pattern boundary = Pattern.compile("(?i)\\b(" + alt + ")\\s*:\\s*");
+
+        // Snapshot to safely mutate formFields while iterating.
+        Map<String, String> snapshot = new LinkedHashMap<>(formFields);
+        for (Map.Entry<String, String> en : snapshot.entrySet()) {
+            String k = en.getKey();
+            String v = nvl(en.getValue()).trim();
+            if (k == null || v.isEmpty()) continue;
+
+            // If the value itself starts exactly with one of these labels we
+            // shouldn't try to "split" it — that's actually the value of that
+            // very key. The KV parser already gave us key+value correctly.
+            // We only care about EMBEDDED labels appearing AFTER some text.
+            Matcher firstM = boundary.matcher(v);
+            if (!firstM.find()) continue;
+            int firstStart = firstM.start();
+            // Need some real text BEFORE the boundary to consider it a 2-column row.
+            String leftPart = v.substring(0, firstStart).trim();
+            // Strip trailing punctuation noise.
+            leftPart = leftPart.replaceAll("[\\s,;|]+$", "").trim();
+            if (leftPart.isEmpty()) continue;
+
+            // Collect every (label, valueStart) boundary inside the original value.
+            List<int[]> bounds = new ArrayList<>();
+            List<String> rightKeys = new ArrayList<>();
+            Matcher m2 = boundary.matcher(v);
+            while (m2.find()) {
+                bounds.add(new int[] { m2.start(), m2.end() });
+                rightKeys.add(canonicalHeaderLabel(m2.group(1)));
+            }
+            if (bounds.isEmpty()) continue;
+
+            // 1) Replace the LEFT key's value with just the cleaned left part.
+            if (!leftPart.equals(v)) {
+                formFields.put(k, leftPart);
+            }
+
+            // 2) For each embedded right-column label, extract its value range
+            //    until the NEXT boundary (or end of string).
+            for (int i = 0; i < bounds.size(); i++) {
+                int valStart = bounds.get(i)[1];
+                int valEnd = (i + 1 < bounds.size()) ? bounds.get(i + 1)[0] : v.length();
+                String rightVal = v.substring(valStart, valEnd).trim();
+                rightVal = rightVal.replaceAll("[\\s,;|]+$", "").trim();
+                if (rightVal.isEmpty()) continue;
+
+                String rightKey = rightKeys.get(i);
+                String existing = nvl(formFields.get(rightKey)).trim();
+                if (existing.isEmpty()) {
+                    formFields.put(rightKey, rightVal);
+                } else {
+                    // If existing value is itself a polluted multi-column line,
+                    // and the new clean value is a clean prefix, prefer the new one.
+                    Matcher exM = boundary.matcher(existing);
+                    if (exM.find()) {
+                        formFields.put(rightKey, rightVal);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Normalize a label captured from regex back to the canonical form used
+     * in the formFields map (preserves the casing of the labels[] array).
+     */
+    private static String canonicalHeaderLabel(String captured) {
+        if (captured == null) return "";
+        String low = captured.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+        switch (low) {
+            case "customs customer group": return "Customs Customer Group";
+            case "customer group":         return "Customer Group";
+            case "type of construction":   return "Type of Construction";
+            case "product description":    return "Product Description";
+            case "product name":           return "Product Name";
+            case "product no":             return "Product No";
+            case "pt prod no":             return "PT Prod No";
+            case "packing mode":           return "Packing Mode";
+            case "no of pieces":           return "No of Pieces";
+            case "sales mode":             return "Sales Mode";
+            case "season":                 return "Season";
+            default:                       return captured.trim();
+        }
+    }
+
     static void enrichPurchaseOrderHeaderFields(Map<String, String> formFields, List<OcrNewLine> allLines) {
         if (formFields == null || allLines == null || allLines.isEmpty()) return;
 
@@ -8402,6 +8529,34 @@ public class OcrNewService {
                 formFields.put(k, tv);
             }
         };
+
+        // 0) Aliases: H&M PDFs label some fields without the trailing "No",
+        //    while the frontend looks them up under the longer name.
+        //    Mirror so both keys hold the same clean value.
+        {
+            String dev = get.apply("Development No");
+            if (dev.isBlank()) dev = get.apply("Development");
+            if (!dev.isBlank()) {
+                putIfBlank.accept("Development No", dev);
+                putIfBlank.accept("Development", dev);
+            }
+
+            String dateOfOrder = get.apply("Date of Order");
+            if (!dateOfOrder.isBlank()) {
+                // Some frontends look up "Order Date" instead.
+                putIfBlank.accept("Order Date", dateOfOrder);
+            } else {
+                String od = get.apply("Order Date");
+                if (!od.isBlank()) putIfBlank.accept("Date of Order", od);
+            }
+
+            String top = get.apply("Terms of Payment");
+            if (top.isBlank()) top = get.apply("Term of Payment");
+            if (!top.isBlank()) {
+                putIfBlank.accept("Terms of Payment", top);
+                putIfBlank.accept("Term of Payment", top);
+            }
+        }
 
         // 1) Customer Group
         {
