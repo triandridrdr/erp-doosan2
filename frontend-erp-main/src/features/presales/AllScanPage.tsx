@@ -820,6 +820,8 @@ export function AllScanPage() {
 
     const extractArticleNoFromKey = (k: string): string => {
       const s = (k ?? '').toString();
+      const mLabel = s.match(/\b(\d{3})\b\s+(\d{2}-\d{3})\b/);
+      if (mLabel?.[1] && mLabel?.[2]) return `${mLabel[1]} ${mLabel[2]}`;
       const m = s.match(/\barticle\s*[:#-]?\s*(\d{3})\b/i);
       if (m?.[1]) return m[1];
       const m2 = s.match(/\b(\d{3})\b/);

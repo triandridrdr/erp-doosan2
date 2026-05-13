@@ -564,6 +564,100 @@ public class OcrNewService {
         return out;
     }
 
+    private static Map<String, String> buildArticleLabelByNoFromHeader(Map<String, String> formFields) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (formFields == null || formFields.isEmpty()) return out;
+
+        String articleNo = "";
+        String hmColourCode = "";
+        for (Map.Entry<String, String> en : formFields.entrySet()) {
+            String k = nvl(en.getKey()).trim().toLowerCase(Locale.ROOT);
+            String v = nvl(en.getValue()).trim();
+            if (v.isBlank()) continue;
+            if (articleNo.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
+                articleNo = v;
+            }
+            if (hmColourCode.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
+                hmColourCode = v;
+            }
+        }
+
+        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNo);
+        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCode);
+        String a3 = am.find() ? am.group(1) : "";
+        String c23 = cm.find() ? cm.group(1) : "";
+        if (a3.isBlank() || c23.isBlank()) return out;
+
+        out.put(a3, (a3 + " " + c23).trim());
+        return out;
+    }
+
+    private static Map<String, String> buildArticleLabelByNoFromHeaderOrLines(
+            Map<String, String> formFields,
+            List<OcrNewLine> allLines
+    ) {
+        Map<String, String> out = buildArticleLabelByNoFromHeader(formFields);
+        if (!out.isEmpty()) return out;
+
+        return buildArticleLabelByNoFromLines(allLines);
+    }
+
+    private static Map<String, String> buildArticleLabelByNoFromLines(List<OcrNewLine> allLines) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (allLines == null || allLines.isEmpty()) return out;
+
+        Pattern aPat = Pattern.compile("(?i)\\barticle\\s*no\\s*[:#-]?\\s*(\\d{3})\\b");
+        Pattern cPat = Pattern.compile("(?i)h\\s*&\\s*m\\s*colou?r\\s*code\\s*[:#-]?\\s*(\\d{2}-\\d{3})\\b");
+
+        String a3 = "";
+        String c23 = "";
+        for (OcrNewLine l : allLines) {
+            if (l == null || l.getText() == null) continue;
+            String t = oneLine(l.getText()).trim();
+            if (t.isBlank()) continue;
+
+            if (a3.isBlank()) {
+                Matcher am = aPat.matcher(t);
+                if (am.find()) a3 = am.group(1);
+            }
+            if (c23.isBlank()) {
+                Matcher cm = cPat.matcher(t);
+                if (cm.find()) c23 = cm.group(1);
+            }
+            if (!a3.isBlank() && !c23.isBlank()) break;
+        }
+
+        if (a3.isBlank() || c23.isBlank()) return out;
+        out.put(a3, (a3 + " " + c23).trim());
+        return out;
+    }
+
+    private static void fillColourSizeBreakdownArticleLabelsFromHeaderOrLines(
+            List<Map<String, String>> colourSizeBreakdown,
+            Map<String, String> formFields,
+            List<OcrNewLine> allLines
+    ) {
+        if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) return;
+        Map<String, String> map = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
+        if (map.isEmpty()) return;
+
+        for (Map<String, String> r : colourSizeBreakdown) {
+            if (r == null) continue;
+            String a = nvl(r.get("article")).trim();
+            if (a.isBlank()) continue;
+
+            Matcher m = Pattern.compile("\\b(\\d{3})\\b").matcher(a);
+            if (!m.find()) continue;
+            String a3 = m.group(1);
+            String label = nvl(map.get(a3)).trim();
+            if (label.isBlank()) continue;
+
+            if (a.matches("^\\d{3}$") || a.matches("(?i)^article\\s*[:#-]?\\s*\\d{3}$")) {
+                r.put("article", label);
+            }
+        }
+    }
+
     private static List<Map<String, String>> deriveTotalCountryBreakdownFromSalesOrderDetail(
             List<Map<String, String>> salesOrderDetailSizeBreakdown,
             List<Map<String, String>> purchaseOrderQuantityPerArticle
@@ -3819,7 +3913,7 @@ public class OcrNewService {
         if (article.isEmpty()) return null;
 
         Map<String, String> m = new LinkedHashMap<>();
-        m.put("article", article);
+        m.put("article", normalizeColourSizeBreakdownArticle(article));
         long sum = 0;
         for (int s = 0; s < n; s++) {
             String key = sizeKeys.get(s);
@@ -3829,6 +3923,21 @@ public class OcrNewService {
         }
         m.put("total", String.valueOf(sum));
         return m;
+    }
+
+    private static String normalizeColourSizeBreakdownArticle(String article0) {
+        String article = nvl(article0).trim();
+        if (article.isBlank()) return article;
+
+        // Preserve the PDF-visible label. Some rows embed extra tokens, but the
+        // stable identifier shown on the PDF is typically:
+        //   Article No (3 digits) + H&M Colour Code (NN-NNN)
+        // Example: "001 22-216".
+        // If both parts are present, return that combined label.
+        Matcher m = Pattern.compile("\\b(\\d{3})\\b.*?\\b(\\d{2}-\\d{3})\\b").matcher(article);
+        if (m.find()) return (m.group(1) + " " + m.group(2)).trim();
+
+        return article;
     }
 
     /**
@@ -4133,7 +4242,7 @@ public class OcrNewService {
             if (values.size() < n) break;
 
             Map<String, String> m = new LinkedHashMap<>();
-            m.put("article", article);
+            m.put("article", normalizeColourSizeBreakdownArticle(article));
             long sum = 0;
             for (int s = 0; s < n; s++) {
                 String key = sizeKeys.get(s);
@@ -5655,6 +5764,22 @@ public class OcrNewService {
             List<Map<String, String>> lineDetail = extractSalesOrderDetailSizeBreakdownFromLines(rawLinesForDetail, formFields);
             List<Map<String, String>> salesOrderDetailSizeBreakdown = !lineDetail.isEmpty() ? lineDetail : tableDetail;
 
+            // Enrich the detail rows so Section 2C shows the PDF-visible article label
+            // (Article No + H&M Colour Code), e.g. "001 22-216".
+            Map<String, String> articleLabelByNo = buildArticleLabelByNoFromDetail(salesOrderDetailSizeBreakdown);
+            if (articleLabelByNo.isEmpty()) {
+                articleLabelByNo = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
+            } else {
+                // Fill missing mappings from header when some articles are absent from detail rows.
+                Map<String, String> hdr = buildArticleLabelByNoFromHeaderOrLines(formFields, allLines);
+                for (Map.Entry<String, String> en : hdr.entrySet()) {
+                    articleLabelByNo.putIfAbsent(en.getKey(), en.getValue());
+                }
+            }
+            if (!articleLabelByNo.isEmpty()) {
+                applyArticleLabelsToDetailRows(salesOrderDetailSizeBreakdown, articleLabelByNo);
+            }
+
             // Extract Total Country Breakdown from tables (Country/PM/size cols/Total)
             List<Map<String, String>> totalCountryBreakdown = extractTotalCountryBreakdownFromTables(tables);
             if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) {
@@ -5676,6 +5801,18 @@ public class OcrNewService {
             if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) {
                 colourSizeBreakdown = extractColourSizeBreakdownFromLines(allLines);
             }
+
+            // If the CSB extractor only captured the 3-digit article number (e.g. "001"),
+            // enrich it using the header fields which usually contain both:
+            //   Article No: 001
+            //   H&M Colour Code: 22-216
+            // so the UI can show the PDF-visible label "001 22-216".
+            fillColourSizeBreakdownArticleLabelsFromHeader(colourSizeBreakdown, formFields);
+            fillColourSizeBreakdownArticleLabelsFromHeaderOrLines(colourSizeBreakdown, formFields, allLines);
+
+            // Align Section 2B article column keys with the PDF-visible article label used by Section 2C
+            // (e.g. "001 22-216"). This makes All Scan and SizePerColour scans consistent.
+            normalizeTotalCountryBreakdownArticleKeys(totalCountryBreakdown, colourSizeBreakdown, articleLabelByNo);
 
             // ── Purchase Order specific extractions ────────────────────────────
             boolean poTodFromPdfText = false;
@@ -6546,6 +6683,143 @@ public class OcrNewService {
         } catch (IOException e) {
             log.error("OCR-NEW file read failed: {}", e.getMessage());
             throw new BusinessException(ErrorCode.OCR_PROCESSING_FAILED, e);
+        }
+
+    }
+
+    private static void normalizeTotalCountryBreakdownArticleKeys(
+            List<Map<String, String>> totalCountryBreakdown,
+            List<Map<String, String>> colourSizeBreakdown,
+            Map<String, String> articleLabelByNo
+    ) {
+        if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) return;
+
+        Map<String, String> labelByArticleNo = new LinkedHashMap<>();
+        if (articleLabelByNo != null && !articleLabelByNo.isEmpty()) {
+            labelByArticleNo.putAll(articleLabelByNo);
+        }
+        if (labelByArticleNo.isEmpty() && colourSizeBreakdown != null && !colourSizeBreakdown.isEmpty()) {
+            Pattern labelPat = Pattern.compile("\\b(\\d{3})\\b.*?\\b(\\d{2}-\\d{3})\\b");
+            for (Map<String, String> r : colourSizeBreakdown) {
+                if (r == null) continue;
+                String a = nvl(r.get("article")).trim();
+                if (a.isBlank()) continue;
+                Matcher m = labelPat.matcher(a);
+                if (!m.find()) continue;
+                String artNo = m.group(1);
+                String label = (m.group(1) + " " + m.group(2)).trim();
+                if (!labelByArticleNo.containsKey(artNo)) labelByArticleNo.put(artNo, label);
+            }
+        }
+        if (labelByArticleNo.isEmpty()) return;
+
+        Pattern artKeyPat = Pattern.compile("(?i)\\barticle\\b[^0-9]*(\\d{3})\\b");
+        for (int i = 0; i < totalCountryBreakdown.size(); i++) {
+            Map<String, String> row = totalCountryBreakdown.get(i);
+            if (row == null || row.isEmpty()) continue;
+
+            Map<String, String> next = new LinkedHashMap<>();
+            for (Map.Entry<String, String> en : row.entrySet()) {
+                String k = en.getKey();
+                String v = en.getValue();
+                if (k == null) continue;
+
+                Matcher km = artKeyPat.matcher(k);
+                if (km.find()) {
+                    String artNo = km.group(1);
+                    String label = labelByArticleNo.get(artNo);
+                    if (label != null && !label.isBlank()) {
+                        next.put("Article:" + label, v);
+                        continue;
+                    }
+                }
+                next.put(k, v);
+            }
+            totalCountryBreakdown.set(i, next);
+        }
+    }
+
+    private static void fillColourSizeBreakdownArticleLabelsFromHeader(
+            List<Map<String, String>> colourSizeBreakdown,
+            Map<String, String> formFields
+    ) {
+        if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) return;
+        if (formFields == null || formFields.isEmpty()) return;
+
+        String articleNo = "";
+        String hmColourCode = "";
+        for (Map.Entry<String, String> en : formFields.entrySet()) {
+            String k = nvl(en.getKey()).trim().toLowerCase(Locale.ROOT);
+            String v = nvl(en.getValue()).trim();
+            if (v.isBlank()) continue;
+            if (articleNo.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
+                articleNo = v;
+            }
+            if (hmColourCode.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
+                hmColourCode = v;
+            }
+        }
+
+        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNo);
+        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCode);
+        String a3 = am.find() ? am.group(1) : "";
+        String c23 = cm.find() ? cm.group(1) : "";
+        if (a3.isBlank() || c23.isBlank()) return;
+
+        String label = (a3 + " " + c23).trim();
+        for (Map<String, String> r : colourSizeBreakdown) {
+            if (r == null) continue;
+            String a = nvl(r.get("article")).trim();
+            if (a.isBlank()) {
+                r.put("article", label);
+                continue;
+            }
+            // Only replace weak forms like "001" or "Article:001"; keep already-rich labels.
+            if (a.matches("^\\d{3}$") || a.matches("(?i)^article\\s*[:#-]?\\s*\\d{3}$")) {
+                r.put("article", label);
+            }
+        }
+    }
+
+    private static Map<String, String> buildArticleLabelByNoFromDetail(List<Map<String, String>> detailRows) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (detailRows == null || detailRows.isEmpty()) return out;
+
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+        Pattern cPat = Pattern.compile("\\b(\\d{2}-\\d{3})\\b");
+        for (Map<String, String> r : detailRows) {
+            if (r == null) continue;
+            String a0 = nvl(r.get("articleNo")).trim();
+            String c0 = nvl(r.get("hmColourCode")).trim();
+            if (a0.isBlank() || c0.isBlank()) continue;
+            Matcher am = aPat.matcher(a0);
+            Matcher cm = cPat.matcher(c0);
+            if (!am.find() || !cm.find()) continue;
+            String a = am.group(1);
+            String c = cm.group(1);
+            String label = (a + " " + c).trim();
+            if (!out.containsKey(a)) out.put(a, label);
+        }
+        return out;
+    }
+
+    private static void applyArticleLabelsToDetailRows(List<Map<String, String>> detailRows, Map<String, String> labelByArticleNo) {
+        if (detailRows == null || detailRows.isEmpty()) return;
+        if (labelByArticleNo == null || labelByArticleNo.isEmpty()) return;
+
+        Pattern aPat = Pattern.compile("\\b(\\d{3})\\b");
+        for (Map<String, String> r : detailRows) {
+            if (r == null) continue;
+            String a0 = nvl(r.get("articleNo")).trim();
+            if (a0.isBlank()) continue;
+            Matcher m = aPat.matcher(a0);
+            if (!m.find()) continue;
+            String a = m.group(1);
+            String label = labelByArticleNo.get(a);
+            if (label == null || label.isBlank()) continue;
+
+            // Overwrite articleNo so the UI (which binds to articleNo) displays the full label.
+            r.put("articleNo", label);
         }
     }
 
