@@ -7,6 +7,11 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import {
+  collectSizeLabelsFromRows,
+  extractSizeKeysFromRow,
+  useEnsureMasterSizesBatch,
+} from '../masterSize/hooks';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -240,7 +245,6 @@ export function AllScanPage() {
       editable: boolean;
     }> = [];
 
-    const SIZE_KEYS = ['XS', 'S', 'M', 'L', 'XL'];
     for (const row of backendDetail ?? []) {
       const type = (row?.type ?? '').toString();
       const countryOfDestination = (row?.countryOfDestination ?? row?.destinationCountry ?? '').toString();
@@ -249,10 +253,14 @@ export function AllScanPage() {
       const total = (row?.total ?? '').toString();
       const noOfAsst = (row?.noOfAsst ?? '').toString();
 
+      // Derive size columns from whatever keys the backend sent on this row
+      // so kids/baby sizes like "0-1M (50)*" aren't silently dropped.
+      const sizeKeys = extractSizeKeysFromRow(row as Record<string, any>);
       let emittedAny = false;
-      for (const k of SIZE_KEYS) {
-        if (row?.[k] === undefined) continue;
-        const qty = (row?.[k] ?? '').toString();
+      for (const k of sizeKeys) {
+        const raw = (row as Record<string, any>)?.[k];
+        if (raw === undefined || raw === null) continue;
+        const qty = raw.toString();
         out.push({ countryOfDestination, articleNo, type, color, size: k, qty, total, noOfAsst, editable: true });
         emittedAny = true;
       }
@@ -262,6 +270,8 @@ export function AllScanPage() {
     }
     return out;
   };
+
+  const ensureMasterSizes = useEnsureMasterSizesBatch();
 
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
@@ -379,6 +389,11 @@ export function AllScanPage() {
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
     if (backendDetail.length > 0) {
       setSalesOrderDetailDraftRows(pivotDetailRows(backendDetail as any));
+
+      // Register any newly-seen size labels with the master table so every
+      // dropdown in the app picks them up on the next render.
+      const discovered = collectSizeLabelsFromRows(backendDetail as any[]);
+      if (discovered.length > 0) ensureMasterSizes.mutate(discovered);
     } else {
       setSalesOrderDetailDraftRows([]);
     }

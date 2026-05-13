@@ -7,6 +7,11 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import {
+  collectSizeLabelsFromRows,
+  extractSizeKeysFromRow,
+  useEnsureMasterSizesBatch,
+} from '../masterSize/hooks';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderApi } from '../salesOrder/api';
@@ -79,7 +84,6 @@ export function SizePerColourBreakdownScanPage() {
       editable: boolean;
     }> = [];
 
-    const SIZE_KEYS = ['XS', 'S', 'M', 'L', 'XL'];
     for (const row of backendDetail ?? []) {
       const type = (row?.type ?? '').toString();
       const countryOfDestination = (row?.countryOfDestination ?? row?.destinationCountry ?? '').toString();
@@ -88,10 +92,14 @@ export function SizePerColourBreakdownScanPage() {
       const total = (row?.total ?? '').toString();
       const noOfAsst = (row?.noOfAsst ?? '').toString();
 
+      // Use whatever size columns the backend sent on THIS row rather than
+      // a hardcoded list, so kids/baby sizes like "0-1M (50)*" flow through.
+      const sizeKeys = extractSizeKeysFromRow(row as Record<string, any>);
       let emittedAny = false;
-      for (const k of SIZE_KEYS) {
-        if (row?.[k] === undefined) continue;
-        const qty = (row?.[k] ?? '').toString();
+      for (const k of sizeKeys) {
+        const raw = (row as Record<string, any>)?.[k];
+        if (raw === undefined || raw === null) continue;
+        const qty = raw.toString();
         out.push({ countryOfDestination, articleNo, type, color, size: k, qty, total, noOfAsst, editable: true });
         emittedAny = true;
       }
@@ -101,6 +109,8 @@ export function SizePerColourBreakdownScanPage() {
     }
     return out;
   };
+
+  const ensureMasterSizes = useEnsureMasterSizesBatch();
 
   const hydrateDraftsFromData = (d: OcrNewDocumentAnalysisResponseData | null) => {
     const ff = d?.formFields ?? {};
@@ -128,6 +138,14 @@ export function SizePerColourBreakdownScanPage() {
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
     if (backendDetail.length > 0) {
       setSalesOrderDetailDraftRows(pivotDetailRows(backendDetail as any));
+
+      // Discover every size label present in the scan and register any that
+      // aren't in the master list yet. Idempotent upserts run in parallel;
+      // master-size cache is invalidated on success.
+      const discovered = collectSizeLabelsFromRows(backendDetail as any[]);
+      if (discovered.length > 0) {
+        ensureMasterSizes.mutate(discovered);
+      }
     } else {
       setSalesOrderDetailDraftRows([]);
     }

@@ -6,6 +6,11 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import {
+  collectSizeLabelsFromRows,
+  extractSizeKeysFromRow,
+  useEnsureMasterSizesBatch,
+} from '../masterSize/hooks';
 import { ocrNewApi } from './api';
 import type { OcrNewDocumentAnalysisResponseData } from './types';
 import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
@@ -148,10 +153,14 @@ export function OcrNewPage() {
     const backendDetail = d?.salesOrderDetailSizeBreakdown ?? [];
     if (backendDetail.length > 0) {
       setSalesOrderDetailDraftRows(pivotDetailRows(backendDetail));
+      const discovered = collectSizeLabelsFromRows(backendDetail);
+      if (discovered.length > 0) ensureMasterSizes.mutate(discovered);
     } else {
       setSalesOrderDetailDraftRows([]);
     }
   };
+
+  const ensureMasterSizes = useEnsureMasterSizesBatch();
 
   const hydrateDraftsFromResultsMerged = (out: Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>) => {
     const mergedHeader: Record<string, string> = {};
@@ -1303,13 +1312,17 @@ function pivotDetailRows(
           },
         ];
       }
-      // Pivot: one backend row with XS/S/M/L/XL -> 5 rows (one per size)
+      // Pivot: one backend row with size columns -> N rows (one per size).
+      // Size keys are discovered dynamically so baby/kids labels like
+      // "0-1M (50)*" or "1½-2Y (92)*" flow through untouched.
       const country = (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString();
       const type = (m?.type ?? '').toString();
       const color = (m?.color ?? m?.colour ?? '').toString();
       const total = (m?.total ?? m?.Total ?? '').toString();
       const noOfAsst = (m?.noOfAsst ?? '').toString();
-      return DETAIL_SIZES.map((sz) => ({
+      const dynamicKeys = extractSizeKeysFromRow(m as Record<string, any>);
+      const sizesToEmit = dynamicKeys.length > 0 ? dynamicKeys : (DETAIL_SIZES as readonly string[]);
+      return sizesToEmit.map((sz) => ({
         countryOfDestination: country,
         type,
         color,

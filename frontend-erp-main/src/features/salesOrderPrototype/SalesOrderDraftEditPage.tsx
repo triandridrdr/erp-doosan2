@@ -6,6 +6,11 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import {
+  collectSizeLabelsFromRows,
+  extractSizeKeysFromRow,
+  useEnsureMasterSizesBatch,
+} from '../masterSize/hooks';
 import { salesOrderPrototypeApi } from './api';
 
 const SALES_ORDER_HEADER_FIELDS = [
@@ -122,7 +127,11 @@ function pivotDetailRows(
       const color = (m?.color ?? m?.colour ?? '').toString();
       const total = (m?.total ?? m?.Total ?? '').toString();
       const noOfAsst = (m?.noOfAsst ?? '').toString();
-      return DETAIL_SIZES.map((sz) => ({
+      // Use whatever size columns the backend sent on this row so
+      // non-standard labels (kids/baby formats) flow through untouched.
+      const dynamicKeys = extractSizeKeysFromRow(m as Record<string, any>);
+      const sizesToEmit = dynamicKeys.length > 0 ? dynamicKeys : (DETAIL_SIZES as readonly string[]);
+      return sizesToEmit.map((sz) => ({
         countryOfDestination: country,
         type,
         color,
@@ -159,6 +168,8 @@ export function SalesOrderDraftEditPage() {
   const [section2cTotalDraftRows, setSection2cTotalDraftRows] = useState<Section2cTotalDraftRow[]>([]);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Successfully updated draft');
+
+  const ensureMasterSizes = useEnsureMasterSizesBatch();
 
   const normalizeSizeKey = (s: string) => (s || '').toUpperCase().replace(/\s+/g, '').replace(/\*+/g, '').trim();
 
@@ -236,6 +247,8 @@ export function SalesOrderDraftEditPage() {
     const detail = (payload?.salesOrderDetailSizeBreakdown ?? []) as any[];
     if (Array.isArray(detail) && detail.length > 0) {
       setSalesOrderDetailDraftRows(pivotDetailRows(detail));
+      const discovered = collectSizeLabelsFromRows(detail);
+      if (discovered.length > 0) ensureMasterSizes.mutate(discovered);
     } else {
       setSalesOrderDetailDraftRows([]);
     }

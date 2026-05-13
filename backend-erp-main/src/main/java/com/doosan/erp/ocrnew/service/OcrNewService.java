@@ -63,6 +63,21 @@ public class OcrNewService {
     private static final Pattern SIZE_VALUE_LINE_FLEX = Pattern.compile("(?i)\\b(X[SL]|S|M|L)\\s*\\([^)]+\\)[^\\d]*(\\d+)\\s*\\)?\\s*$");
     // Pattern for XL lines where OCR misreads numbers as letters (e.g., "41" -> "A" or "4l")
     private static final Pattern SIZE_VALUE_LINE_OCR_FIX = Pattern.compile("(?i)^\\s*(X[SL]|XS)\\s*\\([^)]+\\)\\*?\\s*([A-Za-z0-9]+)\\)?\\s*$");
+    /**
+     * Match an H&amp;M baby/kids age-range size line. Captures:
+     *   group(1) = age range, e.g. "0-1M", "1-2M", "9-12M", "12-18M",
+     *              "1½-2Y", "2-3Y", "10-12Y" (the unicode ½ or "1/2" form
+     *              both supported)
+     *   group(2) = cm size inside parentheses, e.g. "50", "92", "152"
+     *   group(3) = quantity (the trailing integer)
+     * Examples that match:
+     *   "0-1M (50)* 16", "1-2M (56)* 36", "9-12M (80)* 52",
+     *   "12-18M (86)* 69", "1½-2Y (92)* 68", "2-3Y (98)* 52".
+     * The trailing '*' (or other punctuation) is optional because OCR may
+     * drop it and PDFBox sometimes strips it.
+     */
+    private static final Pattern SIZE_VALUE_LINE_KIDS = Pattern.compile(
+            "(?i)^\\s*(\\d{1,2}(?:\u00BD|1/2)?-\\d{1,2}[MY])\\s*\\(\\s*(\\d{2,3})\\s*\\)\\s*[*+.,'\"\u2022]?\\s*(\\d[\\d\\s]{0,12})\\s*$");
     private static final Pattern QUANTITY_LINE = Pattern.compile("^\\s*(?:quantity|qty)\\s*[:#]?\\s*(\\d[\\d\\s]{0,15})\\s*$", Pattern.CASE_INSENSITIVE);
     // Matches an H&M destination code in parentheses: "(PMSCA)", "(PM-UK)", "(PM-TR)", "(OLNAM)".
     // Requires 2 uppercase letters + 1+ uppercase/digit/hyphen. Closing ')' optional (OCR may drop it).
@@ -4057,13 +4072,45 @@ public class OcrNewService {
 
     /**
      * Pattern that matches a clothing size column label. Accepts:
-     *   XS, S, M, L, XL, XXS, XXL    with optional trailing punctuation that OCR
-     *                                 may produce in place of '*' (e.g. '*', '+', '.', "'", '"').
-     *   Same with a "/P" or "IP" suffix (Tesseract often misreads '/' as 'I').
-     * Examples that match: "XS", "S*", "M/P", "XL/P*", "XS+", "XLIP", "M.", "S/P."
+     *   <ul>
+     *     <li>Adult letter sizes: XS, S, M, L, XL, XXS, XXL — with optional
+     *         trailing punctuation that OCR may produce in place of '*'
+     *         (e.g. '*', '+', '.', "'", '"') and an optional "/P" or "IP"
+     *         suffix (Tesseract often misreads '/' as 'I').</li>
+     *     <li>H&amp;M baby/kids age-range labels: forms like
+     *         {@code 0-1M}, {@code 1-2M}, {@code 2-4M}, {@code 9-12M},
+     *         {@code 12-18M}, {@code 1½-2Y}, {@code 2-3Y}, {@code 10-12Y},
+     *         with an optional parenthesized cm size such as
+     *         {@code (50)}, {@code (56)}, … , {@code (152)} and an optional
+     *         trailing '*'. Covers both the merged form {@code "0-1M(50)*"}
+     *         and the bare range form {@code "0-1M"}.</li>
+     *   </ul>
+     * Examples that match:
+     *   {@code "XS"}, {@code "S*"}, {@code "M/P"}, {@code "XL/P*"},
+     *   {@code "XS+"}, {@code "XLIP"}, {@code "M."}, {@code "S/P."},
+     *   {@code "0-1M(50)*"}, {@code "1-2M(56)*"}, {@code "9-12M(80)*"},
+     *   {@code "1½-2Y(92)*"}, {@code "2-3Y(98)*"}, {@code "0-1M"}, {@code "1½-2Y"}.
      */
     private static final Pattern SIZE_LABEL_PAT = Pattern.compile(
-            "(?i)^(?:XX?S|S|M|L|XX?L)(?:[*+.,'\"\u2022])?(?:[/I]P(?:[*+.,'\"\u2022])?)?$");
+            "(?i)^(?:" +
+                    // Adult letter sizes
+                    "(?:XX?S|S|M|L|XX?L)(?:[*+.,'\"\u2022])?(?:[/I]P(?:[*+.,'\"\u2022])?)?" +
+                    "|" +
+                    // H&M baby/kids age-range labels: 0-1M, 1½-2Y, optional (cm)*
+                    "\\d{1,2}(?:\u00BD|1/2)?-\\d{1,2}[MY](?:\\(\\d{2,3}\\)[*+.,'\"\u2022]?)?" +
+                    ")$");
+
+    /**
+     * Match JUST the bare age-range piece of a kids size label, e.g. "0-1M",
+     * "1½-2Y". Used to merge the range token with an adjacent "(cm)*" token
+     * when PDFBox/OCR split them on whitespace.
+     */
+    private static final Pattern KIDS_AGE_RANGE_PAT = Pattern.compile(
+            "(?i)^\\d{1,2}(?:\u00BD|1/2)?-\\d{1,2}[MY]$");
+
+    /** Match the cm-suffix piece of a kids size label, e.g. "(50)", "(92)*". */
+    private static final Pattern KIDS_CM_SUFFIX_PAT = Pattern.compile(
+            "^\\(\\d{2,3}\\)[*+.,'\"\u2022]?$");
 
     /**
      * Collapse spaces inside numeric thousand groups so "1 589" becomes "1589"
@@ -4147,6 +4194,14 @@ public class OcrNewService {
                     if (PUNCT_SUFFIX_PAT.matcher(next).matches()
                             && (SIZE_BASE_PAT.matcher(tok).matches()
                                 || tok.matches("(?i)^(?:XX?S|S|M|L|XX?L)/P$"))) {
+                        out.add(tok + next);
+                        i += 2;
+                        continue;
+                    }
+                    // H&M kids age-range + "(cm)*" → merged single size label.
+                    // PDFBox frequently emits them as two adjacent tokens.
+                    if (KIDS_AGE_RANGE_PAT.matcher(tok).matches()
+                            && KIDS_CM_SUFFIX_PAT.matcher(next).matches()) {
                         out.add(tok + next);
                         i += 2;
                         continue;
@@ -5042,6 +5097,40 @@ public class OcrNewService {
                     continue;
                 }
 
+                // H&M kids/baby lines like "0-1M (50)* 16", "1½-2Y (92)* 68".
+                // Run BEFORE the adult patterns because adult regexes require
+                // a leading letter and won't match these — but we want a
+                // dedicated path so the kids age-range becomes a real size key
+                // on the current row instead of being silently dropped (which
+                // would leave the row with no sizes and trip ensureSizeDefaults
+                // into seeding misleading XS/S/M/L/XL=0 placeholders).
+                Matcher km = SIZE_VALUE_LINE_KIDS.matcher(t);
+                if (km.matches()) {
+                    String kidsKey = normalizeKidsSizeKey(km.group(1), km.group(2));
+                    List<String> kvals = splitMultiArticleNumbers(km.group(3), articleNos.size());
+                    if (kidsKey != null
+                            && currentRowsByArticle[0] != null
+                            && !currentRowsByArticle[0].isEmpty()
+                            && !kvals.isEmpty()) {
+                        if (kvals.size() == articleNos.size() && articleNos.size() > 1) {
+                            for (int ai = 0; ai < articleNos.size(); ai++) {
+                                Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
+                                if (r != null) r.put(kidsKey, kvals.get(ai));
+                            }
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_KIDS multi matched: line='{}' -> size={} valuesCount={}",
+                                    t, kidsKey, kvals.size());
+                        } else {
+                            String kv = kvals.get(0);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_KIDS matched: line='{}' -> size={} value={}", t, kidsKey, kv);
+                            for (Map<String, String> r : currentRowsByArticle[0].values()) {
+                                if (r != null) r.put(kidsKey, kv);
+                            }
+                        }
+                        sawAnySize[0] = true;
+                        continue;
+                    }
+                }
+
                 // Lines like: "XS (XS)* 236", "L(L)y* 622"
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
@@ -5613,28 +5702,73 @@ public class OcrNewService {
         return out;
     }
 
+    /**
+     * Meta keys that exist on a Section-2 row but are NOT size-quantity columns.
+     * Used by {@link #ensureSizeDefaults} to detect non-adult size layouts (kids /
+     * baby) and by total computation to know which row entries to sum.
+     */
+    private static final Set<String> SECTION2_META_KEYS = Set.of(
+            "type", "color", "colour", "articleno", "article",
+            "destinationcountry", "countryofdestination", "noofasst",
+            "total", "size", "qty");
+
     private static void ensureSizeDefaults(Map<String, String> row) {
         if (row == null) return;
         String type = row.get("type");
         if (type == null) return;
         if (!("Assortment".equals(type) || "Solid".equals(type) || "Total".equals(type))) return;
 
-        List<String> sizes = List.of("XS", "S", "M", "L", "XL");
-        int sum = 0;
-        boolean anyNumeric = false;
-        for (String sz : sizes) {
-            String v = row.get(sz);
-            if (v == null || v.isBlank()) {
-                row.put(sz, "0");
-                v = "0";
-            }
-            try {
-                int iv = Integer.parseInt(v.replaceAll("\\s+", ""));
-                sum += iv;
-                anyNumeric = true;
-            } catch (NumberFormatException ignored) {}
+        List<String> adultSizes = List.of("XS", "S", "M", "L", "XL");
+
+        // Detect whether this row already carries non-adult size keys (e.g. kids
+        // age-range labels like "0-1M(50)" or "1½-2Y(92)"). When it does, we must
+        // NOT seed XS/S/M/L/XL=0 placeholders — that would force the frontend to
+        // render five empty adult rows alongside the real kids data and confuse
+        // the user (this is exactly the "size belum berubah" symptom).
+        boolean hasNonAdultSize = false;
+        for (Map.Entry<String, String> e : row.entrySet()) {
+            String k = e.getKey();
+            if (k == null) continue;
+            String low = k.toLowerCase(Locale.ROOT);
+            if (SECTION2_META_KEYS.contains(low)) continue;
+            if (adultSizes.contains(k)) continue;
+            String v = e.getValue();
+            if (v != null && !v.isBlank()) { hasNonAdultSize = true; break; }
         }
-        
+
+        long sum = 0;
+        boolean anyNumeric = false;
+
+        if (hasNonAdultSize) {
+            // Non-adult layout: sum every numeric non-meta key already on the row.
+            for (Map.Entry<String, String> e : row.entrySet()) {
+                String k = e.getKey();
+                if (k == null) continue;
+                if (SECTION2_META_KEYS.contains(k.toLowerCase(Locale.ROOT))) continue;
+                String v = e.getValue();
+                if (v == null || v.isBlank()) continue;
+                try {
+                    sum += Integer.parseInt(v.replaceAll("\\s+", ""));
+                    anyNumeric = true;
+                } catch (NumberFormatException ignored) {}
+            }
+        } else {
+            // Adult layout: fill any missing XS/S/M/L/XL with "0" so downstream
+            // reconciliation (Total = Solid + Assortment*NoOfAsst) has a complete
+            // grid to work against.
+            for (String sz : adultSizes) {
+                String v = row.get(sz);
+                if (v == null || v.isBlank()) {
+                    row.put(sz, "0");
+                    v = "0";
+                }
+                try {
+                    sum += Integer.parseInt(v.replaceAll("\\s+", ""));
+                    anyNumeric = true;
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
         // NOTE: Previously there was "verification" logic here that tried to correct
         // a size value when sum != total by adding the entire diff to the first size
         // with value < 10. This was removed because it caused incorrect results when
@@ -5789,6 +5923,26 @@ public class OcrNewService {
         if (s.equals("M")) return "M";
         if (s.equals("L")) return "L";
         return null;
+    }
+
+    /**
+     * Build the canonical map key used to store a kids/baby size value on a row.
+     * Joins the age-range and cm parts so the resulting key has no whitespace
+     * (e.g. {@code "0-1M(50)"}, {@code "1½-2Y(92)"}). Returns {@code null} if
+     * the age-range piece doesn't match {@link #KIDS_AGE_RANGE_PAT}; the cm
+     * piece is optional and gets stripped of non-digits before being appended.
+     *
+     * @param ageRange raw age-range token, e.g. "0-1M", "1½-2Y"
+     * @param cm raw cm token (digits only), e.g. "50", "92" — may be null
+     */
+    private static String normalizeKidsSizeKey(String ageRange, String cm) {
+        if (ageRange == null) return null;
+        String ar = ageRange.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", "").replaceAll("\\*+", "");
+        if (!KIDS_AGE_RANGE_PAT.matcher(ar).matches()) return null;
+        if (cm == null) return ar;
+        String cn = cm.trim().replaceAll("[^0-9]", "");
+        if (cn.isEmpty()) return ar;
+        return ar + "(" + cn + ")";
     }
 
     private static String normalizeNumber(String raw) {
