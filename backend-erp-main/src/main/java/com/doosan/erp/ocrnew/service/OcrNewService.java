@@ -4192,9 +4192,24 @@ public class OcrNewService {
         List<Integer> intIndices = new ArrayList<>();
         List<String> intValues = new ArrayList<>();
         for (int t = 0; t < tokens.length; t++) {
-            if (tokens[t].matches("\\d+")) {
+            String tok = tokens[t];
+            if (tok == null || tok.isEmpty()) continue;
+            // Ignore non-qty tokens like H&M colour code "12-201" or alphanumeric noise.
+            if (tok.indexOf('-') >= 0) continue;
+            boolean hasLetter = false;
+            for (int i = 0; i < tok.length(); i++) {
+                if (Character.isLetter(tok.charAt(i))) {
+                    hasLetter = true;
+                    break;
+                }
+            }
+            if (hasLetter) continue;
+
+            // Allow OCR thousand separators like apostrophes: 1'010 -> 1010
+            String norm = normalizeNumberToken(tok);
+            if (!norm.isBlank()) {
                 intIndices.add(t);
-                intValues.add(tokens[t]);
+                intValues.add(norm);
             }
         }
         int n = sizeKeys.size();
@@ -4532,7 +4547,18 @@ public class OcrNewService {
                 String vtok = tokens.get(t);
                 String l3 = vtok.toLowerCase(Locale.ROOT);
                 if (l3.equals("article") || l3.startsWith("total")) break;
-                if (!vtok.matches("\\d+")) {
+                if (vtok.indexOf('-') >= 0) {
+                    t++;
+                    continue;
+                }
+                boolean hasLetter = false;
+                for (int i = 0; i < vtok.length(); i++) {
+                    if (Character.isLetter(vtok.charAt(i))) {
+                        hasLetter = true;
+                        break;
+                    }
+                }
+                if (hasLetter) {
                     t++;
                     continue;
                 }
@@ -4635,7 +4661,7 @@ public class OcrNewService {
         // Keep only digits
         digits = digits.replaceAll("[^0-9]", "");
         // If the token is actually a doubled value like '18571857', collapse to one half
-        if (digits.length() >= 2 && (digits.length() % 2 == 0)) {
+        if (digits.length() >= 6 && (digits.length() % 2 == 0)) {
             int half = digits.length() / 2;
             String a = digits.substring(0, half);
             String b = digits.substring(half);
