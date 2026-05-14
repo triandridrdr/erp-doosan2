@@ -10,6 +10,7 @@ import {
   CircleUser,
   ClipboardList,
   Cog,
+  Database,
   Factory,
   Layers,
   LayoutDashboard,
@@ -100,6 +101,11 @@ const navigation: NavItem[] = [
   { name: 'Performance', icon: Layers, children: [{ name: 'Overview', href: '#performance' }] },
   { name: 'HR', icon: Briefcase, children: [{ name: 'Overview', href: '#hr' }] },
   { name: 'Customizing', icon: Cog, children: [{ name: 'Settings', href: '#customizing' }] },
+  {
+    name: 'Master Data',
+    icon: Database,
+    children: [{ name: 'Ukuran (Size)', href: '/master/sizes' }],
+  },
 ];
 
 // All real routes that exist in the router
@@ -116,6 +122,7 @@ const REAL_ROUTES = new Set<string>([
   '/presales/size-per-colour-breakdown-scan',
   '/presales/total-country-breakdown-scan',
   '/presales/all-scan',
+  '/master/sizes',
 ]);
 
 function isPlaceholder(href: string) {

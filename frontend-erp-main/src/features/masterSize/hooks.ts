@@ -61,6 +61,7 @@ export function collectSizeLabelsFromRows(rows: Array<Record<string, any>> | nul
 }
 
 export const MASTER_SIZES_QUERY_KEY = ['master-sizes', 'active'] as const;
+export const ALL_MASTER_SIZES_QUERY_KEY = ['master-sizes', 'all'] as const;
 
 /** Fetch & cache the active master size list. */
 export function useMasterSizes() {
@@ -145,6 +146,51 @@ export function useEnsureMasterSizesBatch() {
       if (inserted && inserted.length > 0) {
         qc.invalidateQueries({ queryKey: MASTER_SIZES_QUERY_KEY });
       }
+    },
+  });
+}
+
+/** Fetch ALL master sizes including inactive — for the management page. */
+export function useAllMasterSizes() {
+  return useQuery({
+    queryKey: ALL_MASTER_SIZES_QUERY_KEY,
+    queryFn: async () => {
+      const res = await masterSizeApi.list({ includeInactive: true });
+      return (res?.data ?? []) as MasterSizeDto[];
+    },
+  });
+}
+
+/** Soft-delete a master size by id. Invalidates both active and all caches. */
+export function useDeleteMasterSize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => masterSizeApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['master-sizes'] });
+    },
+  });
+}
+
+/** Add (upsert) a master size. Invalidates both active and all caches. */
+export function useAddMasterSize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: MasterSizeUpsertRequest) => masterSizeApi.upsert(request),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['master-sizes'] });
+    },
+  });
+}
+
+/** Restore (reactivate) a soft-deleted / inactive master size. */
+export function useRestoreMasterSize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label }: { id: number; label: string }) =>
+      masterSizeApi.update(id, { label, active: true }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['master-sizes'] });
     },
   });
 }

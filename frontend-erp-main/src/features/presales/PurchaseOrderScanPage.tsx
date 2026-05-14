@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
+import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
 import { salesOrderApi } from '../salesOrder/api';
 import {
   collectSizeLabelsFromRows,
@@ -1896,7 +1897,7 @@ useEffect(() => {
                           />
                         </td>
                         <td className='px-3 py-2 border-b border-gray-100'>
-                          <Input
+                          <SizeComboboxInput
                             value={row.size ?? ''}
                             onChange={(e) => {
                               const v = e.target.value;

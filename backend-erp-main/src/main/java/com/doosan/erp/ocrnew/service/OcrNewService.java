@@ -628,7 +628,7 @@ public class OcrNewService {
         }
 
         if (articleNos.isEmpty()) return out;
-        String v = nvl(colourJoined).replaceAll("\\s*\\|\\s*", " ").replaceAll("\\s+", " ").trim();
+        String v = cleanColourName(nvl(colourJoined).replaceAll("\\s*\\|\\s*", " "));
         if (v.isBlank()) return out;
 
         if (articleNos.size() == 1) {
@@ -3452,7 +3452,7 @@ public class OcrNewService {
             colourBuf.append(s);
         }
 
-        String colour = colourBuf.toString().replaceAll("\\s+", " ").trim();
+        String colour = cleanColourName(colourBuf.toString());
         if (colour.isBlank()) return;
 
         Pattern optionLikePat = Pattern.compile("^\\s*[0-9A-Z]{3,}\\s*\\(V\\d+\\)\\s*$");
@@ -6070,6 +6070,25 @@ public class OcrNewService {
         String cn = cm.trim().replaceAll("[^0-9]", "");
         if (cn.isEmpty()) return ar;
         return ar + "(" + cn + ")";
+    }
+
+    /**
+     * Remove orphaned single-letter prefix that duplicates the first character of the following word.
+     * E.g. "Khaki g green Medium Dusty" -> "Khaki green Medium Dusty".
+     * Caused by PDF font glyph runs emitting the first letter as a separate text object.
+     */
+    private static final Pattern COLOUR_DUPE_PREFIX_PAT =
+            Pattern.compile("\\b([A-Za-z]) (\\1[A-Za-z]+)\\b", Pattern.CASE_INSENSITIVE);
+    private static String cleanColourName(String colour) {
+        if (colour == null) return "";
+        String s = colour;
+        // Iteratively remove until stable (in case of multiple occurrences)
+        String prev;
+        do {
+            prev = s;
+            s = COLOUR_DUPE_PREFIX_PAT.matcher(s).replaceAll("$2");
+        } while (!s.equals(prev));
+        return s.replaceAll("\\s+", " ").trim();
     }
 
     private static String normalizeNumber(String raw) {
@@ -10118,14 +10137,14 @@ public class OcrNewService {
                     Matcher optM = optionNoPat.matcher(rem);
                     if (optM.find()) {
                         optionNo = (optM.group(1).trim() + " (" + optM.group(2).trim() + ")").trim();
-                        colour = rem.substring(0, optM.start()).replaceAll("\\s+", " ").trim();
+                        colour = cleanColourName(rem.substring(0, optM.start()));
                     } else {
                         Matcher gaM = trailingGaPat.matcher(rem);
                         if (gaM.find()) {
-                            colour = nvl(gaM.group(1)).replaceAll("\\s+", " ").trim();
+                            colour = cleanColourName(nvl(gaM.group(1)));
                             graphicalAppearance = nvl(gaM.group(2)).replaceAll("\\s+", " ").trim();
                         } else {
-                            colour = rem;
+                            colour = cleanColourName(rem);
                         }
                     }
 

@@ -21,6 +21,7 @@ import { SupplementaryScanPage } from '../features/presales/SupplementaryScanPag
 import { TotalCountryBreakdownScanPage } from '../features/presales/TotalCountryBreakdownScanPage';
 import { SalesOrderListPage } from '../features/sales/SalesOrderListPage';
 import { SalesOrderDraftEditPage } from '../features/salesOrderPrototype/SalesOrderDraftEditPage';
+import { MasterSizePage } from '../features/masterSize/MasterSizePage';
 import { SalesOrderDraftListPage } from '../features/salesOrderPrototype/SalesOrderDraftListPage';
 
 function ProtectedRoute() {
@@ -50,6 +51,7 @@ const router = createBrowserRouter([
       { path: 'presales/size-per-colour-breakdown-scan', element: <SizePerColourBreakdownScanPage /> },
       { path: 'presales/total-country-breakdown-scan', element: <TotalCountryBreakdownScanPage /> },
       { path: 'presales/all-scan', element: <AllScanPage /> },
+      { path: 'master/sizes', element: <MasterSizePage /> },
     ],
   },
   { path: '*', element: <Navigate to='/' replace /> },

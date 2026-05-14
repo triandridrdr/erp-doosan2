@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderApi } from '../salesOrder/api';
@@ -500,7 +500,7 @@ export function TotalCountryBreakdownScanPage() {
                         <Input value={row.article} onChange={(e) => setSection2cDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: e.target.value } : r)))} />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <SizeAutocompleteInput
+                        <SizeComboboxInput
                           value={row.size}
                           onChange={(e) => {
                             const v = normalizeSizeKey(e.target.value);

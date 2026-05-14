@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
 import {
   collectSizeLabelsFromRows,
   extractSizeKeysFromRow,
@@ -496,7 +496,7 @@ export function SizePerColourBreakdownScanPage() {
                                 <Input value={row.color} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))} />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                                <SizeAutocompleteInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
+                                <SizeComboboxInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                                 <Input value={row.qty} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: e.target.value } : r)))} />
@@ -621,7 +621,7 @@ export function SizePerColourBreakdownScanPage() {
                                 <Input value={row.color} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: e.target.value } : r)))} />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                                <SizeAutocompleteInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
+                                <SizeComboboxInput value={row.size} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))} />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                                 <Input value={row.qty} onChange={(e) => setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: e.target.value } : r)))} />

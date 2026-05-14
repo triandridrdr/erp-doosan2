@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { SizeAutocompleteInput } from '../../components/ui/SizeAutocompleteInput';
+import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
 import {
   collectSizeLabelsFromRows,
   extractSizeKeysFromRow,
@@ -2644,7 +2644,7 @@ export function AllScanPage() {
                                 />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                                <SizeAutocompleteInput
+                                <SizeComboboxInput
                                   value={formatSizeDisplay(row.size)}
                                   onChange={(e) =>
                                     setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))
@@ -2804,7 +2804,7 @@ export function AllScanPage() {
                                 />
                               </td>
                               <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                                <SizeAutocompleteInput
+                                <SizeComboboxInput
                                   value={formatSizeDisplay(row.size)}
                                   onChange={(e) =>
                                     setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: e.target.value } : r)))
@@ -3013,7 +3013,7 @@ export function AllScanPage() {
                         />
                       </td>
                       <td className='px-3 py-2 align-top'>
-                        <SizeAutocompleteInput
+                        <SizeComboboxInput
                           value={row.size}
                           onChange={(e) => {
                             const v = normalizeSizeKey(e.target.value);
