@@ -4,6 +4,7 @@ import com.doosan.erp.salesorder.entity.SoHeader;
 import lombok.Builder;
 import lombok.Getter;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Getter
@@ -12,7 +13,8 @@ public class SoHeaderResponse {
     private Long id;
     private String soNumber;
     private String workflowStatus;
-    private String orderDate;
+    private LocalDate orderDate;
+    private String timeOfDelivery;
     private String season;
     private String supplierCode;
     private String supplierName;
@@ -47,6 +49,7 @@ public class SoHeaderResponse {
                 .soNumber(h.getSoNumber())
                 .workflowStatus(h.getWorkflowStatus().name())
                 .orderDate(h.getOrderDate())
+                .timeOfDelivery(h.getTimeOfDelivery())
                 .season(h.getSeason())
                 .supplierCode(h.getSupplierCode())
                 .supplierName(h.getSupplierName())

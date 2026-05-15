@@ -40,7 +40,7 @@ export function TotalCountryBreakdownScanPage() {
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<
-    Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }>
+    Array<{ country: string; pmCode: string; article: string; qty: string; editable: boolean }>
   >([]);
 
   const [section2cDraftRows, setSection2cDraftRows] = useState<Array<{ article: string; size: string; qty: string; editable: boolean }>>([]);
@@ -63,7 +63,6 @@ export function TotalCountryBreakdownScanPage() {
     (
       rows: Array<{
         country: string;
-        countryOfDestination?: string;
         pmCode: string;
         article: string;
         qty: string;
@@ -82,14 +81,13 @@ export function TotalCountryBreakdownScanPage() {
       }
 
       const normalizeDigitsLocal = (v: any) => (v ?? '').toString().replace(/[^0-9]/g, '');
-      const byGroup = new Map<string, { country: string; pmCode: string; countryOfDestination: string; byArticle: Map<string, number> }>();
+      const byGroup = new Map<string, { country: string; pmCode: string; byArticle: Map<string, number> }>();
 
       for (const r of rows ?? []) {
         const country = (r?.country ?? '').toString();
         const pmCode = (r?.pmCode ?? '').toString();
-        const cod = (r?.countryOfDestination ?? '').toString();
-        const gk = `${country}||${pmCode}||${cod}`;
-        const agg = byGroup.get(gk) ?? { country, pmCode, countryOfDestination: cod, byArticle: new Map<string, number>() };
+        const gk = `${country}||${pmCode}`;
+        const agg = byGroup.get(gk) ?? { country, pmCode, byArticle: new Map<string, number>() };
         byGroup.set(gk, agg);
 
         const art = parseArticleNo((r?.article ?? '').toString());
@@ -105,6 +103,7 @@ export function TotalCountryBreakdownScanPage() {
           pmCode: agg.pmCode,
           total: '0',
         };
+        // countryOfDestination intentionally excluded
         let total = 0;
         for (const [art, qty] of agg.byArticle.entries()) {
           total += qty;
@@ -153,16 +152,15 @@ export function TotalCountryBreakdownScanPage() {
         return s;
       };
 
-      const out: Array<{ country: string; countryOfDestination?: string; pmCode: string; article: string; qty: string; editable: boolean }> = [];
+      const out: Array<{ country: string; pmCode: string; article: string; qty: string; editable: boolean }> = [];
       for (const m of rows as any[]) {
         const country = toVal(m, kCountry);
-        const countryOfDestination = kCountryOfDestination ? toVal(m, kCountryOfDestination) : '';
         const pmCode = toVal(m, kPm);
         for (const ak of articleKeys) {
           const article = extractArticleNoFromKey(ak);
           const qty = toVal(m, ak);
           if (!qty.trim()) continue;
-          out.push({ country, countryOfDestination, pmCode, article, qty, editable: true });
+          out.push({ country, pmCode, article, qty, editable: true });
         }
       }
       setCountryBreakdownDraftRows(out);
@@ -257,9 +255,9 @@ export function TotalCountryBreakdownScanPage() {
       return salesOrderApi.saveDraft(payload);
     },
     onSuccess: (res) => {
-      const soId = (res as any)?.data?.id;
+      const soId = (res as any)?.data?.soHeaderId;
       if (soId !== undefined && soId !== null) {
-        setSuccessMessage(`Successfully created draft id "${soId}"`);
+        setSuccessMessage(`Successfully created draft SO Header id "${soId}"`);
         setLastSavedId(Number(soId));
       } else {
         setSuccessMessage('Successfully created draft.');
@@ -303,7 +301,7 @@ export function TotalCountryBreakdownScanPage() {
 
         <div className='mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-end'>
           <div>
-            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF/Image</label>
+            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF</label>
             <Input
               type='file'
               accept='.pdf,image/png,image/jpeg,image/jpg'
@@ -385,7 +383,7 @@ export function TotalCountryBreakdownScanPage() {
               variant='primary'
               disabled={!data}
               onClick={() => {
-                setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', countryOfDestination: '', article: '', qty: '', editable: true }]);
+                setCountryBreakdownDraftRows((prev) => [...prev, { country: '', pmCode: '', article: '', qty: '', editable: true }]);
               }}
             >
               Add row
@@ -404,7 +402,6 @@ export function TotalCountryBreakdownScanPage() {
                   <tr>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>PM Code</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Country of Destination</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Article</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
                     <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
@@ -418,16 +415,6 @@ export function TotalCountryBreakdownScanPage() {
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                         <Input value={row.pmCode} onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, pmCode: e.target.value } : r)))} />
-                      </td>
-                      <td className='px-3 py-2 text-sm text-gray-700 align-top'>
-                        <Input
-                          value={(row.countryOfDestination ?? '').toString()}
-                          onChange={(e) =>
-                            setCountryBreakdownDraftRows((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: e.target.value } : r))
-                            )
-                          }
-                        />
                       </td>
                       <td className='px-3 py-2 text-sm text-gray-700 align-top'>
                         <Input value={(row.article ?? '').toString()} onChange={(e) => setCountryBreakdownDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, article: e.target.value } : r)))} />

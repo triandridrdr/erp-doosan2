@@ -156,7 +156,8 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 ├────────────────────────────────────────────────────────────────────────────────────┤
 │ so_number              VARCHAR(64) UNIQUE NN                                        │
 │ workflow_status        VARCHAR(32) NN  [DRAFT_OCR|OCR_REVIEW|PRE_SO|SO_APPROVED|...]│
-│ order_date             VARCHAR(255)                                                 │
+│ order_date             DATE                                                         │
+│ time_of_delivery       VARCHAR(255)                                                 │
 │ season                 VARCHAR(255)                                                 │
 │ supplier_code          VARCHAR(255)                                                 │
 │ supplier_name          VARCHAR(255)                                                 │
@@ -191,10 +192,12 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 │ file_hash           │ │ file_hash         │ │ file_hash          │ │ file_hash               │
 │ revision     NN     │ │ revision     NN   │ │ revision     NN    │ │ revision     NN         │
 │ scan_status  NN     │ │ scan_status  NN   │ │ scan_status  NN    │ │ scan_status  NN         │
-│ ocr_raw_jsonb TEXT  │ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT │ │ ocr_raw_jsonb TEXT      │
+│ ocr_raw_jsonb TEXT  │ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT │ │ ocr_raw_jsonb TEXT      │
 │ ocr_confidence      │ │ ocr_confidence    │ │ ocr_confidence     │ │ ocr_confidence          │
 │ page_count          │ │ page_count        │ │ page_count         │ │ page_count              │
-│ + BaseEntity        │ │ + BaseEntity      │ │ + BaseEntity       │ │ + BaseEntity            │
+│ + JSON blob fields  │ │ + JSON blob fields│ │ bom_draft_json     │ │ + BaseEntity            │
+│ (section2c, cb, sb) │ │ (bom,sb,cb,s2cT)  │ │ + BaseEntity       │ │                         │
+│ + BaseEntity        │ │ + BaseEntity      │ │                    │ │                         │
 └──┬──┬──┬──┬──┬──────┘ └──┬──┬──┬──┬──┬───┘ └──────┬─────────────┘ └───────┬──────┬──────────┘
    │  │  │  │  │            │  │  │  │  │            │ 1:N                   │ 1:N  │ 1:N
    │  │  │  │  │            │  │  │  │  │            ▼                       ▼      ▼
@@ -330,6 +333,7 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 | option_no | VARCHAR(64) | |
 | cost | VARCHAR(32) | |
 | qty_article | VARCHAR(32) | |
+| graphical_appearance | VARCHAR(256) | |
 | + BaseEntity fields | | |
 
 #### `so_po_time_of_delivery`

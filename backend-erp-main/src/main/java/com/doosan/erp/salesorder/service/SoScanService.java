@@ -9,8 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -69,6 +72,11 @@ public class SoScanService {
         scan.setFileName(fileName);
         scan.setRevision(nextRevision);
         scan.setOcrRawJsonb(toJson(payload.get("raw")));
+
+        // Save supplementary-specific JSON blobs from other document types (if present)
+        scan.setSizeBreakdownJson(toJson(payload.get("salesOrderDetailSizeBreakdown")));
+        scan.setCountryBreakdownJson(toJson(buildCountryBreakdownMerged(payload)));
+        scan.setSection2cTotalJson(toJson(payload.get("section2cColourSizeBreakdownTotal")));
 
         // BOM items
         List<Map<String, Object>> bomRows = getListOfMaps(payload, "bomDraftRows");
@@ -172,6 +180,12 @@ public class SoScanService {
         scan.setRevision(nextRevision);
         scan.setOcrRawJsonb(toJson(payload.get("raw")));
 
+        // Save PO-specific JSON blobs from other document types (if present)
+        scan.setBomDraftJson(toJson(payload.get("bomDraftRows")));
+        scan.setSizeBreakdownJson(toJson(payload.get("salesOrderDetailSizeBreakdown")));
+        scan.setCountryBreakdownJson(toJson(buildCountryBreakdownMerged(payload)));
+        scan.setSection2cTotalJson(toJson(payload.get("section2cColourSizeBreakdownTotal")));
+
         // PO Items (Quantity per Article) - from payload directly
         List<Map<String, Object>> qpaRows = getListOfMaps(payload, "quantityPerArticleRows");
         for (int i = 0; i < qpaRows.size(); i++) {
@@ -188,6 +202,7 @@ public class SoScanService {
             item.setOptionNo(str(row.get("optionNo")));
             item.setCost(str(row.get("cost")));
             item.setQtyArticle(str(row.get("qtyArticle")));
+            item.setGraphicalAppearance(str(row.get("graphicalAppearance")));
             scan.getItems().add(item);
         }
 
@@ -248,7 +263,9 @@ public class SoScanService {
             ss.setColour(str(row.get("colour")));
             ss.setSize(str(row.get("size")));
             ss.setQty(str(row.get("qty")));
-            ss.setTimeOfDelivery(str(row.get("timeOfDelivery")));
+            String tod = str(row.get("timeOfDelivery"));
+            if (tod.isBlank()) tod = str(row.get("tod"));
+            ss.setTimeOfDelivery(tod);
             ss.setDestinationStudio(str(row.get("destinationStudio")));
             ss.setSalesSampleTerms(str(row.get("salesSampleTerms")));
             ss.setDestinationStudioAddress(str(row.get("destinationStudioAddress")));
@@ -282,6 +299,8 @@ public class SoScanService {
         scan.setFileName(fileName);
         scan.setRevision(nextRevision);
         scan.setOcrRawJsonb(toJson(payload.get("raw")));
+
+        scan.setBomDraftJson(toJson(payload.get("bomDraftRows")));
 
         List<Map<String, Object>> rows = getListOfMaps(payload, "salesOrderDetailSizeBreakdown");
         for (int i = 0; i < rows.size(); i++) {
@@ -390,7 +409,7 @@ public class SoScanService {
         Map<String, Object> ff = (Map<String, Object>) payload.get("formFields");
         if (ff == null) return;
 
-        mergeField(header::getOrderDate, header::setOrderDate, str(ff.get("Order Date")), str(ff.get("Date (ISO)")));
+        mergeOrderDate(header, str(ff.get("Order Date")), str(ff.get("Date (ISO)")), str(ff.get("Date")));
         mergeField(header::getSeason, header::setSeason, str(ff.get("Season")));
         mergeField(header::getSupplierCode, header::setSupplierCode, str(ff.get("Supplier Code")));
         mergeField(header::getSupplierName, header::setSupplierName, str(ff.get("Supplier")));
@@ -407,9 +426,41 @@ public class SoScanService {
         mergeField(header::getCountryOfDelivery, header::setCountryOfDelivery, str(ff.get("Country of Bakery")), str(ff.get("Country of Delivery")));
         mergeField(header::getTermsOfPayment, header::setTermsOfPayment, str(ff.get("Term of Payment")), str(ff.get("Terms of Payment")));
         mergeField(header::getTermsOfDelivery, header::setTermsOfDelivery, str(ff.get("Terms of Delivery")));
+        mergeField(header::getTimeOfDelivery, header::setTimeOfDelivery, str(ff.get("Time of Delivery")));
         mergeField(header::getNoOfPieces, header::setNoOfPieces, str(ff.get("No of Pieces")));
         mergeField(header::getSalesMode, header::setSalesMode, str(ff.get("Sales Models")), str(ff.get("Sales Mode")));
         mergeField(header::getPtProdNo, header::setPtProdNo, str(ff.get("PT Prod No")));
+    }
+
+    private void mergeOrderDate(SoHeader header, String... candidates) {
+        if (header.getOrderDate() != null) return;
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) {
+                LocalDate parsed = parseDateSafe(c);
+                if (parsed != null) {
+                    header.setOrderDate(parsed);
+                    return;
+                }
+            }
+        }
+    }
+
+    private LocalDate parseDateSafe(String s) {
+        if (s == null || s.isBlank()) return null;
+        DateTimeFormatter[] formats = {
+            DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+            DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+            DateTimeFormatter.ofPattern("d-MMM-yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+        };
+        for (DateTimeFormatter fmt : formats) {
+            try { return LocalDate.parse(s.trim(), fmt); } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     private void mergeField(java.util.function.Supplier<String> getter,
@@ -469,6 +520,18 @@ public class SoScanService {
         }
         if (!prev.isEmpty()) scanCbRepo.saveAll(prev);
         return maxRev + 1;
+    }
+
+    // ─── HELPER: Build merged country/section2c JSON ─────────────────────────────
+
+    private Map<String, Object> buildCountryBreakdownMerged(Map<String, Object> payload) {
+        Object cb = payload.get("totalCountryBreakdown");
+        Object cs = payload.get("section2cColourSizeBreakdown");
+        if (cb == null && cs == null) return null;
+        return Map.of(
+            "totalCountryBreakdown", cb != null ? cb : List.of(),
+            "section2cColourSizeBreakdown", cs != null ? cs : List.of()
+        );
     }
 
     // ─── HELPER: Extract SO Number ───────────────────────────────────────────────

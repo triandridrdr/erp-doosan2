@@ -219,9 +219,9 @@ export function SizePerColourBreakdownScanPage() {
       return salesOrderApi.saveDraft(payload);
     },
     onSuccess: (res) => {
-      const soId = (res as any)?.data?.id;
+      const soId = (res as any)?.data?.soHeaderId;
       if (soId !== undefined && soId !== null) {
-        setSuccessMessage(`Successfully created draft id "${soId}"`);
+        setSuccessMessage(`Successfully created draft SO Header id "${soId}"`);
         setLastSavedId(Number(soId));
       } else {
         setSuccessMessage('Successfully created draft.');
@@ -318,7 +318,7 @@ export function SizePerColourBreakdownScanPage() {
 
         <div className='mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-end'>
           <div>
-            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF/Image</label>
+            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF</label>
             <Input
               type='file'
               accept='.pdf,image/png,image/jpeg,image/jpg'

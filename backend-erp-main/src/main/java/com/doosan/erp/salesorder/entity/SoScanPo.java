@@ -58,4 +58,20 @@ public class SoScanPo extends BaseEntity {
 
     @OneToMany(mappedBy = "scan", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<SoPoSalesSample> salesSamples = new ArrayList<>();
+
+    @Lob
+    @Column(name = "bom_draft_json", columnDefinition = "TEXT")
+    private String bomDraftJson;
+
+    @Lob
+    @Column(name = "size_breakdown_json", columnDefinition = "TEXT")
+    private String sizeBreakdownJson;
+
+    @Lob
+    @Column(name = "country_breakdown_json", columnDefinition = "TEXT")
+    private String countryBreakdownJson;
+
+    @Lob
+    @Column(name = "section2c_total_json", columnDefinition = "TEXT")
+    private String section2cTotalJson;
 }

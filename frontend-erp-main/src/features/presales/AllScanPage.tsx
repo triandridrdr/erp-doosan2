@@ -1325,7 +1325,7 @@ export function AllScanPage() {
 
         <div className='mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-end'>
           <div>
-            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF/Image</label>
+            <label className='block text-sm font-medium text-gray-700 mb-2'>Upload PDF</label>
             <Input
               type='file'
               accept='.pdf,image/png,image/jpeg,image/jpg'

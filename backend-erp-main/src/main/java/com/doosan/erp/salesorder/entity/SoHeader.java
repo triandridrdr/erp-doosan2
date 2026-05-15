@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,8 +22,11 @@ public class SoHeader extends BaseEntity {
     @Column(name = "workflow_status", nullable = false, length = 32)
     private SoWorkflowStatus workflowStatus = SoWorkflowStatus.DRAFT_OCR;
 
-    @Column(name = "order_date", length = 255)
-    private String orderDate;
+    @Column(name = "order_date", columnDefinition = "DATE")
+    private LocalDate orderDate;
+
+    @Column(name = "time_of_delivery", length = 255)
+    private String timeOfDelivery;
 
     @Column(name = "season", length = 255)
     private String season;

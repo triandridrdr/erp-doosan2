@@ -45,4 +45,7 @@ public class SoPoItem extends BaseEntity {
 
     @Column(name = "qty_article", length = 32)
     private String qtyArticle;
+
+    @Column(name = "graphical_appearance", length = 256)
+    private String graphicalAppearance;
 }

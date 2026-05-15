@@ -46,4 +46,8 @@ public class SoScanSizeBreakdown extends BaseEntity {
 
     @OneToMany(mappedBy = "scan", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<SoSizeBreakdown> breakdowns = new ArrayList<>();
+
+    @Lob
+    @Column(name = "bom_draft_json", columnDefinition = "TEXT")
+    private String bomDraftJson;
 }
