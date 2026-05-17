@@ -56,6 +56,12 @@ public class SoController {
         return ResponseEntity.ok(ApiResponse.success(headerService.getById(id)));
     }
 
+    @GetMapping("/{id}/review")
+    @Operation(summary = "Get Sales Order scan review by ID")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getReviewById(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(headerService.getReviewById(id)));
+    }
+
     // ─── GET BY SO NUMBER ────────────────────────────────────────────────────────
 
     @GetMapping("/by-so-number/{soNumber}")

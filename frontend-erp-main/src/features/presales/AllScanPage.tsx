@@ -14,7 +14,8 @@ import {
 } from '../masterSize/hooks';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
-import { salesOrderPrototypeApi } from '../salesOrderPrototype/api';
+import { salesOrderApi } from '../salesOrder/api';
+import { salesOrderNumberExists } from './duplicateSalesOrder';
 
 const pickFirstNonBlank = (vals: Array<unknown>) => {
   for (const v of vals) {
@@ -96,9 +97,10 @@ export function AllScanPage() {
   const [results, setResults] = useState<Array<{ fileName: string; data: OcrNewDocumentAnalysisResponseData }>>([]);
   const [data, setData] = useState<OcrNewDocumentAnalysisResponseData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [multiFileLogs, setMultiFileLogs] = useState<string[]>([]);
+  const [, setMultiFileLogs] = useState<string[]>([]);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Draft updated.');
+  const [duplicateWarningOpen, setDuplicateWarningOpen] = useState(false);
   const [lastSavedId, setLastSavedId] = useState<number | null>(null);
 
   const pageCount = Math.max(1, Number(data?.pageCount ?? 1));
@@ -433,15 +435,6 @@ export function AllScanPage() {
   };
 
   const backendCountryBreakdown = useMemo(() => {
-    const isTcbName = (name: string) => {
-      const n = (name || '').toLowerCase();
-      return (
-        n.includes('totalcountrybreakdown') ||
-        n.includes('total_country_breakdown') ||
-        (n.includes('total') && n.includes('country') && n.includes('breakdown'))
-      );
-    };
-
     const curFile = results[activeFileIndex]?.fileName ?? '';
     if ((data?.totalCountryBreakdown ?? []).length > 0) {
       return { fileName: curFile, rows: data?.totalCountryBreakdown ?? [] };
@@ -982,11 +975,18 @@ export function AllScanPage() {
       }
       return out;
     },
-    onSuccess: (out) => {
+    onSuccess: async (out) => {
+      const first = out?.[0]?.data ?? null;
+      if (await salesOrderNumberExists(first)) {
+        setDuplicateWarningOpen(true);
+        setResults([]);
+        setData(null);
+        setError(null);
+        return;
+      }
       setResults(out);
       setError(null);
       setActiveFileIndex(0);
-      const first = out?.[0]?.data ?? null;
       setData(first);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       if (out.length <= 1) {
@@ -1035,12 +1035,30 @@ export function AllScanPage() {
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         totalCountryBreakdown: buildTotalCountryBreakdownPayload(countryBreakdownDraftRows as any),
         section2cColourSizeBreakdown: section2cDraftRows,
+        quantityPerArticleRows,
+        timeOfDeliveryRows,
+        invoiceAvgPriceRows,
+        termsOfDeliveryRows: Object.entries(termsOfDeliveryByPageDraft).map(([page, termsOfDelivery]) => ({
+          page: Number(page),
+          termsOfDelivery,
+        })),
+        salesSampleRows: salesSampleArticleRows.map((row) => ({
+          ...row,
+          salesSampleTerms: salesSampleTermsByPageDraft[Number(row.page ?? 1)] ?? '',
+          timeOfDelivery: salesSampleTimeOfDeliveryByPageDraft[Number(row.page ?? 1)] ?? row.timeOfDelivery ?? '',
+          destinationStudioAddress: salesSampleDestinationStudioAddressByPageDraft[Number(row.page ?? 1)] ?? '',
+        })),
         raw: data,
       };
-      return salesOrderPrototypeApi.create(payload);
+      return Promise.all([
+        salesOrderApi.saveDraft({ ...payload, documentType: 'purchase-order' }),
+        salesOrderApi.saveDraft({ ...payload, documentType: 'supplementary' }),
+        salesOrderApi.saveDraft({ ...payload, documentType: 'size-per-colour-breakdown' }),
+        salesOrderApi.saveDraft({ ...payload, documentType: 'total-country-breakdown' }),
+      ]);
     },
     onSuccess: (res) => {
-      const soId = (res as any)?.data?.id;
+      const soId = (res as any)?.[0]?.data?.soHeaderId;
       if (soId !== undefined && soId !== null) {
         setSuccessMessage(`Successfully created draft id "${soId}"`);
         setLastSavedId(Number(soId));
@@ -1054,12 +1072,6 @@ export function AllScanPage() {
       alert(`Failed to save draft: ${e.message}`);
     },
   });
-
-  const section2NonTotalEntries = useMemo(() => {
-    return (salesOrderDetailDraftRows ?? [])
-      .map((row, idx) => ({ row, idx }))
-      .filter(({ row }) => (row?.type ?? '').toString().trim().toLowerCase() !== 'total');
-  }, [salesOrderDetailDraftRows]);
 
   const section2AssortmentEntries = useMemo(() => {
     return (salesOrderDetailDraftRows ?? [])
@@ -1300,6 +1312,18 @@ export function AllScanPage() {
 
   return (
     <div className='space-y-6'>
+      <Modal isOpen={duplicateWarningOpen} onClose={() => setDuplicateWarningOpen(false)} title='Warning'>
+        <div className='flex flex-col items-center text-center gap-4'>
+          <div className='rounded-full border-4 border-orange-300 p-3'>
+            <AlertCircle className='w-10 h-10 text-orange-400' />
+          </div>
+          <p className='font-semibold text-gray-700'>Sales order number already exists</p>
+          <Button type='button' onClick={() => setDuplicateWarningOpen(false)}>
+            OK
+          </Button>
+        </div>
+      </Modal>
+
       <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
         <div className='flex flex-col items-center text-center gap-4'>
           <div className='rounded-full bg-green-50 p-3'>

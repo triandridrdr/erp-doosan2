@@ -11,7 +11,7 @@ import {
   extractSizeKeysFromRow,
   useEnsureMasterSizesBatch,
 } from '../masterSize/hooks';
-import { salesOrderPrototypeApi } from './api';
+import { salesOrderApi } from '../salesOrder/api';
 
 const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
@@ -207,10 +207,10 @@ export function SalesOrderDraftEditPage() {
   }, [section2TotalByCountryRows]);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['sales-order-prototypes', id],
+    queryKey: ['sales-order-review', id],
     enabled: Number.isFinite(id) && id > 0,
     queryFn: async () => {
-      const res = await salesOrderPrototypeApi.getOne(id);
+      const res = await salesOrderApi.getReviewById(id);
       return res.data;
     },
   });
@@ -313,7 +313,11 @@ export function SalesOrderDraftEditPage() {
         section2cColourSizeBreakdown: section2cDraftRows,
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
       };
-      return salesOrderPrototypeApi.update(id, nextPayload);
+      return Promise.all([
+        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'supplementary' }),
+        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'size-per-colour-breakdown' }),
+        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'total-country-breakdown' }),
+      ]);
     },
     onSuccess: () => {
       setSuccessMessage('Successfully updated draft');

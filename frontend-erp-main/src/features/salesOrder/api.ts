@@ -44,6 +44,15 @@ export interface SoHeaderResponse {
   createdBy?: string;
 }
 
+export interface SoScanReviewResponse {
+  id: number;
+  salesOrderNumber?: string;
+  analyzedFileName?: string;
+  payloadJson: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
 export type SaveDraftRequest = Record<string, unknown>;
 
 export const salesOrderApi = {
@@ -59,6 +68,11 @@ export const salesOrderApi = {
 
   getById: async (id: number) => {
     const response = await client.get<ApiResponse<SoHeaderResponse>>(`/api/v1/sales-orders/${id}`);
+    return response.data;
+  },
+
+  getReviewById: async (id: number) => {
+    const response = await client.get<ApiResponse<SoScanReviewResponse>>(`/api/v1/sales-orders/${id}/review`);
     return response.data;
   },
 

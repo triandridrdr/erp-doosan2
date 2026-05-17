@@ -15,6 +15,7 @@ import {
 } from '../masterSize/hooks';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
+import { salesOrderNumberExists } from './duplicateSalesOrder';
 
 const SALES_ORDER_HEADER_FIELDS = [
   'SO Number',
@@ -41,6 +42,7 @@ export function SupplementaryScanPage() {
   const [error, setError] = useState<string | null>(null);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Draft updated.');
+  const [duplicateWarningOpen, setDuplicateWarningOpen] = useState(false);
   const [lastSavedId, setLastSavedId] = useState<number | null>(null);
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
@@ -483,11 +485,18 @@ export function SupplementaryScanPage() {
       }
       return out;
     },
-    onSuccess: (out) => {
+    onSuccess: async (out) => {
+      const first = out?.[0]?.data ?? null;
+      if (await salesOrderNumberExists(first)) {
+        setDuplicateWarningOpen(true);
+        setResults([]);
+        setData(null);
+        setError(null);
+        return;
+      }
       setResults(out);
       setError(null);
       setActiveFileIndex(0);
-      const first = out?.[0]?.data ?? null;
       setData(first);
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -559,6 +568,18 @@ export function SupplementaryScanPage() {
 
   return (
     <div className='space-y-6'>
+      <Modal isOpen={duplicateWarningOpen} onClose={() => setDuplicateWarningOpen(false)} title='Warning'>
+        <div className='flex flex-col items-center text-center gap-4'>
+          <div className='rounded-full border-4 border-orange-300 p-3'>
+            <AlertCircle className='w-10 h-10 text-orange-400' />
+          </div>
+          <p className='font-semibold text-gray-700'>Sales order number already exists</p>
+          <Button type='button' onClick={() => setDuplicateWarningOpen(false)}>
+            OK
+          </Button>
+        </div>
+      </Modal>
+
       <Modal isOpen={successOpen} onClose={() => setSuccessOpen(false)} title='Success!'>
         <div className='flex flex-col items-center text-center gap-4'>
           <div className='rounded-full bg-green-50 p-3'>

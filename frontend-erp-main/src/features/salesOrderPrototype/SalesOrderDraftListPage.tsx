@@ -6,7 +6,7 @@ import { AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
-import { salesOrderPrototypeApi } from './api';
+import { salesOrderApi } from '../salesOrder/api';
 
 export function SalesOrderDraftListPage() {
   const [q, setQ] = useState('');
@@ -15,9 +15,9 @@ export function SalesOrderDraftListPage() {
   const navigate = useNavigate();
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['sales-order-prototypes'],
+    queryKey: ['sales-orders'],
     queryFn: async () => {
-      const res = await salesOrderPrototypeApi.getAll();
+      const res = await salesOrderApi.listAll();
       return res.data ?? [];
     },
   });
@@ -26,9 +26,14 @@ export function SalesOrderDraftListPage() {
     const s = q.trim().toLowerCase();
     if (!s) return data ?? [];
     return (data ?? []).filter((r) => {
-      const name = (r.analyzedFileName ?? '').toLowerCase();
-      const so = (r.salesOrderNumber ?? '').toLowerCase();
-      return name.includes(s) || so.includes(s) || String(r.id).includes(s);
+      const so = (r.soNumber ?? '').toLowerCase();
+      const documents = [
+        r.hasPurchaseOrder ? 'purchase order' : '',
+        r.hasSupplementary ? 'supplementary' : '',
+        r.hasSizeBreakdown ? 'size breakdown' : '',
+        r.hasCountryBreakdown ? 'country breakdown' : '',
+      ].filter(Boolean).join(' ');
+      return documents.includes(s) || so.includes(s) || String(r.id).includes(s);
     });
   }, [data, q]);
 
@@ -77,15 +82,22 @@ export function SalesOrderDraftListPage() {
               {!isLoading && !error && filtered.length === 0 && (
                 <tr>
                   <td colSpan={5} className='px-6 py-10 text-center text-gray-500'>
-                    No prototypes.
+                    No sales order drafts.
                   </td>
                 </tr>
               )}
               {filtered.map((r) => (
                 <tr key={r.id} className='hover:bg-gray-50 transition-colors'>
                   <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>{r.id}</td>
-                  <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-700'>{r.salesOrderNumber ?? ''}</td>
-                  <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-700'>{r.analyzedFileName ?? ''}</td>
+                  <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-700'>{r.soNumber ?? ''}</td>
+                  <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-700'>
+                    {[
+                      r.hasPurchaseOrder ? 'Purchase Order' : '',
+                      r.hasSupplementary ? 'Supplementary' : '',
+                      r.hasSizeBreakdown ? 'Size Breakdown' : '',
+                      r.hasCountryBreakdown ? 'Country Breakdown' : '',
+                    ].filter(Boolean).join(', ')}
+                  </td>
                   <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{r.createdAt ?? ''}</td>
                   <td className='px-6 py-4 whitespace-nowrap text-sm text-right'>
                     <div className='inline-flex gap-2'>
@@ -123,7 +135,7 @@ export function SalesOrderDraftListPage() {
                 if (deleteTarget === null) return;
                 setDeleting(true);
                 try {
-                  await salesOrderPrototypeApi.delete(deleteTarget);
+                  await salesOrderApi.delete(deleteTarget);
                   setDeleteTarget(null);
                   await refetch();
                 } catch (e) {
