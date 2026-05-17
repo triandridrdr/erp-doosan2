@@ -391,10 +391,8 @@ export function TotalCountryBreakdownScanPage() {
           </div>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : countryBreakdownDraftRows.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No country breakdown detected.</div>
+          {countryBreakdownDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No country breakdown detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
@@ -465,10 +463,8 @@ export function TotalCountryBreakdownScanPage() {
           </div>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2cDraftRows.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No size breakdown detected.</div>
+          {section2cDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No size breakdown detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[800px] w-full border border-gray-200 rounded-lg overflow-hidden'>

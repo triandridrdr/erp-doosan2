@@ -393,10 +393,8 @@ export function SizePerColourBreakdownScanPage() {
           <div className='text-xs font-semibold text-gray-500'>SALES ORDER DETAIL (SIZE BREAKDOWN)</div>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : section2AssortmentEntries.length === 0 && section2SolidEntries.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No detail table detected.</div>
+          {section2AssortmentEntries.length === 0 && section2SolidEntries.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No detail table detected.'}</div>
           ) : (
             <div className='grid grid-cols-1 xl:grid-cols-2 gap-6'>
               <div className='border border-gray-200 rounded-xl overflow-hidden'>

@@ -120,7 +120,7 @@ export function SupplementaryScanPage() {
 
   const yarnSourceNoDetails = useMemo(() => {
     const v = (bomYarnSourceTableRows?.[1]?.[0] ?? '').toString().trim().toLowerCase();
-    return v.length === 0 || v === 'no yarn details found';
+    return v === 'no yarn details found';
   }, [bomYarnSourceTableRows]);
 
   const appendLog = (_msg: string) => {};
@@ -695,10 +695,8 @@ export function SupplementaryScanPage() {
           </Button>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : bomDraftRows.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No BoM detected.</div>
+          {bomDraftRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No BoM detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[2800px] w-full border border-gray-200 rounded-lg overflow-hidden'>
@@ -894,10 +892,8 @@ export function SupplementaryScanPage() {
           </Button>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : bomProdUnitsRows.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No BoM Production Units detected.</div>
+          {bomProdUnitsRows.length === 0 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No BoM Production Units detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[1700px] w-full border border-gray-200 rounded-lg overflow-hidden'>
@@ -1011,12 +1007,13 @@ export function SupplementaryScanPage() {
           <Button
             type='button'
             variant='primary'
-            disabled={!data || yarnSourceNoDetails || (bomYarnSourceTableRows?.[0] ?? []).length === 0}
+            disabled={!data}
             onClick={() => {
-              const headerLen = (bomYarnSourceTableRows?.[0] ?? []).length;
+              const DEFAULT_YARN_HEADERS = ['Position', 'Placement', 'Type', 'Material Supplier', 'Fibre Composition', 'Yarn Supplier', 'Production Unit / Processing Capability'];
               setBomYarnSourceTableRows((prev) => {
                 const next = (prev ?? []).map((row) => [...row]);
-                next.push(Array.from({ length: headerLen }, () => ''));
+                if (next.length === 0) next.push([...DEFAULT_YARN_HEADERS]);
+                next.push(Array.from({ length: next[0].length }, () => ''));
                 return next;
               });
             }}
@@ -1025,10 +1022,8 @@ export function SupplementaryScanPage() {
           </Button>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : bomYarnSourceTableRows.length < 2 ? (
-            <div className='text-sm text-gray-500 italic'>No BoM Yarn Source Details detected.</div>
+          {bomYarnSourceTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No BoM Yarn Source Details detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
@@ -1043,11 +1038,13 @@ export function SupplementaryScanPage() {
                   </tr>
                 </thead>
                 <tbody className='bg-white'>
-                  {bomYarnSourceTableRows.slice(1).map((r, ridx) => (
+                  {bomYarnSourceTableRows.slice(1).map((r, ridx) => {
+                    const isReadOnlyRow = (r[0] ?? '').toString().trim().toLowerCase() === 'no yarn details found';
+                    return (
                     <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
                       {r.map((c, cidx) => (
                         <td key={cidx} className='px-3 py-2 align-top'>
-                          {yarnSourceNoDetails ? (
+                          {isReadOnlyRow ? (
                             <div className='text-sm text-gray-700 whitespace-pre-wrap'>{c ?? ''}</div>
                           ) : String(c ?? '').length > 40 ? (
                             <textarea
@@ -1086,7 +1083,7 @@ export function SupplementaryScanPage() {
                         <Button
                           type='button'
                           variant='danger'
-                          disabled={yarnSourceNoDetails}
+                          disabled={isReadOnlyRow}
                           onClick={() => {
                             setBomYarnSourceTableRows((prev) => {
                               const next = (prev ?? []).map((row) => [...row]);
@@ -1099,7 +1096,8 @@ export function SupplementaryScanPage() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1113,12 +1111,13 @@ export function SupplementaryScanPage() {
           <Button
             type='button'
             variant='primary'
-            disabled={!data || (productArticleTableRows?.[0] ?? []).length === 0}
+            disabled={!data}
             onClick={() => {
-              const headerLen = (productArticleTableRows?.[0] ?? []).length;
+              const DEFAULT_ARTICLE_HEADERS = ['Article No', 'Description', 'Color', 'Size', 'Quantity'];
               setProductArticleTableRows((prev) => {
                 const next = (prev ?? []).map((row) => [...row]);
-                next.push(Array.from({ length: headerLen }, () => ''));
+                if (next.length === 0) next.push([...DEFAULT_ARTICLE_HEADERS]);
+                next.push(Array.from({ length: next[0].length }, () => ''));
                 return next;
               });
             }}
@@ -1127,10 +1126,8 @@ export function SupplementaryScanPage() {
           </Button>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : productArticleTableRows.length < 2 ? (
-            <div className='text-sm text-gray-500 italic'>No Product Article detected.</div>
+          {productArticleTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No Product Article detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[1600px] w-full border border-gray-200 rounded-lg overflow-hidden'>
@@ -1212,12 +1209,13 @@ export function SupplementaryScanPage() {
           <Button
             type='button'
             variant='primary'
-            disabled={!data || (miscellaneousTableRows?.[0] ?? []).length === 0}
+            disabled={!data}
             onClick={() => {
-              const headerLen = (miscellaneousTableRows?.[0] ?? []).length;
+              const DEFAULT_MISC_HEADERS = ['Description', 'Value'];
               setMiscellaneousTableRows((prev) => {
                 const next = (prev ?? []).map((row) => [...row]);
-                next.push(Array.from({ length: headerLen }, () => ''));
+                if (next.length === 0) next.push([...DEFAULT_MISC_HEADERS]);
+                next.push(Array.from({ length: next[0].length }, () => ''));
                 return next;
               });
             }}
@@ -1226,10 +1224,8 @@ export function SupplementaryScanPage() {
           </Button>
         </div>
         <div className='p-6'>
-          {!data ? (
-            <div className='text-sm text-gray-500 italic'>No data.</div>
-          ) : miscellaneousTableRows.length < 2 ? (
-            <div className='text-sm text-gray-500 italic'>No Miscellaneous detected.</div>
+          {miscellaneousTableRows.length < 2 ? (
+            <div className='text-sm text-gray-500 italic'>{!data ? 'No data.' : 'No Miscellaneous detected.'}</div>
           ) : (
             <div className='w-full max-h-[60vh] overflow-auto'>
               <table className='min-w-[1400px] w-full border border-gray-200 rounded-lg overflow-hidden'>
