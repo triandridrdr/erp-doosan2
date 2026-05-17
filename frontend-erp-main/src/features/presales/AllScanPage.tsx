@@ -977,7 +977,13 @@ export function AllScanPage() {
     },
     onSuccess: async (out) => {
       const first = out?.[0]?.data ?? null;
-      if (await salesOrderNumberExists(first)) {
+      const duplicateExists = await Promise.all([
+        salesOrderNumberExists(first, 'purchase-order'),
+        salesOrderNumberExists(first, 'supplementary'),
+        salesOrderNumberExists(first, 'size-per-colour-breakdown'),
+        salesOrderNumberExists(first, 'total-country-breakdown'),
+      ]);
+      if (duplicateExists.some(Boolean)) {
         setDuplicateWarningOpen(true);
         setResults([]);
         setData(null);

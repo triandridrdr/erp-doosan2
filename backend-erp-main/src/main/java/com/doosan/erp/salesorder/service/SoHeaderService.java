@@ -65,6 +65,19 @@ public class SoHeaderService {
         return SoHeaderResponse.from(header);
     }
 
+    @Transactional(readOnly = true)
+    public boolean scanExistsBySoNumberAndDocumentType(String soNumber, String documentType) {
+        return headerRepo.findBySoNumberAndDeletedFalse(soNumber)
+                .map(header -> switch (documentType) {
+                    case "purchase-order" -> latestPurchaseOrder(header.getId()).isPresent();
+                    case "supplementary" -> latestSupplementary(header.getId()).isPresent();
+                    case "size-per-colour-breakdown" -> latestSizeBreakdown(header.getId()).isPresent();
+                    case "total-country-breakdown" -> latestCountryBreakdown(header.getId()).isPresent();
+                    default -> false;
+                })
+                .orElse(false);
+    }
+
     @Transactional
     public SoHeaderResponse updateWorkflowStatus(Long id, SoWorkflowStatus newStatus) {
         SoHeader header = headerRepo.findById(id)

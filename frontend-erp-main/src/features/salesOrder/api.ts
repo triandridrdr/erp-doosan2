@@ -81,6 +81,13 @@ export const salesOrderApi = {
     return response.data;
   },
 
+  exists: async (soNumber: string, documentType: string) => {
+    const response = await client.get<ApiResponse<boolean>>('/api/v1/sales-orders/exists', {
+      params: { soNumber, documentType },
+    });
+    return response.data;
+  },
+
   updateWorkflowStatus: async (id: number, status: string) => {
     const response = await client.patch<ApiResponse<SoHeaderResponse>>(`/api/v1/sales-orders/${id}/workflow-status`, { status });
     return response.data;

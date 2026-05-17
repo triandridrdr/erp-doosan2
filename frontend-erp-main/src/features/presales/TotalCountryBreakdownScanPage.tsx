@@ -227,7 +227,7 @@ export function TotalCountryBreakdownScanPage() {
     },
     onSuccess: async (out) => {
       const first = out?.[0]?.data ?? null;
-      if (await salesOrderNumberExists(first)) {
+      if (await salesOrderNumberExists(first, 'total-country-breakdown')) {
         setDuplicateWarningOpen(true);
         setResults([]);
         setData(null);

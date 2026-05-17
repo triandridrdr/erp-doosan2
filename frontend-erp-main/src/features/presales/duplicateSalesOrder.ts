@@ -12,12 +12,12 @@ export function extractSalesOrderNumber(data: OcrNewDocumentAnalysisResponseData
   return '';
 }
 
-export async function salesOrderNumberExists(data: OcrNewDocumentAnalysisResponseData | null | undefined) {
+export async function salesOrderNumberExists(data: OcrNewDocumentAnalysisResponseData | null | undefined, documentType: string) {
   const soNumber = extractSalesOrderNumber(data);
   if (!soNumber) return false;
 
   try {
-    const res = await salesOrderApi.getBySoNumber(encodeURIComponent(soNumber));
+    const res = await salesOrderApi.exists(soNumber, documentType);
     return Boolean(res?.data);
   } catch {
     return false;

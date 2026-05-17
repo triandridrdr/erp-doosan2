@@ -186,7 +186,7 @@ export function SizePerColourBreakdownScanPage() {
     },
     onSuccess: async (out) => {
       const first = out?.[0]?.data ?? null;
-      if (await salesOrderNumberExists(first)) {
+      if (await salesOrderNumberExists(first, 'size-per-colour-breakdown')) {
         setDuplicateWarningOpen(true);
         setResults([]);
         setData(null);

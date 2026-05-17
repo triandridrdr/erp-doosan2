@@ -488,7 +488,7 @@ export function PurchaseOrderScanPage() {
   },
   onSuccess: async (out) => {
     const first = out?.[0]?.data ?? null;
-    if (await salesOrderNumberExists(first)) {
+    if (await salesOrderNumberExists(first, 'purchase-order')) {
       setDuplicateWarningOpen(true);
       setResults([]);
       setData(null);

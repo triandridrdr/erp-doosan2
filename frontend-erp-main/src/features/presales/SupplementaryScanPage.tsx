@@ -487,7 +487,7 @@ export function SupplementaryScanPage() {
     },
     onSuccess: async (out) => {
       const first = out?.[0]?.data ?? null;
-      if (await salesOrderNumberExists(first)) {
+      if (await salesOrderNumberExists(first, 'supplementary')) {
         setDuplicateWarningOpen(true);
         setResults([]);
         setData(null);

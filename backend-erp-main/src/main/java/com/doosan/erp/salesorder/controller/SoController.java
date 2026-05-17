@@ -70,6 +70,14 @@ public class SoController {
         return ResponseEntity.ok(ApiResponse.success(headerService.getBySoNumber(soNumber)));
     }
 
+    @GetMapping("/exists")
+    @Operation(summary = "Check if scanned document exists by SO number and document type")
+    public ResponseEntity<ApiResponse<Boolean>> exists(
+            @RequestParam String soNumber,
+            @RequestParam String documentType) {
+        return ResponseEntity.ok(ApiResponse.success(headerService.scanExistsBySoNumberAndDocumentType(soNumber, documentType)));
+    }
+
     // ─── UPDATE WORKFLOW STATUS ──────────────────────────────────────────────────
 
     @PatchMapping("/{id}/workflow-status")
