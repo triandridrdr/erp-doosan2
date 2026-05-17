@@ -40,8 +40,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'sales', element: <SalesOrderListPage /> },
-      { path: 'sales-order-prototype', element: <SalesOrderDraftListPage /> },
-      { path: 'sales-order-prototype/:id', element: <SalesOrderDraftEditPage /> },
+      { path: 'sales-order-hm', element: <SalesOrderDraftListPage /> },
+      { path: 'sales-order-hm/:id', element: <SalesOrderDraftEditPage /> },
       { path: 'inventory', element: <StockListPage /> },
       { path: 'accounting', element: <JournalEntryListPage /> },
       { path: 'ocr', element: <OcrPage /> },

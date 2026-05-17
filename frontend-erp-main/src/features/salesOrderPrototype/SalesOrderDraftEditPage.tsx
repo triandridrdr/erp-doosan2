@@ -357,7 +357,7 @@ export function SalesOrderDraftEditPage() {
             type='button'
             onClick={() => {
               setSuccessOpen(false);
-              navigate('/sales-order-prototype');
+              navigate('/sales-order-hm');
             }}
           >
             OK
@@ -370,7 +370,7 @@ export function SalesOrderDraftEditPage() {
           <div className='text-sm text-gray-500'>ID: {data.id}</div>
         </div>
         <div className='flex gap-2'>
-          <Button type='button' variant='outline' onClick={() => navigate('/sales-order-prototype')}>
+          <Button type='button' variant='outline' onClick={() => navigate('/sales-order-hm')}>
             Back
           </Button>
         </div>

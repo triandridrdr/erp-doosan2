@@ -101,7 +101,7 @@ export function SalesOrderDraftListPage() {
                   <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{r.createdAt ?? ''}</td>
                   <td className='px-6 py-4 whitespace-nowrap text-sm text-right'>
                     <div className='inline-flex gap-2'>
-                      <Button type='button' variant='outline' onClick={() => navigate(`/sales-order-prototype/${r.id}`)}>
+                      <Button type='button' variant='outline' onClick={() => navigate(`/sales-order-hm/${r.id}`)}>
                         Edit
                       </Button>
                       <Button

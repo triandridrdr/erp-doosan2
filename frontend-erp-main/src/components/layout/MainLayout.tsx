@@ -13,16 +13,16 @@ import { Sidebar } from './Sidebar';
 const pagePathByRoute: Record<string, string> = {
   '/': 'Dashboard',
   '/sales': 'Sales / Other',
-  '/sales-order-prototype': 'Sales Order H&M Scan Review',
+  '/sales-order-hm': 'Sales Order H&M Scan Review',
   '/inventory': 'Inventory / Stock',
   '/accounting': 'Accounting / Journal Entry',
   '/ocr': 'Sales / OCR',
-  '/ocr-new': 'Pre-Sales / Sales Order Scan / OCR New',
-  '/presales/purchase-order-scan': 'Pre-Sales / Sales Order Scan / Purchase Order',
-  '/presales/supplementary-scan': 'Pre-Sales / Sales Order Scan / Supplementary',
-  '/presales/size-per-colour-breakdown-scan': 'Pre-Sales / Sales Order Scan / Size Per Colour Breakdown',
-  '/presales/total-country-breakdown-scan': 'Pre-Sales / Sales Order Scan / Total Country Breakdown',
-  '/presales/all-scan': 'Pre-Sales / Sales Order Scan / All',
+  '/ocr-new': 'Pre-Sales / Sales Order H&M Scan / OCR New',
+  '/presales/purchase-order-scan': 'Pre-Sales / Sales Order H&M Scan / Purchase Order',
+  '/presales/supplementary-scan': 'Pre-Sales / Sales Order H&M Scan / Supplementary',
+  '/presales/size-per-colour-breakdown-scan': 'Pre-Sales / Sales Order H&M Scan / Size Per Colour Breakdown',
+  '/presales/total-country-breakdown-scan': 'Pre-Sales / Sales Order H&M Scan / Total Country Breakdown',
+  '/presales/all-scan': 'Pre-Sales / Sales Order H&M Scan / All',
 };
 
 export function MainLayout() {
@@ -31,7 +31,7 @@ export function MainLayout() {
 
   const pagePath =
     pagePathByRoute[location.pathname] ||
-    (location.pathname.startsWith('/sales-order-prototype/')
+    (location.pathname.startsWith('/sales-order-hm/')
       ? 'Sales Order H&M Scan Review'
       : 'Overview');
 

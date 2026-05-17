@@ -45,7 +45,7 @@ const navigation: NavItem[] = [
     icon: LineChart,
     children: [
       {
-        name: 'Sales Order Scan',
+        name: 'Sales Order H&M Scan',
         href: '#presales-sos',
         children: [
           { name: 'All', href: '/presales/all-scan' },
@@ -60,7 +60,7 @@ const navigation: NavItem[] = [
   {
     name: 'Sales Order H&M Scan Review',
     icon: ClipboardCheck,
-    children: [{ name: 'All', href: '/sales-order-prototype' }],
+    children: [{ name: 'All', href: '/sales-order-hm' }],
   },
   {
     name: 'Accounting',
@@ -90,7 +90,7 @@ const navigation: NavItem[] = [
       { name: 'Sales/Invoicing', href: '#sales-invoicing' },
       { name: 'Collection', href: '#sales-collection' },
       { name: 'Journal Entry Management', href: '#sales-journal' },
-      { name: 'Sales Order Draft', href: '/sales-order-prototype' },
+      { name: 'Sales Order Draft', href: '/sales-order-hm' },
     ],
   },
   {
@@ -118,7 +118,7 @@ const navigation: NavItem[] = [
 const REAL_ROUTES = new Set<string>([
   '/',
   '/sales',
-  '/sales-order-prototype',
+  '/sales-order-hm',
   '/inventory',
   '/accounting',
   '/ocr',

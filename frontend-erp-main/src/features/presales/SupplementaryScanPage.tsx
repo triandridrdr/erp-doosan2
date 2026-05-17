@@ -1338,7 +1338,7 @@ export function SupplementaryScanPage() {
         <div className='bg-white rounded-2xl border border-gray-200 p-6'>
           <div className='text-sm text-gray-700'>Draft ID: {lastSavedId}</div>
           <div className='mt-3 flex gap-2'>
-            <Button type='button' onClick={() => navigate(`/sales-order-prototype/${lastSavedId}`)}>
+            <Button type='button' onClick={() => navigate(`/sales-order-hm/${lastSavedId}`)}>
               Open Draft
             </Button>
           </div>
