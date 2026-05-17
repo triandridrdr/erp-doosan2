@@ -14,19 +14,24 @@ import {
 import { salesOrderApi } from '../salesOrder/api';
 
 const SALES_ORDER_HEADER_FIELDS = [
-  'SO Number',
-  'Date (ISO)',
-  'Season',
-  'Supplier Code',
-  'Supplier',
-  'Article / Product No',
-  'Product Name',
-  'Product Type',
-  'Customs Customer Group',
-  'Type of Construction',
-  'Development No',
-  'Terms of Delivery',
-  'Time of Delivery',
+  { key: 'Order No', label: 'Order No' },
+  { key: 'PT Prod No', label: 'PT Prod No' },
+  { key: 'Order Date', label: 'Order Date' },
+  { key: 'Supplier Code', label: 'Supplier Code' },
+  { key: 'Option No', label: 'Option No' },
+  { key: 'Development No', label: 'Development No' },
+  { key: 'Product No', label: 'Product No' },
+  { key: 'Product Name', label: 'Product Name' },
+  { key: 'Product Desc', label: 'Product Desc' },
+  { key: 'Season', label: 'Season' },
+  { key: 'Customer Group', label: 'Customer Group' },
+  { key: 'Type of Construct', label: 'Type of Construct' },
+  { key: 'Country of Production', label: 'Country of Production' },
+  { key: 'Country of Bakery', label: 'Country of Bakery' },
+  { key: 'Country of Origin', label: 'Country of Origin' },
+  { key: 'Term of Payment', label: 'Term of Payment' },
+  { key: 'No of Pieces', label: 'No of Pieces' },
+  { key: 'Sales Models', label: 'Sales Models' },
 ] as const;
 
 type BomDraftRow = {
@@ -155,6 +160,88 @@ function safeJsonParse(v: string): any {
   }
 }
 
+function EditableObjectTable({
+  title,
+  rows,
+  onRowsChange,
+}: {
+  title: string;
+  rows: any[];
+  onRowsChange: (rows: any[]) => void;
+}) {
+  const columns = useMemo(() => {
+    const keys = new Set<string>();
+    for (const row of rows ?? []) {
+      if (Array.isArray(row)) {
+        row.forEach((_, idx) => keys.add(String(idx)));
+      } else if (row && typeof row === 'object') {
+        Object.keys(row).forEach((k) => keys.add(k));
+      }
+    }
+    return Array.from(keys);
+  }, [rows]);
+
+  return (
+    <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+      <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
+        <div className='text-sm font-semibold text-gray-900'>{title}</div>
+        <Button type='button' variant='primary' onClick={() => onRowsChange([...(rows ?? []), {}])}>
+          Add row
+        </Button>
+      </div>
+      <div className='p-6'>
+        {(rows ?? []).length === 0 ? (
+          <div className='text-sm text-gray-500 italic'>No data.</div>
+        ) : (
+          <div className='w-full max-h-[50vh] overflow-auto'>
+            <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+              <thead className='bg-gray-50 sticky top-0 z-10'>
+                <tr>
+                  {columns.map((c) => (
+                    <th key={c} className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>
+                      {c}
+                    </th>
+                  ))}
+                  <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                </tr>
+              </thead>
+              <tbody className='bg-white'>
+                {rows.map((row, idx) => (
+                  <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                    {columns.map((c) => (
+                      <td key={c} className='px-3 py-2 align-top'>
+                        <Input
+                          value={(Array.isArray(row) ? row[Number(c)] : row?.[c]) ?? ''}
+                          onChange={(e) => {
+                            const next = [...rows];
+                            if (Array.isArray(next[idx])) {
+                              const arr = [...next[idx]];
+                              arr[Number(c)] = e.target.value;
+                              next[idx] = arr;
+                            } else {
+                              next[idx] = { ...(next[idx] ?? {}), [c]: e.target.value };
+                            }
+                            onRowsChange(next);
+                          }}
+                        />
+                      </td>
+                    ))}
+                    <td className='px-3 py-2 align-top'>
+                      <Button type='button' variant='danger' onClick={() => onRowsChange(rows.filter((_, i) => i !== idx))}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SalesOrderDraftEditPage() {
   const params = useParams();
   const navigate = useNavigate();
@@ -162,6 +249,15 @@ export function SalesOrderDraftEditPage() {
 
   const [salesOrderHeaderDraft, setSalesOrderHeaderDraft] = useState<Record<string, string>>({});
   const [bomDraftRows, setBomDraftRows] = useState<BomDraftRow[]>([]);
+  const [bomProdUnitsRows, setBomProdUnitsRows] = useState<Array<Record<string, string>>>([]);
+  const [bomYarnSourceTableRows, setBomYarnSourceTableRows] = useState<any[]>([]);
+  const [productArticleTableRows, setProductArticleTableRows] = useState<any[]>([]);
+  const [miscellaneousTableRows, setMiscellaneousTableRows] = useState<any[]>([]);
+  const [timeOfDeliveryRows, setTimeOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
+  const [quantityPerArticleRows, setQuantityPerArticleRows] = useState<Array<Record<string, string>>>([]);
+  const [invoiceAvgPriceRows, setInvoiceAvgPriceRows] = useState<Array<Record<string, string>>>([]);
+  const [termsOfDeliveryRows, setTermsOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
+  const [salesSampleRows, setSalesSampleRows] = useState<Array<Record<string, string>>>([]);
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<DetailDraftRow[]>([]);
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<CountryBreakdownRow[]>([]);
   const [section2cDraftRows, setSection2cDraftRows] = useState<Section2cDraftRow[]>([]);
@@ -224,7 +320,7 @@ export function SalesOrderDraftEditPage() {
     const ff = (payload?.formFields ?? {}) as Record<string, string>;
     const nextHeader: Record<string, string> = {};
     for (const f of SALES_ORDER_HEADER_FIELDS) {
-      nextHeader[f] = (ff?.[f] ?? '').toString();
+      nextHeader[f.key] = (ff?.[f.key] ?? '').toString();
     }
     setSalesOrderHeaderDraft(nextHeader);
 
@@ -294,6 +390,16 @@ export function SalesOrderDraftEditPage() {
     } else {
       setSection2cTotalDraftRows([]);
     }
+
+    setBomProdUnitsRows(Array.isArray(payload?.bomProdUnitsRows) ? payload.bomProdUnitsRows : []);
+    setBomYarnSourceTableRows(Array.isArray(payload?.bomYarnSourceTableRows) ? payload.bomYarnSourceTableRows : []);
+    setProductArticleTableRows(Array.isArray(payload?.productArticleTableRows) ? payload.productArticleTableRows : []);
+    setMiscellaneousTableRows(Array.isArray(payload?.miscellaneousTableRows) ? payload.miscellaneousTableRows : []);
+    setTimeOfDeliveryRows(Array.isArray(payload?.timeOfDeliveryRows) ? payload.timeOfDeliveryRows : []);
+    setQuantityPerArticleRows(Array.isArray(payload?.quantityPerArticleRows) ? payload.quantityPerArticleRows : []);
+    setInvoiceAvgPriceRows(Array.isArray(payload?.invoiceAvgPriceRows) ? payload.invoiceAvgPriceRows : []);
+    setTermsOfDeliveryRows(Array.isArray(payload?.termsOfDeliveryRows) ? payload.termsOfDeliveryRows : []);
+    setSalesSampleRows(Array.isArray(payload?.salesSampleRows) ? payload.salesSampleRows : []);
   };
 
   useEffect(() => {
@@ -308,6 +414,15 @@ export function SalesOrderDraftEditPage() {
         analyzedFileName: data?.analyzedFileName ?? payload?.analyzedFileName ?? '',
         formFields: salesOrderHeaderDraft,
         bomDraftRows,
+        bomProdUnitsRows,
+        bomYarnSourceTableRows,
+        productArticleTableRows,
+        miscellaneousTableRows,
+        quantityPerArticleRows,
+        timeOfDeliveryRows,
+        invoiceAvgPriceRows,
+        termsOfDeliveryRows,
+        salesSampleRows,
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         totalCountryBreakdown: countryBreakdownDraftRows,
         section2cColourSizeBreakdown: section2cDraftRows,
@@ -330,7 +445,7 @@ export function SalesOrderDraftEditPage() {
   });
 
   const hasHeaderDraft = useMemo(() => {
-    return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f] ?? '').trim().length > 0);
+    return SALES_ORDER_HEADER_FIELDS.some((f) => (salesOrderHeaderDraft[f.key] ?? '').trim().length > 0);
   }, [salesOrderHeaderDraft]);
 
   if (isLoading) {
@@ -394,14 +509,14 @@ export function SalesOrderDraftEditPage() {
           ) : (
             <div className='grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3'>
               {SALES_ORDER_HEADER_FIELDS.map((field) => (
-                <div key={field} className='grid grid-cols-12 items-center gap-3'>
-                  <div className='col-span-4 text-sm text-gray-700'>{field}</div>
+                <div key={field.key} className='grid grid-cols-12 items-center gap-3'>
+                  <div className='col-span-4 text-sm text-gray-700'>{field.label}</div>
                   <div className='col-span-8'>
                     <Input
-                      value={salesOrderHeaderDraft[field] ?? ''}
+                      value={salesOrderHeaderDraft[field.key] ?? ''}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setSalesOrderHeaderDraft((prev) => ({ ...prev, [field]: v }));
+                        setSalesOrderHeaderDraft((prev) => ({ ...prev, [field.key]: v }));
                       }}
                     />
                   </div>
@@ -411,6 +526,12 @@ export function SalesOrderDraftEditPage() {
           )}
         </div>
       </div>
+
+      <EditableObjectTable title='Terms of Delivery' rows={termsOfDeliveryRows} onRowsChange={setTermsOfDeliveryRows} />
+      <EditableObjectTable title='Time of Delivery' rows={timeOfDeliveryRows} onRowsChange={setTimeOfDeliveryRows} />
+      <EditableObjectTable title='Quantity per Article' rows={quantityPerArticleRows} onRowsChange={setQuantityPerArticleRows} />
+      <EditableObjectTable title='Invoice Average Price' rows={invoiceAvgPriceRows} onRowsChange={setInvoiceAvgPriceRows} />
+      <EditableObjectTable title='Sales Sample' rows={salesSampleRows} onRowsChange={setSalesSampleRows} />
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
@@ -774,6 +895,11 @@ export function SalesOrderDraftEditPage() {
           )}
         </div>
       </div>
+
+      <EditableObjectTable title='Bill of Material: Production Units and Processing Capabilities' rows={bomProdUnitsRows} onRowsChange={setBomProdUnitsRows} />
+      <EditableObjectTable title='Bill of Material: Yarn Source Details' rows={bomYarnSourceTableRows} onRowsChange={setBomYarnSourceTableRows} />
+      <EditableObjectTable title='Product Article' rows={productArticleTableRows} onRowsChange={setProductArticleTableRows} />
+      <EditableObjectTable title='Miscellaneous' rows={miscellaneousTableRows} onRowsChange={setMiscellaneousTableRows} />
     </div>
   );
 }

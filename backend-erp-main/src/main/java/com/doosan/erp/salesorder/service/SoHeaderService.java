@@ -103,18 +103,32 @@ public class SoHeaderService {
         Map<String, Object> payload = new LinkedHashMap<>();
         Map<String, Object> ff = new LinkedHashMap<>();
         ff.put("SO Number", h.getSoNumber());
+        ff.put("Order No", h.getSoNumber());
         ff.put("Date (ISO)", h.getOrderDate());
+        ff.put("Order Date", h.getOrderDate());
         ff.put("Season", h.getSeason());
         ff.put("Supplier Code", h.getSupplierCode());
         ff.put("Supplier", h.getSupplierName());
         ff.put("Article / Product No", h.getProductNo());
+        ff.put("Product No", h.getProductNo());
         ff.put("Product Name", h.getProductName());
+        ff.put("Product Desc", h.getProductDesc());
         ff.put("Product Type", h.getProductType());
+        ff.put("Option No", h.getOptionNo());
         ff.put("Customs Customer Group", h.getCustomerGroup());
+        ff.put("Customer Group", h.getCustomerGroup());
         ff.put("Type of Construction", h.getTypeOfConstruction());
+        ff.put("Type of Construct", h.getTypeOfConstruction());
         ff.put("Development No", h.getDevelopmentNo());
         ff.put("Terms of Delivery", h.getTermsOfDelivery());
         ff.put("Time of Delivery", h.getTimeOfDelivery());
+        ff.put("Country of Production", h.getCountryOfProduction());
+        ff.put("Country of Bakery", h.getCountryOfDelivery());
+        ff.put("Country of Origin", h.getCountryOfOrigin());
+        ff.put("Term of Payment", h.getTermsOfPayment());
+        ff.put("No of Pieces", h.getNoOfPieces());
+        ff.put("Sales Models", h.getSalesMode());
+        ff.put("PT Prod No", h.getPtProdNo());
         payload.put("formFields", ff);
 
         latestSupplementary(h.getId()).ifPresent(scan -> payload.put("bomDraftRows", scan.getBomItems().stream()
@@ -128,6 +142,33 @@ public class SoHeaderService {
                         "materialSupplier", r.getMaterialSupplier()
                 ))
                 .toList()));
+
+        latestSupplementary(h.getId()).ifPresent(scan -> {
+            payload.put("bomProdUnitsRows", scan.getProdUnits().stream()
+                    .sorted(Comparator.comparing(SoSupplementaryBomProdUnit::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
+                    .map(r -> mapOf(
+                            "position", r.getPosition(),
+                            "placement", r.getPlacement(),
+                            "type", r.getType(),
+                            "materialSupplier", r.getMaterialSupplier(),
+                            "composition", r.getComposition(),
+                            "weight", r.getWeight(),
+                            "productionUnitProcessingCapability", r.getProductionUnitProcessingCapability()
+                    ))
+                    .toList());
+            payload.put("bomYarnSourceTableRows", scan.getYarnSources().stream()
+                    .sorted(Comparator.comparing(SoSupplementaryYarnSource::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
+                    .map(r -> fromJson(r.getRowData()))
+                    .toList());
+            payload.put("productArticleTableRows", scan.getProductArticles().stream()
+                    .sorted(Comparator.comparing(SoSupplementaryProductArticle::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
+                    .map(r -> fromJson(r.getRowData()))
+                    .toList());
+            payload.put("miscellaneousTableRows", scan.getMiscellaneous().stream()
+                    .sorted(Comparator.comparing(SoSupplementaryMiscellaneous::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
+                    .map(r -> fromJson(r.getRowData()))
+                    .toList());
+        });
 
         latestSizeBreakdown(h.getId()).ifPresent(scan -> payload.put("salesOrderDetailSizeBreakdown", scan.getBreakdowns().stream()
                 .sorted(Comparator.comparing(SoSizeBreakdown::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
@@ -258,6 +299,14 @@ public class SoHeaderService {
             return objectMapper.writeValueAsString(v);
         } catch (Exception e) {
             return "{}";
+        }
+    }
+
+    private Object fromJson(String v) {
+        try {
+            return objectMapper.readValue(v, Object.class);
+        } catch (Exception e) {
+            return List.of();
         }
     }
 }
