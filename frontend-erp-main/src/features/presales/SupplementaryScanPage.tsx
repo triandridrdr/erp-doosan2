@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
+import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
 import { salesOrderApi } from '../salesOrder/api';
 import {
   collectSizeLabelsFromRows,
@@ -1143,7 +1144,21 @@ export function SupplementaryScanPage() {
                     <tr key={ridx} className='border-b border-gray-100 last:border-b-0'>
                       {r.map((c, cidx) => (
                         <td key={cidx} className='px-3 py-2 align-top'>
-                          {String(c ?? '').length > 40 ? (
+                          {(productArticleTableRows?.[0]?.[cidx] ?? '').toString().trim().toLowerCase() === 'size' ? (
+                            <SizeComboboxInput
+                              value={c ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setProductArticleTableRows((prev) => {
+                                  const next = (prev ?? []).map((row) => [...row]);
+                                  const rr = ridx + 1;
+                                  if (!next[rr]) next[rr] = [];
+                                  next[rr][cidx] = v;
+                                  return next;
+                                });
+                              }}
+                            />
+                          ) : String(c ?? '').length > 40 ? (
                             <textarea
                               className='w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
                               value={c ?? ''}

@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { SizeComboboxInput } from '../../components/ui/SizeComboboxInput';
+import { collectSizeLabelsFromRows, useEnsureMasterSizesBatch } from '../masterSize/hooks';
 import { ocrNewApi } from '../ocrnew/api';
 import type { OcrNewDocumentAnalysisResponseData } from '../ocrnew/types';
 import { salesOrderApi } from '../salesOrder/api';
@@ -44,6 +45,7 @@ export function TotalCountryBreakdownScanPage() {
   >([]);
 
   const [section2cDraftRows, setSection2cDraftRows] = useState<Array<{ article: string; size: string; qty: string; editable: boolean }>>([]);
+  const ensureMasterSizes = useEnsureMasterSizesBatch();
 
   const normalizeDigits = (v: string) => {
     const d = (v ?? '').toString().replace(/[^0-9]/g, '');
@@ -171,6 +173,9 @@ export function TotalCountryBreakdownScanPage() {
       setSection2cDraftRows([]);
       return;
     }
+
+    const discovered = collectSizeLabelsFromRows(s2c as any[]);
+    if (discovered.length > 0) ensureMasterSizes.mutate(discovered);
 
     const exploded: Array<{ article: string; size: string; qty: string; editable: boolean }> = [];
     for (const m of s2c as any[]) {

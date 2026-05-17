@@ -8,6 +8,7 @@
  */
 import { ChevronDown, Loader2, Search, Trash2, X } from 'lucide-react';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 import { type MasterSizeDto } from '../../features/masterSize/api';
 import { useDeleteMasterSize, useMasterSizes } from '../../features/masterSize/hooks';
@@ -34,7 +35,9 @@ export function SizeComboboxInput({
   const [query, setQuery] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
   const [deletingId, setDeletingId] = React.useState<number | null>(null);
+  const [dropdownStyle, setDropdownStyle] = React.useState<React.CSSProperties>({});
 
   const { data: masterSizes = [] } = useMasterSizes();
   const deleteMutation = useDeleteMasterSize();
@@ -47,13 +50,42 @@ export function SizeComboboxInput({
 
   React.useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        !dropdownRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  React.useEffect(() => {
+    if (!open || !containerRef.current) return;
+
+    const updatePosition = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open]);
 
   const fireChange = React.useCallback(
     (newValue: string) => {
@@ -136,8 +168,8 @@ export function SizeComboboxInput({
         </button>
       </div>
 
-      {open && !disabled && (
-        <div className='absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto'>
+      {open && !disabled && createPortal(
+        <div ref={dropdownRef} style={dropdownStyle} className='bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto'>
           {filteredOptions.length === 0 ? (
             <div className='flex items-center gap-2 px-3 py-6 text-sm text-gray-400 justify-center'>
               <Search className='h-4 w-4' />
@@ -186,7 +218,8 @@ export function SizeComboboxInput({
               </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
