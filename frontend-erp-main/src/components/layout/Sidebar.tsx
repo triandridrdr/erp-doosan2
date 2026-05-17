@@ -8,6 +8,7 @@ import {
   Briefcase,
   ChevronDown,
   CircleUser,
+  ClipboardCheck,
   ClipboardList,
   Cog,
   Database,
@@ -55,6 +56,11 @@ const navigation: NavItem[] = [
         ],
       },
     ],
+  },
+  {
+    name: 'Sales Order H&M Scan Review',
+    icon: ClipboardCheck,
+    children: [{ name: 'All', href: '/sales-order-prototype' }],
   },
   {
     name: 'Accounting',
