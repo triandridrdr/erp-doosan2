@@ -258,6 +258,12 @@ export function SalesOrderDraftEditPage() {
   const [invoiceAvgPriceRows, setInvoiceAvgPriceRows] = useState<Array<Record<string, string>>>([]);
   const [termsOfDeliveryRows, setTermsOfDeliveryRows] = useState<Array<Record<string, string>>>([]);
   const [salesSampleRows, setSalesSampleRows] = useState<Array<Record<string, string>>>([]);
+  const [activePage, setActivePage] = useState<number>(1);
+  const [termsOfDeliveryByPageDraft, setTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleTermsByPageDraft, setSalesSampleTermsByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleTermsOfDeliveryByPageDraft, setSalesSampleTermsOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleTimeOfDeliveryByPageDraft, setSalesSampleTimeOfDeliveryByPageDraft] = useState<Record<number, string>>({});
+  const [salesSampleDestinationStudioAddressByPageDraft, setSalesSampleDestinationStudioAddressByPageDraft] = useState<Record<number, string>>({});
   const [salesOrderDetailDraftRows, setSalesOrderDetailDraftRows] = useState<DetailDraftRow[]>([]);
   const [countryBreakdownDraftRows, setCountryBreakdownDraftRows] = useState<CountryBreakdownRow[]>([]);
   const [section2cDraftRows, setSection2cDraftRows] = useState<Section2cDraftRow[]>([]);
@@ -315,6 +321,52 @@ export function SalesOrderDraftEditPage() {
     const p = data?.payloadJson ? safeJsonParse(data.payloadJson) : null;
     return p ?? {};
   }, [data?.payloadJson]);
+
+  const pageCount = useMemo(() => {
+    const pages = [
+      ...(termsOfDeliveryRows ?? []),
+      ...(quantityPerArticleRows ?? []),
+      ...(invoiceAvgPriceRows ?? []),
+      ...(salesSampleRows ?? []),
+    ]
+      .map((r) => Number((r?.page ?? '1').toString()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return Math.max(1, pages.length > 0 ? Math.max(...pages) : Number(payload?.raw?.pageCount ?? payload?.pageCount ?? 1));
+  }, [termsOfDeliveryRows, quantityPerArticleRows, invoiceAvgPriceRows, salesSampleRows, payload]);
+
+  useEffect(() => {
+    setActivePage((p) => Math.min(Math.max(1, p), pageCount));
+  }, [pageCount]);
+
+  const termsOfDeliveryForActivePage = useMemo(() => (termsOfDeliveryByPageDraft?.[activePage] ?? '').toString(), [activePage, termsOfDeliveryByPageDraft]);
+
+  const quantityPerArticleRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (quantityPerArticleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+  }, [activePage, quantityPerArticleRows]);
+
+  const invoiceAvgPriceRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    return (invoiceAvgPriceRows ?? []).filter((r) => {
+      const rp = (r?.page ?? '1').toString();
+      return rp === p || (p === '1' && rp.trim() === '');
+    });
+  }, [activePage, invoiceAvgPriceRows]);
+
+  const salesSampleRowsForActivePage = useMemo(() => {
+    const p = String(activePage);
+    const direct = (salesSampleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
+    if (direct.length > 0) return direct;
+    return [];
+  }, [activePage, salesSampleRows]);
+
+  const salesSampleTermsForActivePage = useMemo(() => (salesSampleTermsByPageDraft?.[activePage] ?? '').toString(), [activePage, salesSampleTermsByPageDraft]);
+  const salesSampleTermsOfDeliveryForActivePage = useMemo(() => (salesSampleTermsOfDeliveryByPageDraft?.[activePage] ?? '').toString(), [activePage, salesSampleTermsOfDeliveryByPageDraft]);
+  const salesSampleTimeOfDeliveryForActivePage = useMemo(() => (salesSampleTimeOfDeliveryByPageDraft?.[activePage] ?? '').toString(), [activePage, salesSampleTimeOfDeliveryByPageDraft]);
+  const salesSampleDestinationStudioAddressForActivePage = useMemo(
+    () => (salesSampleDestinationStudioAddressByPageDraft?.[activePage] ?? '').toString(),
+    [activePage, salesSampleDestinationStudioAddressByPageDraft],
+  );
 
   const hydrateFromPayload = () => {
     const ff = (payload?.formFields ?? {}) as Record<string, string>;
@@ -400,6 +452,30 @@ export function SalesOrderDraftEditPage() {
     setInvoiceAvgPriceRows(Array.isArray(payload?.invoiceAvgPriceRows) ? payload.invoiceAvgPriceRows : []);
     setTermsOfDeliveryRows(Array.isArray(payload?.termsOfDeliveryRows) ? payload.termsOfDeliveryRows : []);
     setSalesSampleRows(Array.isArray(payload?.salesSampleRows) ? payload.salesSampleRows : []);
+
+    const termsByPage: Record<number, string> = {};
+    for (const r of Array.isArray(payload?.termsOfDeliveryRows) ? payload.termsOfDeliveryRows : []) {
+      const p = Number((r?.page ?? '1').toString());
+      if (Number.isFinite(p)) termsByPage[p] = (r?.termsOfDelivery ?? '').toString();
+    }
+    setTermsOfDeliveryByPageDraft(termsByPage);
+
+    const sampleTerms: Record<number, string> = {};
+    const sampleTermsOfDelivery: Record<number, string> = {};
+    const sampleTod: Record<number, string> = {};
+    const sampleDest: Record<number, string> = {};
+    for (const r of Array.isArray(payload?.salesSampleRows) ? payload.salesSampleRows : []) {
+      const p = Number((r?.page ?? '1').toString());
+      if (!Number.isFinite(p)) continue;
+      if ((sampleTerms[p] ?? '').trim().length === 0) sampleTerms[p] = (r?.salesSampleTerms ?? '').toString();
+      if ((sampleTermsOfDelivery[p] ?? '').trim().length === 0) sampleTermsOfDelivery[p] = (r?.termsOfDelivery ?? '').toString();
+      if ((sampleTod[p] ?? '').trim().length === 0) sampleTod[p] = (r?.timeOfDelivery ?? r?.tod ?? '').toString();
+      if ((sampleDest[p] ?? '').trim().length === 0) sampleDest[p] = (r?.destinationStudioAddress ?? r?.destinationStudio ?? '').toString();
+    }
+    setSalesSampleTermsByPageDraft(sampleTerms);
+    setSalesSampleTermsOfDeliveryByPageDraft(sampleTermsOfDelivery);
+    setSalesSampleTimeOfDeliveryByPageDraft(sampleTod);
+    setSalesSampleDestinationStudioAddressByPageDraft(sampleDest);
   };
 
   useEffect(() => {
@@ -421,8 +497,20 @@ export function SalesOrderDraftEditPage() {
         quantityPerArticleRows,
         timeOfDeliveryRows,
         invoiceAvgPriceRows,
-        termsOfDeliveryRows,
-        salesSampleRows,
+        termsOfDeliveryRows: Object.entries(termsOfDeliveryByPageDraft).map(([page, termsOfDelivery]) => ({
+          page: Number(page),
+          termsOfDelivery,
+        })),
+        salesSampleRows: salesSampleRows.map((row) => {
+          const page = Number((row?.page ?? '1').toString());
+          return {
+            ...row,
+            salesSampleTerms: salesSampleTermsByPageDraft[page] ?? row.salesSampleTerms ?? '',
+            termsOfDelivery: salesSampleTermsOfDeliveryByPageDraft[page] ?? row.termsOfDelivery ?? '',
+            timeOfDelivery: salesSampleTimeOfDeliveryByPageDraft[page] ?? row.timeOfDelivery ?? row.tod ?? '',
+            destinationStudioAddress: salesSampleDestinationStudioAddressByPageDraft[page] ?? row.destinationStudioAddress ?? row.destinationStudio ?? '',
+          };
+        }),
         salesOrderDetailSizeBreakdown: salesOrderDetailDraftRows,
         totalCountryBreakdown: countryBreakdownDraftRows,
         section2cColourSizeBreakdown: section2cDraftRows,
@@ -527,11 +615,63 @@ export function SalesOrderDraftEditPage() {
         </div>
       </div>
 
-      <EditableObjectTable title='Terms of Delivery' rows={termsOfDeliveryRows} onRowsChange={setTermsOfDeliveryRows} />
-      <EditableObjectTable title='Time of Delivery' rows={timeOfDeliveryRows} onRowsChange={setTimeOfDeliveryRows} />
-      <EditableObjectTable title='Quantity per Article' rows={quantityPerArticleRows} onRowsChange={setQuantityPerArticleRows} />
-      <EditableObjectTable title='Invoice Average Price' rows={invoiceAvgPriceRows} onRowsChange={setInvoiceAvgPriceRows} />
-      <EditableObjectTable title='Sales Sample' rows={salesSampleRows} onRowsChange={setSalesSampleRows} />
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-3 border-b border-gray-200 flex gap-2 overflow-auto'>
+          {Array.from({ length: pageCount }).map((_, idx) => {
+            const p = idx + 1;
+            return (
+              <button
+                key={p}
+                type='button'
+                className={
+                  p === activePage
+                    ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white'
+                    : 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }
+                onClick={() => setActivePage(p)}
+              >
+                Page-{p}
+              </button>
+            );
+          })}
+        </div>
+        <div className='p-6 space-y-6 bg-gray-50'>
+          <div className='bg-white rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+            <textarea
+              className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600'
+              value={termsOfDeliveryForActivePage}
+              onChange={(e) => setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))}
+            />
+          </div>
+          <EditableObjectTable title='Time of Delivery' rows={timeOfDeliveryRows.filter((r) => (r?.page ?? '1').toString() === String(activePage))} onRowsChange={(rows) => setTimeOfDeliveryRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
+          <EditableObjectTable title='Quantity per Article' rows={quantityPerArticleRowsForActivePage} onRowsChange={(rows) => setQuantityPerArticleRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
+          <EditableObjectTable title='Invoice Average Price' rows={invoiceAvgPriceRowsForActivePage} onRowsChange={(rows) => setInvoiceAvgPriceRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
+        </div>
+      </div>
+
+      <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
+        <div className='px-6 py-4 border-b border-gray-200 text-sm font-semibold text-gray-900'>Sales Sample</div>
+        <div className='p-6 space-y-4'>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Sales Sample Terms</div>
+            <textarea className='w-full min-h-[110px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600' value={salesSampleTermsForActivePage} onChange={(e) => setSalesSampleTermsByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Terms of Delivery</div>
+            <textarea className='w-full min-h-[84px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600' value={salesSampleTermsOfDeliveryForActivePage} onChange={(e) => setSalesSampleTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Destination Studio Address</div>
+            <textarea className='w-full min-h-[84px] rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-600' value={salesSampleDestinationStudioAddressForActivePage} onChange={(e) => setSalesSampleDestinationStudioAddressByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))} />
+          </div>
+          <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+            <div className='text-sm font-semibold text-gray-900 mb-3'>Time Of Delivery</div>
+            <Input value={salesSampleTimeOfDeliveryForActivePage} onChange={(e) => setSalesSampleTimeOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))} />
+          </div>
+          <EditableObjectTable title='Articles' rows={salesSampleRowsForActivePage} onRowsChange={(rows) => setSalesSampleRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage), salesSampleTerms: salesSampleTermsByPageDraft[activePage] ?? '', termsOfDelivery: salesSampleTermsOfDeliveryByPageDraft[activePage] ?? '', timeOfDelivery: salesSampleTimeOfDeliveryByPageDraft[activePage] ?? '', destinationStudioAddress: salesSampleDestinationStudioAddressByPageDraft[activePage] ?? '' }))])} />
+        </div>
+      </div>
 
       <div className='bg-white rounded-2xl border border-gray-200 overflow-hidden'>
         <div className='px-6 py-4 border-b border-gray-200 flex items-center justify-between'>
