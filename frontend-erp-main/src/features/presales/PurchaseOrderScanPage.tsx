@@ -1805,10 +1805,11 @@ useEffect(() => {
                   variant='primary'
                   disabled={!data}
                   onClick={() => {
+                    const shownPage = salesSampleArticlesRowsForActivePage[0]?.page ?? String(activePage);
                     setSalesSampleArticleRows((prev) => [
                       ...(prev ?? []),
                       {
-                        page: String(activePage),
+                        page: shownPage,
                         articleNo: '',
                         hmColourCode: '',
                         ptArticleNumber: '',

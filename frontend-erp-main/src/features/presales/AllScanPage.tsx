@@ -227,10 +227,6 @@ export function AllScanPage() {
     });
   };
 
-  const yarnSourceNoDetails = useMemo(() => {
-    const v = (bomYarnSourceTableRows?.[1]?.[0] ?? '').toString().trim().toLowerCase();
-    return v === 'no yarn details found';
-  }, [bomYarnSourceTableRows]);
 
   const pivotDetailRows = (backendDetail: Array<Record<string, any>>) => {
     const out: Array<{
@@ -3355,8 +3351,9 @@ export function AllScanPage() {
             onClick={() => {
               const DEFAULT_YARN_HEADERS = ['Position', 'Placement', 'Type', 'Material Supplier', 'Fibre Composition', 'Yarn Supplier', 'Production Unit / Processing Capability'];
               setBomYarnSourceTableRows((prev) => {
-                const next = (prev ?? []).map((row) => [...row]);
+                let next = (prev ?? []).map((row) => [...row]);
                 if (next.length === 0) next.push([...DEFAULT_YARN_HEADERS]);
+                next = [next[0], ...next.slice(1).filter((r) => (r[0] ?? '').toString().trim().toLowerCase() !== 'no yarn details found')];
                 next.push(Array.from({ length: next[0].length }, () => ''));
                 return next;
               });
