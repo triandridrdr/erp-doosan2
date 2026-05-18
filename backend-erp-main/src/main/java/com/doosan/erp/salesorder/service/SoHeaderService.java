@@ -90,13 +90,12 @@ public class SoHeaderService {
     }
 
     @Transactional
-    public void softDelete(Long id) {
+    public void hardDelete(Long id) {
         SoHeader header = headerRepo.findById(id)
-                .filter(h -> !h.getDeleted())
                 .orElseThrow(() -> new IllegalArgumentException("SO Header not found: " + id));
-        header.softDelete();
-        headerRepo.save(header);
-        log.info("[DELETE] SO={} soft deleted", header.getSoNumber());
+        String soNumber = header.getSoNumber();
+        headerRepo.delete(header);
+        log.info("[DELETE] SO={} hard deleted", soNumber);
     }
 
     private Map<String, Object> buildPayload(SoHeader h) {

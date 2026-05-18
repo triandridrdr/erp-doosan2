@@ -12,6 +12,8 @@ public interface SoHeaderRepository extends JpaRepository<SoHeader, Long> {
 
     Optional<SoHeader> findBySoNumberAndDeletedFalse(String soNumber);
 
+    Optional<SoHeader> findBySoNumber(String soNumber);
+
     List<SoHeader> findByDeletedFalseOrderByCreatedAtDesc();
 
     List<SoHeader> findByWorkflowStatusAndDeletedFalse(com.doosan.erp.salesorder.entity.SoWorkflowStatus status);

@@ -91,12 +91,12 @@ public class SoController {
         return ResponseEntity.ok(ApiResponse.success(headerService.updateWorkflowStatus(id, newStatus)));
     }
 
-    // ─── DELETE (SOFT) ───────────────────────────────────────────────────────────
+    // ─── DELETE ─────────────────────────────────────────────────────────────────
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Soft delete Sales Order")
+    @Operation(summary = "Hard delete Sales Order")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
-        headerService.softDelete(id);
+        headerService.hardDelete(id);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }
