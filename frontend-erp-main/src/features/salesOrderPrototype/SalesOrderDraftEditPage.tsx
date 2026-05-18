@@ -328,6 +328,7 @@ export function SalesOrderDraftEditPage() {
       ...(quantityPerArticleRows ?? []),
       ...(invoiceAvgPriceRows ?? []),
       ...(salesSampleRows ?? []),
+      ...(Array.isArray(payload?.raw?.salesSampleArticlesByPage) ? payload.raw.salesSampleArticlesByPage : []),
     ]
       .map((r) => Number((r?.page ?? '1').toString()))
       .filter((n) => Number.isFinite(n) && n > 0);
@@ -357,8 +358,15 @@ export function SalesOrderDraftEditPage() {
     const p = String(activePage);
     const direct = (salesSampleRows ?? []).filter((r) => (r?.page ?? '1').toString() === p);
     if (direct.length > 0) return direct;
+    const rawDirect = (Array.isArray(payload?.raw?.salesSampleArticlesByPage) ? payload.raw.salesSampleArticlesByPage : []).filter((r: any) => (r?.page ?? '1').toString() === p);
+    if (rawDirect.length > 0) return rawDirect;
+    const rawPages = (Array.isArray(payload?.raw?.salesSampleArticlesByPage) ? payload.raw.salesSampleArticlesByPage : [])
+      .map((r: any) => Number((r?.page ?? '1').toString()))
+      .filter((x: number) => Number.isFinite(x));
+    const maxPage = rawPages.length > 0 ? Math.max(...rawPages) : 0;
+    if (maxPage > 0) return (Array.isArray(payload?.raw?.salesSampleArticlesByPage) ? payload.raw.salesSampleArticlesByPage : []).filter((r: any) => (r?.page ?? '1').toString() === String(maxPage));
     return [];
-  }, [activePage, salesSampleRows]);
+  }, [activePage, salesSampleRows, payload]);
 
   const salesSampleTermsForActivePage = useMemo(() => (salesSampleTermsByPageDraft?.[activePage] ?? '').toString(), [activePage, salesSampleTermsByPageDraft]);
   const salesSampleTermsOfDeliveryForActivePage = useMemo(() => (salesSampleTermsOfDeliveryByPageDraft?.[activePage] ?? '').toString(), [activePage, salesSampleTermsOfDeliveryByPageDraft]);
@@ -370,9 +378,14 @@ export function SalesOrderDraftEditPage() {
 
   const hydrateFromPayload = () => {
     const ff = (payload?.formFields ?? {}) as Record<string, string>;
+    const rawFf = (payload?.raw?.formFields ?? {}) as Record<string, string>;
     const nextHeader: Record<string, string> = {};
     for (const f of SALES_ORDER_HEADER_FIELDS) {
-      nextHeader[f.key] = (ff?.[f.key] ?? '').toString();
+      if (f.key === 'Order Date') {
+        nextHeader[f.key] = (ff?.[f.key] ?? rawFf?.['Date of Order'] ?? rawFf?.['Order Date'] ?? rawFf?.['Date (ISO)'] ?? rawFf?.['Date'] ?? '').toString();
+      } else {
+        nextHeader[f.key] = (ff?.[f.key] ?? rawFf?.[f.key] ?? '').toString();
+      }
     }
     setSalesOrderHeaderDraft(nextHeader);
 
@@ -458,6 +471,11 @@ export function SalesOrderDraftEditPage() {
       const p = Number((r?.page ?? '1').toString());
       if (Number.isFinite(p)) termsByPage[p] = (r?.termsOfDelivery ?? '').toString();
     }
+    for (const r of Array.isArray(payload?.raw?.termsOfDeliveryByPage) ? payload.raw.termsOfDeliveryByPage : []) {
+      const p = Number((r?.page ?? '1').toString());
+      const v = (r?.termsOfDelivery ?? '').toString();
+      if (Number.isFinite(p) && (termsByPage[p] ?? '').trim().length === 0) termsByPage[p] = v;
+    }
     setTermsOfDeliveryByPageDraft(termsByPage);
 
     const sampleTerms: Record<number, string> = {};
@@ -471,6 +489,26 @@ export function SalesOrderDraftEditPage() {
       if ((sampleTermsOfDelivery[p] ?? '').trim().length === 0) sampleTermsOfDelivery[p] = (r?.termsOfDelivery ?? '').toString();
       if ((sampleTod[p] ?? '').trim().length === 0) sampleTod[p] = (r?.timeOfDelivery ?? r?.tod ?? '').toString();
       if ((sampleDest[p] ?? '').trim().length === 0) sampleDest[p] = (r?.destinationStudioAddress ?? r?.destinationStudio ?? '').toString();
+    }
+    for (const r of Array.isArray(payload?.raw?.salesSampleTermsByPage) ? payload.raw.salesSampleTermsByPage : []) {
+      const p = Number((r?.page ?? '1').toString());
+      const v = (r?.salesSampleTerms ?? r?.terms ?? '').toString();
+      if (Number.isFinite(p) && (sampleTerms[p] ?? '').trim().length === 0) sampleTerms[p] = v;
+    }
+    for (const r of Array.isArray(payload?.raw?.salesSampleTermsOfDeliveryByPage) ? payload.raw.salesSampleTermsOfDeliveryByPage : []) {
+      const p = Number((r?.page ?? '1').toString());
+      const v = (r?.termsOfDelivery ?? '').toString();
+      if (Number.isFinite(p) && (sampleTermsOfDelivery[p] ?? '').trim().length === 0) sampleTermsOfDelivery[p] = v;
+    }
+    for (const r of Array.isArray(payload?.raw?.salesSampleTimeOfDeliveryByPage) ? payload.raw.salesSampleTimeOfDeliveryByPage : []) {
+      const p = Number((r?.page ?? '1').toString());
+      const v = (r?.timeOfDelivery ?? r?.tod ?? '').toString();
+      if (Number.isFinite(p) && (sampleTod[p] ?? '').trim().length === 0) sampleTod[p] = v;
+    }
+    for (const r of Array.isArray(payload?.raw?.salesSampleDestinationStudioAddressByPage) ? payload.raw.salesSampleDestinationStudioAddressByPage : []) {
+      const p = Number((r?.page ?? '1').toString());
+      const v = (r?.destinationStudioAddress ?? r?.destinationStudio ?? r?.destination ?? '').toString();
+      if (Number.isFinite(p) && (sampleDest[p] ?? '').trim().length === 0) sampleDest[p] = v;
     }
     setSalesSampleTermsByPageDraft(sampleTerms);
     setSalesSampleTermsOfDeliveryByPageDraft(sampleTermsOfDelivery);
@@ -501,7 +539,7 @@ export function SalesOrderDraftEditPage() {
           page: Number(page),
           termsOfDelivery,
         })),
-        salesSampleRows: salesSampleRows.map((row) => {
+        salesSampleRows: ((salesSampleRows.length > 0 ? salesSampleRows : (Array.isArray(payload?.raw?.salesSampleArticlesByPage) ? payload.raw.salesSampleArticlesByPage : [])) as Array<Record<string, any>>).map((row) => {
           const page = Number((row?.page ?? '1').toString());
           return {
             ...row,

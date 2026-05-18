@@ -204,6 +204,19 @@ public class SoHeaderService {
         });
 
         latestPurchaseOrder(h.getId()).ifPresent(scan -> {
+            Object raw = fromJson(scan.getOcrRawJsonb());
+            payload.put("raw", raw);
+            if ((ff.get("Order Date") == null || ff.get("Order Date").toString().isBlank()) && raw instanceof Map<?, ?> rawMap) {
+                Object rawFormFields = rawMap.get("formFields");
+                if (rawFormFields instanceof Map<?, ?> rawFf) {
+                    ff.put("Order Date", firstNonBlank(
+                            rawFf.get("Date of Order"),
+                            rawFf.get("Order Date"),
+                            rawFf.get("Date (ISO)"),
+                            rawFf.get("Date")
+                    ));
+                }
+            }
             payload.put("quantityPerArticleRows", scan.getItems().stream()
                     .sorted(Comparator.comparing(SoPoItem::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
                     .map(r -> mapOf(
@@ -234,6 +247,13 @@ public class SoHeaderService {
                             "page", r.getPageNumber(),
                             "invoiceAveragePrice", r.getInvoiceAvgPrice(),
                             "country", r.getCountry()
+                    ))
+                    .toList());
+            payload.put("termsOfDeliveryRows", scan.getTermsOfDeliveries().stream()
+                    .sorted(Comparator.comparing(SoPoTermsOfDelivery::getPageNumber, Comparator.nullsLast(Integer::compareTo)))
+                    .map(r -> mapOf(
+                            "page", r.getPageNumber(),
+                            "termsOfDelivery", r.getTermsOfDelivery()
                     ))
                     .toList());
             payload.put("salesSampleRows", scan.getSalesSamples().stream()
@@ -291,6 +311,15 @@ public class SoHeaderService {
             m.put(kv[i].toString(), kv[i + 1]);
         }
         return m;
+    }
+
+    private String firstNonBlank(Object... values) {
+        for (Object value : values) {
+            if (value == null) continue;
+            String text = value.toString();
+            if (!text.isBlank()) return text;
+        }
+        return "";
     }
 
     private String toJson(Object v) {

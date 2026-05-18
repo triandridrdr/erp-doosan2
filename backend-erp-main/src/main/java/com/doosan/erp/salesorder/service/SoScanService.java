@@ -268,6 +268,7 @@ public class SoScanService {
             ss.setTimeOfDelivery(tod);
             ss.setDestinationStudio(str(row.get("destinationStudio")));
             ss.setSalesSampleTerms(str(row.get("salesSampleTerms")));
+            ss.setTermsOfDelivery(str(row.get("termsOfDelivery")));
             ss.setDestinationStudioAddress(str(row.get("destinationStudioAddress")));
             scan.getSalesSamples().add(ss);
         }

@@ -52,6 +52,9 @@ public class SoPoSalesSample extends BaseEntity {
     @Column(name = "sales_sample_terms", columnDefinition = "TEXT")
     private String salesSampleTerms;
 
+    @Column(name = "terms_of_delivery", columnDefinition = "TEXT")
+    private String termsOfDelivery;
+
     @Column(name = "destination_studio_address", columnDefinition = "TEXT")
     private String destinationStudioAddress;
 }
