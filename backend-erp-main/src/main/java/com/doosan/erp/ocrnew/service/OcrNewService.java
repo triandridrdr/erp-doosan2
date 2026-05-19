@@ -5052,7 +5052,7 @@ public class OcrNewService {
                             // Backfill into the last emitted row for this page
                             Map<String, String> lastRow = out.get(out.size() - 1);
                             String existing = lastRow.get(size);
-                            if (existing == null || "0".equals(existing)) {
+                            if ((existing == null || "0".equals(existing)) && canBackfillSizeValue(lastRow, size, v)) {
                                 log.info("[LINE-BACKFILL] SUCCESS: size={} value={} into row type={}", size, v, lastRow.get("type"));
                                 lastRow.put(size, v);
                                 // Recalculate total if needed
@@ -5069,7 +5069,7 @@ public class OcrNewService {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
                                 String existing = r.get(kidsKey);
-                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, kidsKey, kv)) {
                                     log.info("[LINE-BACKFILL] KIDS size={} value={} into row[{}] type={}", kidsKey, kv, ri, r.get("type"));
                                     r.put(kidsKey, kv);
                                 }
@@ -5087,7 +5087,7 @@ public class OcrNewService {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
                                 String existing = r.get(numKey2);
-                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, numKey2, nv2)) {
                                     log.info("[LINE-BACKFILL] NUMERIC_CM size={} value={} into row[{}] type={}", numKey2, nv2, ri, r.get("type"));
                                     r.put(numKey2, nv2);
                                 }
@@ -5103,7 +5103,7 @@ public class OcrNewService {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
                                 String existing = r.get(anyKey2);
-                                if (existing == null || existing.isBlank() || "0".equals(existing)) {
+                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, anyKey2, av2)) {
                                     log.info("[LINE-BACKFILL] ANY size={} value={} into row[{}] type={}", anyKey2, av2, ri, r.get("type"));
                                     r.put(anyKey2, av2);
                                 }
@@ -5639,6 +5639,7 @@ public class OcrNewService {
             Map<String, String> solid = solidByArticle.get(articleNo);
             Map<String, String> total = totalByArticle.get(articleNo);
             if (assortment == null || solid == null || total == null) continue;
+            if (isExplicitZeroAssortment(assortment, sizes)) continue;
 
             for (String sz : sizes) {
                 String v = assortment.get(sz);
@@ -5700,6 +5701,51 @@ public class OcrNewService {
             }
             assortment.put("total", String.valueOf(sum));
         }
+    }
+
+    private static boolean isExplicitZeroAssortment(Map<String, String> assortment, List<String> sizes) {
+        if (assortment == null || sizes == null || sizes.isEmpty()) return false;
+        boolean sawSize = false;
+        for (String sz : sizes) {
+            String raw = assortment.get(sz);
+            if (raw == null || raw.isBlank()) continue;
+            sawSize = true;
+            try {
+                if (Integer.parseInt(raw.replaceAll("\\s+", "")) != 0) return false;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        if (!sawSize) return false;
+        for (String key : List.of("total", "quantity", "noOfAsst")) {
+            String raw = assortment.get(key);
+            if (raw == null || raw.isBlank()) continue;
+            try {
+                if (Integer.parseInt(raw.replaceAll("\\s+", "")) != 0) return false;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean canBackfillSizeValue(Map<String, String> row, String sizeKey, String value) {
+        if (row == null) return false;
+        if (!"Assortment".equals(row.getOrDefault("type", ""))) return true;
+        String normalizedValue = value == null ? "" : value.replaceAll("\\s+", "");
+        if ("0".equals(normalizedValue)) return true;
+
+        String existing = row.get(sizeKey);
+        boolean targetIsExplicitZero = existing != null && !existing.isBlank() && "0".equals(existing.replaceAll("\\s+", ""));
+        boolean rowQuantityZero = false;
+        for (String key : List.of("total", "quantity", "noOfAsst")) {
+            String raw = row.get(key);
+            if (raw == null || raw.isBlank()) continue;
+            String normalized = raw.replaceAll("\\s+", "");
+            if (!"0".equals(normalized)) return true;
+            rowQuantityZero = true;
+        }
+        return !(targetIsExplicitZero && rowQuantityZero);
     }
 
     private static int gcd(int a, int b) {
