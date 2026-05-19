@@ -9,19 +9,19 @@ import java.util.Optional;
 
 public interface MasterSizeRepository extends JpaRepository<MasterSize, Long> {
 
-    Optional<MasterSize> findByNormalizedLabel(String normalizedLabel);
+    Optional<MasterSize> findByCompanyIdAndNormalizedLabel(String companyId, String normalizedLabel);
 
     @Query("""
             select s from MasterSize s
-            where s.deleted = false and s.active = true
+            where s.companyId = :companyId and s.deleted = false and s.active = true
             order by s.sortOrder asc, s.id asc
             """)
-    List<MasterSize> findAllActive();
+    List<MasterSize> findAllActive(String companyId);
 
     @Query("""
             select s from MasterSize s
-            where s.deleted = false
+            where s.companyId = :companyId and s.deleted = false
             order by s.sortOrder asc, s.id asc
             """)
-    List<MasterSize> findAllIncludingInactive();
+    List<MasterSize> findAllIncludingInactive(String companyId);
 }

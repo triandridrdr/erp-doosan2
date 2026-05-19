@@ -21,12 +21,13 @@ import lombok.Setter;
  */
 @Entity
 @Table(
-        name = "master_sizes",
+        name = "mst_size",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_master_sizes_normalized", columnNames = "normalized_label")
+                @UniqueConstraint(name = "uq_mst_size_company_code", columnNames = {"company_id", "size_code"}),
+                @UniqueConstraint(name = "uq_mst_size_company_normalized", columnNames = {"company_id", "normalized_label"})
         },
         indexes = {
-                @Index(name = "idx_master_sizes_active_sort", columnList = "active, sort_order")
+                @Index(name = "idx_mst_size_active_sort", columnList = "company_id, is_active, deleted, sort_order")
         }
 )
 @Getter
@@ -34,8 +35,14 @@ import lombok.Setter;
 @NoArgsConstructor
 public class MasterSize extends BaseEntity {
 
+    @Column(name = "company_id", nullable = false, length = 10)
+    private String companyId = "DSS";
+
+    @Column(name = "size_code", nullable = false, length = 40)
+    private String sizeCode;
+
     /** Human-readable label (preserve casing/punctuation as seen on the PDF). */
-    @Column(name = "label", nullable = false, length = 100)
+    @Column(name = "size_name", nullable = false, length = 100)
     private String label;
 
     /** Uppercase, whitespace/asterisk-stripped form used for uniqueness. */
@@ -47,6 +54,15 @@ public class MasterSize extends BaseEntity {
     private Integer sortOrder = 0;
 
     /** Soft disable without deleting (kept for historical references). */
-    @Column(name = "active", nullable = false)
+    @Column(name = "is_active", nullable = false)
     private Boolean active = true;
+
+    @Column(name = "size_national_code", length = 10)
+    private String sizeNationalCode = "GLOBAL";
+
+    @Column(name = "size_group", length = 10)
+    private String sizeGroup = "OCR";
+
+    @Column(name = "memo", columnDefinition = "TEXT")
+    private String memo;
 }

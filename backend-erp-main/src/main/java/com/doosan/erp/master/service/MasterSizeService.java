@@ -33,14 +33,16 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class MasterSizeService {
 
+    private static final String DEFAULT_COMPANY_ID = "DSS";
+
     private final MasterSizeRepository repository;
 
     public List<MasterSizeDto> listActive() {
-        return repository.findAllActive().stream().map(MasterSizeDto::from).toList();
+        return repository.findAllActive(DEFAULT_COMPANY_ID).stream().map(MasterSizeDto::from).toList();
     }
 
     public List<MasterSizeDto> listAll() {
-        return repository.findAllIncludingInactive().stream().map(MasterSizeDto::from).toList();
+        return repository.findAllIncludingInactive(DEFAULT_COMPANY_ID).stream().map(MasterSizeDto::from).toList();
     }
 
     public MasterSizeDto getById(Long id) {
@@ -70,7 +72,7 @@ public class MasterSizeService {
             throw new IllegalArgumentException("label normalizes to an empty value");
         }
 
-        Optional<MasterSize> existing = repository.findByNormalizedLabel(normalized);
+        Optional<MasterSize> existing = repository.findByCompanyIdAndNormalizedLabel(DEFAULT_COMPANY_ID, normalized);
         if (existing.isPresent()) {
             MasterSize row = existing.get();
             boolean mutated = false;
@@ -96,6 +98,8 @@ public class MasterSizeService {
         }
 
         MasterSize row = new MasterSize();
+        row.setCompanyId(DEFAULT_COMPANY_ID);
+        row.setSizeCode(toSizeCode(normalized));
         row.setLabel(cleanLabel);
         row.setNormalizedLabel(normalized);
         row.setActive(request.getActive() == null ? Boolean.TRUE : request.getActive());
@@ -114,12 +118,13 @@ public class MasterSizeService {
             String cleanLabel = request.getLabel().trim();
             String normalized = normalizeLabel(cleanLabel);
             if (!normalized.isEmpty()) {
-                Optional<MasterSize> clash = repository.findByNormalizedLabel(normalized);
+                Optional<MasterSize> clash = repository.findByCompanyIdAndNormalizedLabel(DEFAULT_COMPANY_ID, normalized);
                 if (clash.isPresent() && !clash.get().getId().equals(id)) {
                     throw new IllegalArgumentException(
                             "Another master size with the same normalized label already exists: "
                                     + clash.get().getLabel());
                 }
+                row.setSizeCode(toSizeCode(normalized));
                 row.setLabel(cleanLabel);
                 row.setNormalizedLabel(normalized);
             }
@@ -155,11 +160,16 @@ public class MasterSizeService {
     }
 
     private Integer nextSortOrder() {
-        return repository.findAllIncludingInactive().stream()
+        return repository.findAllIncludingInactive(DEFAULT_COMPANY_ID).stream()
                 .map(MasterSize::getSortOrder)
                 .filter(v -> v != null)
                 .max(Integer::compareTo)
                 .map(v -> v + 10)
                 .orElse(1000);
+    }
+
+    public static String toSizeCode(String normalizedLabel) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) return "";
+        return normalizedLabel.length() <= 40 ? normalizedLabel : normalizedLabel.substring(0, 40);
     }
 }

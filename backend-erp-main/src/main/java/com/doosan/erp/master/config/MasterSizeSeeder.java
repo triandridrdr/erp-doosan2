@@ -23,6 +23,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MasterSizeSeeder implements ApplicationRunner {
 
+    private static final String DEFAULT_COMPANY_ID = "DSS";
+
     private final MasterSizeRepository repository;
 
     /** (label, sortOrder) tuples — labels shown as-is in the UI dropdown. */
@@ -41,8 +43,10 @@ public class MasterSizeSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         for (Seed seed : DEFAULTS) {
             String normalized = MasterSizeService.normalizeLabel(seed.label);
-            if (repository.findByNormalizedLabel(normalized).isPresent()) continue;
+            if (repository.findByCompanyIdAndNormalizedLabel(DEFAULT_COMPANY_ID, normalized).isPresent()) continue;
             MasterSize row = new MasterSize();
+            row.setCompanyId(DEFAULT_COMPANY_ID);
+            row.setSizeCode(MasterSizeService.toSizeCode(normalized));
             row.setLabel(seed.label);
             row.setNormalizedLabel(normalized);
             row.setSortOrder(seed.sortOrder);
