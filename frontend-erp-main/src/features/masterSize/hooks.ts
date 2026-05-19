@@ -35,16 +35,41 @@ const ADULT_SIZE_ORDER: Record<string, number> = {
 function sizeKeyOrder(key: string): number {
   const cm = extractCmFromSizeKey(key);
   if (cm !== null) return cm;
-  const upper = key.toUpperCase().replace(/\s+/g, '');
+  const paren = key.match(/\(([A-Z]{1,3}(?:\s*\/\s*P)?)\)/i);
+  const base = paren?.[1] ?? key;
+  const upper = base.toUpperCase().replace(/\s+/g, '').replace(/\*/g, '').replace(/\/P$/, '');
   return ADULT_SIZE_ORDER[upper] ?? 999;
+}
+
+function canonicalSizeKey(key: string): string {
+  const raw = (key ?? '').toString().trim();
+  const local = raw.match(/^([A-Z0-9]+)\s*\(([A-Z]{1,3}(?:\s*\/\s*P)?)\)\*?$/i);
+  if (local) {
+    const label = local[1].toUpperCase();
+    const inside = local[2].toUpperCase().replace(/\s+/g, '');
+    return `${label} (${inside})*`;
+  }
+  const adult = raw.match(/^(XS|S|M|L|XL)\s*\(\s*(XS|S|M|L|XL)\s*\)\*?$/i);
+  if (adult) {
+    const size = adult[1].toUpperCase();
+    return `${size} (${size})*`;
+  }
+  return raw;
 }
 
 /** Return every key in a backend CSB row that is NOT a known meta field, sorted by size order. */
 export function extractSizeKeysFromRow(row: Record<string, any> | null | undefined): string[] {
   if (!row) return [];
-  return Object.keys(row)
-    .filter((k) => !CSB_META_KEYS.has(k.toLowerCase()))
-    .sort((a, b) => sizeKeyOrder(a) - sizeKeyOrder(b));
+  const canonical = new Map<string, { original: string; canonical: string }>();
+  for (const k of Object.keys(row)) {
+    if (CSB_META_KEYS.has(k.toLowerCase())) continue;
+    const normalized = canonicalSizeKey(k);
+    const existing = canonical.get(normalized);
+    if (!existing || k === normalized) canonical.set(normalized, { original: k, canonical: normalized });
+  }
+  return Array.from(canonical.values())
+    .sort((a, b) => sizeKeyOrder(a.canonical) - sizeKeyOrder(b.canonical))
+    .map((x) => x.original);
 }
 
 /** Flatten a list of CSB rows into the set of unique size labels. */

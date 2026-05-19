@@ -56,8 +56,8 @@ public class OcrNewService {
     private static final String PDF_CONTENT_TYPE = "application/pdf";
 
     // Allow trailing ) or other chars after the number (OCR artifacts)
-    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,2})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
-    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,2}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,3})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,3}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
     // Flexible fallback: finds size label followed by parenthetical size format and a number
     // Matches patterns like "XL (XL/P)* 41" even with OCR artifacts
     private static final Pattern SIZE_VALUE_LINE_FLEX = Pattern.compile("(?i)\\b(X[SL]|S|M|L)\\s*\\([^)]+\\)[^\\d]*(\\d+)\\s*\\)?\\s*$");
@@ -5023,13 +5023,13 @@ public class OcrNewService {
                         String v = null;
                         Matcher sm = SIZE_VALUE_LINE.matcher(t);
                         if (sm.matches()) {
-                            size = normalizeSizeKey(sm.group(1));
+                            size = normalizeDisplayedSizeKey(sm.group(1), t);
                             v = normalizeNumber(sm.group(2));
                         }
                         if (size == null) {
                             Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
                             if (sp.matches()) {
-                                size = normalizeSizeKey(sp.group(1));
+                                size = normalizeDisplayedSizeKey(null, t);
                                 v = normalizeNumber(sp.group(2));
                             }
                         }
@@ -5220,14 +5220,7 @@ public class OcrNewService {
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
                     String sizeRaw = sm.group(1);
-                    String size = normalizeSizeKey(sizeRaw);
-                    if (size == null) {
-                        Matcher pm = Pattern.compile("\\(\\s*([A-Za-z]{1,2})\\s*(?:\\/\\s*P)?\\s*\\)").matcher(t);
-                        if (pm.find()) {
-                            String inside = pm.group(1);
-                            size = normalizeSizeKey(inside);
-                        }
-                    }
+                    String size = normalizeDisplayedSizeKey(sizeRaw, t);
                     List<String> vals = splitMultiArticleNumbers(sm.group(2), articleNos.size());
 
                     if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
@@ -5252,8 +5245,7 @@ public class OcrNewService {
                 // Some countries use numeric size labels at the start, e.g. "155/80A (XS/P)* 30"
                 Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
                 if (sp.matches()) {
-                    String inside = sp.group(1);
-                    String size = normalizeSizeKey(inside);
+                    String size = normalizeDisplayedSizeKey(null, t);
                     List<String> vals = splitMultiArticleNumbers(sp.group(2), articleNos.size());
 
                     if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
@@ -5303,7 +5295,7 @@ public class OcrNewService {
                             String sizeRaw = so.group(1);
                             String rawVal = so.group(2);
                             String v = fixOcrNumber(rawVal);
-                            String size = normalizeSizeKey(sizeRaw);
+                            String size = normalizeDisplayedSizeKey(sizeRaw, t);
                             if (size != null && v != null && !v.isBlank()) {
                                 log.info("[SIZE-PARSE] SIZE_VALUE_LINE_OCR_FIX matched: line='{}' -> size={} rawVal='{}' fixedVal={}", t, size, rawVal, v);
                                 for (Map<String, String> r : currentRowsByArticle[0].values()) {
@@ -5425,9 +5417,7 @@ public class OcrNewService {
             }
             int solidSum = 0;
             for (String sz : sizes) {
-                try {
-                    solidSum += Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                } catch (NumberFormatException ignored) {}
+                solidSum += getStandardSizeInt(solid, sz);
             }
             if (solidTotal > 0 && solidSum == solidTotal) continue;
 
@@ -5442,9 +5432,7 @@ public class OcrNewService {
 
             int totalSum = 0;
             for (String sz : sizes) {
-                try {
-                    totalSum += Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                } catch (NumberFormatException ignored) {}
+                totalSum += getStandardSizeInt(total, sz);
             }
             if (totalSum != totalExpected) continue;
 
@@ -5460,18 +5448,9 @@ public class OcrNewService {
             boolean changed = false;
             int newSolidSum = 0;
             for (String sz : sizes) {
-                int totVal = 0, assortVal = 0, solidVal = 0;
-                try {
-                    totVal = Integer.parseInt(total.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                } catch (NumberFormatException ignored) {}
-                try {
-                    if (assortment != null) {
-                        assortVal = Integer.parseInt(assortment.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                    }
-                } catch (NumberFormatException ignored) {}
-                try {
-                    solidVal = Integer.parseInt(solid.getOrDefault(sz, "0").replaceAll("\\s+", ""));
-                } catch (NumberFormatException ignored) {}
+                int totVal = getStandardSizeInt(total, sz);
+                int assortVal = assortment == null ? 0 : getStandardSizeInt(assortment, sz);
+                int solidVal = getStandardSizeInt(solid, sz);
 
                 int assortContribution = assortVal * noOfAsst;
                 int expectedSolid = Math.max(0, totVal - assortContribution);
@@ -5479,7 +5458,7 @@ public class OcrNewService {
                     log.info("[SOLID-RECONCILE] size={} old={} new={} (total={} - assortment={}*noOfAsst={}) country={} articleNo={}",
                             sz, solidVal, expectedSolid, totVal, assortVal, noOfAsst,
                             solid.getOrDefault("destinationCountry", ""), articleNo);
-                    solid.put(sz, String.valueOf(expectedSolid));
+                    putStandardSizeValue(solid, sz, String.valueOf(expectedSolid));
                     changed = true;
                 }
                 newSolidSum += expectedSolid;
@@ -5532,9 +5511,7 @@ public class OcrNewService {
             return;
         }
         for (int i = 0; i < sizes.size(); i++) {
-            try {
-                solidVals[i] = Integer.parseInt(solid.getOrDefault(sizes.get(i), "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
+            solidVals[i] = getStandardSizeInt(solid, sizes.get(i));
             solidSum += solidVals[i];
         }
 
@@ -5547,9 +5524,7 @@ public class OcrNewService {
             return;
         }
         for (int i = 0; i < sizes.size(); i++) {
-            try {
-                totalVals[i] = Integer.parseInt(total.getOrDefault(sizes.get(i), "0").replaceAll("\\s+", ""));
-            } catch (NumberFormatException ignored) {}
+            totalVals[i] = getStandardSizeInt(total, sizes.get(i));
             totalSum += totalVals[i];
         }
 
@@ -5561,6 +5536,33 @@ public class OcrNewService {
 
         // Both must be missing the SAME positive amount
         if (solidMissing <= 0 || solidMissing != totalMissing) return;
+
+        int smallIdx = -1;
+        int zeroIdx = -1;
+        for (int i = 0; i < sizes.size(); i++) {
+            if (solidVals[i] != totalVals[i]) continue;
+            if (solidVals[i] > 0 && solidVals[i] < 10 && smallIdx < 0) smallIdx = i;
+            if (solidVals[i] == 0 && zeroIdx < 0) zeroIdx = i;
+        }
+        if (smallIdx >= 0 && zeroIdx >= 0) {
+            int smallOld = solidVals[smallIdx];
+            int smallCorrected = (smallOld * 10) + 1;
+            int remainingForZero = solidMissing - (smallCorrected - smallOld);
+            if (smallCorrected >= 10 && remainingForZero >= 10 && remainingForZero < 1000) {
+                String smallSize = sizes.get(smallIdx);
+                String zeroSize = sizes.get(zeroIdx);
+                log.info("[TRUNCATION-FIX-PAIR] size1={} old1={} new1={} size2={} old2=0 new2={} missing={} country={}",
+                        smallSize, smallOld, smallCorrected, zeroSize, remainingForZero, solidMissing,
+                        solid.getOrDefault("destinationCountry", ""));
+                putStandardSizeValue(solid, smallSize, String.valueOf(smallCorrected));
+                putStandardSizeValue(total, smallSize, String.valueOf(smallCorrected));
+                putStandardSizeValue(solid, zeroSize, String.valueOf(remainingForZero));
+                putStandardSizeValue(total, zeroSize, String.valueOf(remainingForZero));
+                solid.put("total", String.valueOf(solidSum + solidMissing));
+                total.put("total", String.valueOf(totalSum + totalMissing));
+                return;
+            }
+        }
 
         // Find a size where both Solid and Total have the same small value (likely truncated)
         // Prefer single-digit values as they're most likely truncated two-digit numbers
@@ -5587,12 +5589,62 @@ public class OcrNewService {
                 sz, oldVal, newVal, solidMissing, solid.getOrDefault("destinationCountry", ""));
 
         // Fix both Solid and Total
-        solid.put(sz, String.valueOf(newVal));
-        total.put(sz, String.valueOf(newVal));
+        putStandardSizeValue(solid, sz, String.valueOf(newVal));
+        putStandardSizeValue(total, sz, String.valueOf(newVal));
 
         // Update totals (they should now match Quantity)
         solid.put("total", String.valueOf(solidSum + solidMissing));
         total.put("total", String.valueOf(totalSum + totalMissing));
+    }
+
+    private static int getStandardSizeInt(Map<String, String> row, String standardSize) {
+        if (row == null || standardSize == null) return 0;
+        String direct = row.get(standardSize);
+        if (direct != null && !direct.isBlank()) {
+            try {
+                return Integer.parseInt(direct.replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+        }
+        for (Map.Entry<String, String> e : row.entrySet()) {
+            String key = e.getKey();
+            if (key == null || !standardSize.equals(extractStandardSizeFromKey(key))) continue;
+            String raw = e.getValue();
+            if (raw == null || raw.isBlank()) continue;
+            try {
+                return Integer.parseInt(raw.replaceAll("\\s+", ""));
+            } catch (NumberFormatException ignored) {}
+        }
+        return 0;
+    }
+
+    private static void putStandardSizeValue(Map<String, String> row, String standardSize, String value) {
+        if (row == null || standardSize == null) return;
+        for (String key : new ArrayList<>(row.keySet())) {
+            if (standardSize.equals(extractStandardSizeFromKey(key)) && key.toUpperCase(Locale.ROOT).contains("/P")) {
+                row.put(key, value);
+                return;
+            }
+        }
+        if (row.containsKey(standardSize)) {
+            row.put(standardSize, value);
+            return;
+        }
+        for (String key : new ArrayList<>(row.keySet())) {
+            if (standardSize.equals(extractStandardSizeFromKey(key))) {
+                row.put(key, value);
+                return;
+            }
+        }
+        row.put(standardSize + " (" + standardSize + ")*", value);
+    }
+
+    private static String extractStandardSizeFromKey(String key) {
+        if (key == null) return null;
+        String norm = normalizeSizeKey(key);
+        if (norm != null) return norm;
+        Matcher m = Pattern.compile("\\(\\s*([A-Za-z]{1,3})(?:\\s*/?\\s*P)?\\s*\\)").matcher(key);
+        if (m.find()) return normalizeSizeKey(m.group(1));
+        return null;
     }
 
     private static void fillMissingAssortmentValues(
@@ -5737,6 +5789,7 @@ public class OcrNewService {
 
         String existing = row.get(sizeKey);
         boolean targetIsExplicitZero = existing != null && !existing.isBlank() && "0".equals(existing.replaceAll("\\s+", ""));
+        if (targetIsExplicitZero) return false;
         boolean rowQuantityZero = false;
         for (String key : List.of("total", "quantity", "noOfAsst")) {
             String raw = row.get(key);
@@ -5871,6 +5924,7 @@ public class OcrNewService {
         String type = row.get("type");
         if (type == null) return;
         if (!("Assortment".equals(type) || "Solid".equals(type) || "Total".equals(type))) return;
+        normalizeAdultDisplaySizeKeys(row);
 
         List<String> adultSizes = List.of("XS", "S", "M", "L", "XL");
 
@@ -5936,6 +5990,44 @@ public class OcrNewService {
         // If total missing or blank: set computed sum if we had any numeric values; otherwise default to 0
         if (tot == null || tot.isBlank()) {
             row.put("total", String.valueOf(anyNumeric ? sum : 0));
+        }
+    }
+
+    private static void normalizeAdultDisplaySizeKeys(Map<String, String> row) {
+        if (row == null) return;
+        List<String> standardSizes = List.of("XS", "S", "M", "L", "XL");
+        for (String standardSize : standardSizes) {
+            String preferredKey = null;
+            String fallbackKey = null;
+            String preferredValue = null;
+            String fallbackValue = null;
+            for (Map.Entry<String, String> e : new ArrayList<>(row.entrySet())) {
+                String key = e.getKey();
+                if (!standardSize.equals(extractStandardSizeFromKey(key))) continue;
+                String value = e.getValue();
+                if (key.toUpperCase(Locale.ROOT).contains("/P")) {
+                    preferredKey = key;
+                    if (isNonZeroNumber(value) || preferredValue == null) preferredValue = value;
+                } else {
+                    fallbackKey = key;
+                    if (isNonZeroNumber(value) || fallbackValue == null) fallbackValue = value;
+                }
+            }
+            if (preferredKey != null && fallbackKey != null) {
+                if (!isNonZeroNumber(preferredValue) && isNonZeroNumber(fallbackValue)) {
+                    row.put(preferredKey, fallbackValue);
+                }
+                row.remove(fallbackKey);
+            }
+        }
+    }
+
+    private static boolean isNonZeroNumber(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            return Integer.parseInt(value.replaceAll("\\s+", "")) != 0;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
@@ -6079,6 +6171,35 @@ public class OcrNewService {
         return null;
     }
 
+    private static String normalizeDisplayedSizeKey(String label, String line) {
+        String labelNorm = normalizeSizeKey(label);
+        String labelRaw = label == null ? "" : label.trim().toUpperCase(Locale.ROOT).replaceAll("\\*+$", "").replaceAll("\\s+", "");
+        Matcher pm = Pattern.compile("\\(\\s*([A-Za-z]{1,3}(?:\\s*/?\\s*P)?)\\s*\\)").matcher(line == null ? "" : line);
+        String inside = null;
+        if (pm.find()) inside = pm.group(1);
+        String insideNorm = normalizeSizeKey(inside);
+        String insideDisplay = normalizeSizeDisplayToken(inside);
+
+        if (!labelRaw.isBlank() && labelNorm == null && insideNorm != null) {
+            return labelRaw + " (" + insideDisplay + ")*";
+        }
+        if (labelNorm != null) return labelNorm + " (" + (insideDisplay == null ? labelNorm : insideDisplay) + ")*";
+        return insideNorm == null ? null : insideNorm + " (" + insideDisplay + ")*";
+    }
+
+    private static String normalizeSizeDisplayToken(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+        s = s.replaceAll("\\*+", "");
+        s = s.replaceAll("^([XSML]|XL)I/P$", "$1/P");
+        s = s.replaceAll("^([XSML]|XL)IP$", "$1/P");
+        if (s.endsWith("/P")) {
+            String base = normalizeSizeKey(s.substring(0, s.length() - 2));
+            return base == null ? null : base + "/P";
+        }
+        return normalizeSizeKey(s);
+    }
+
     /**
      * Build the canonical map key used to store a kids/baby size value on a row.
      * Joins the age-range and cm parts so the resulting key has no whitespace
@@ -6104,7 +6225,10 @@ public class OcrNewService {
         String[] metaStarts = {"NO", "ARTICLE", "ORDER", "PRODUCT", "COLOUR", "COLOR", "OPTION", "SEASON", "PAGE", "VERSION"};
         for (String ms : metaStarts) { if (lbl.startsWith(ms)) return null; }
         String norm = normalizeSizeKey(lbl);
-        if (norm != null) return norm;
+        String display = normalizeSizeDisplayToken(val);
+        if (norm != null) return norm + " (" + (display == null ? norm : display) + ")*";
+        String valNorm = normalizeSizeKey(val);
+        if (valNorm != null) return lbl + " (" + display + ")*";
         return val.isEmpty() ? lbl : lbl + "(" + val + ")";
     }
 
