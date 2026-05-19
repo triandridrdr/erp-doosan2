@@ -77,6 +77,8 @@ export function collectSizeLabelsFromRows(rows: Array<Record<string, any>> | nul
   if (!rows || rows.length === 0) return [];
   const out = new Set<string>();
   for (const r of rows) {
+    const sizeValue = (r?.size ?? '').toString().trim();
+    if (sizeValue) out.add(sizeValue);
     for (const k of extractSizeKeysFromRow(r)) {
       const v = k.trim();
       if (v) out.add(v);

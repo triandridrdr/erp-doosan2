@@ -1,5 +1,7 @@
 package com.doosan.erp.salesorder.service;
 
+import com.doosan.erp.master.dto.MasterSizeUpsertRequest;
+import com.doosan.erp.master.service.MasterSizeService;
 import com.doosan.erp.salesorder.dto.SaveDraftResponse;
 import com.doosan.erp.salesorder.entity.*;
 import com.doosan.erp.salesorder.repository.*;
@@ -12,9 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +30,7 @@ public class SoScanService {
     private final SoScanPoRepository scanPoRepo;
     private final SoScanSizeBreakdownRepository scanSbRepo;
     private final SoScanCountryBreakdownRepository scanCbRepo;
+    private final MasterSizeService masterSizeService;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -49,6 +54,7 @@ public class SoScanService {
         // 2. Merge header fields
         mergeHeaderFields(header, payload);
         header = headerRepo.save(header);
+        ensureMasterSizes(payload);
 
         // 3. Dispatch by document type
         return switch (documentType) {
@@ -533,6 +539,42 @@ public class SoScanService {
             "totalCountryBreakdown", cb != null ? cb : List.of(),
             "section2cColourSizeBreakdown", cs != null ? cs : List.of()
         );
+    }
+
+    private void ensureMasterSizes(Map<String, Object> payload) {
+        Set<String> labels = new LinkedHashSet<>();
+        collectSizeLabels(labels, getListOfMaps(payload, "salesOrderDetailSizeBreakdown"));
+        collectSizeLabels(labels, getListOfMaps(payload, "section2cColourSizeBreakdown"));
+        for (String label : labels) {
+            MasterSizeUpsertRequest request = new MasterSizeUpsertRequest();
+            request.setLabel(label);
+            try {
+                masterSizeService.upsertByLabel(request);
+            } catch (Exception e) {
+                log.warn("[MASTER-SIZE][ENSURE] failed label='{}': {}", label, e.getMessage());
+            }
+        }
+    }
+
+    private void collectSizeLabels(Set<String> out, List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            String size = str(row.get("size"));
+            if (!size.isBlank()) out.add(size);
+            for (String key : row.keySet()) {
+                if (isSizeMetaKey(key)) continue;
+                String label = str(key);
+                if (!label.isBlank()) out.add(label);
+            }
+        }
+    }
+
+    private boolean isSizeMetaKey(String key) {
+        if (key == null) return true;
+        return switch (key.toLowerCase(Locale.ROOT)) {
+            case "type", "countryofdestination", "destinationcountry", "articleno", "article",
+                    "color", "colour", "total", "noofasst", "size", "qty" -> true;
+            default -> false;
+        };
     }
 
     // ─── HELPER: Extract SO Number ───────────────────────────────────────────────

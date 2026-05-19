@@ -15,6 +15,7 @@
 | 5 | OCR Job | `com.doosan.erp.ocrnew` | `ocr_new_jobs` |
 | 6 | Sales Prototype | `com.doosan.erp.salesprototype` | `sales_order_prototype` |
 | 7 | Sales Order (Normalized) | `com.doosan.erp.salesorder` | `so_header`, `so_scan_*`, detail tables |
+| 8 | Master Data | `com.doosan.erp.master` | `mst_size` |
 
 ---
 
@@ -28,9 +29,9 @@
         ▲ (semua entity inherit dari BaseEntity)
         │
  ┌──────┼──────────────────────────────────────────────────────────────────────────┐
- │      │      │         │          │          │                                    │
- ▼      ▼      ▼         ▼          ▼          ▼                                    ▼
-users  stocks  sales_   journal_   ocr_new_  sales_order_                      so_header
+ │      │      │         │          │          │                 │                  │
+ ▼      ▼      ▼         ▼          ▼          ▼                 ▼                  ▼
+users  stocks  sales_   journal_   ocr_new_  sales_order_     mst_size          so_header
                orders   entries    jobs      prototype
 
 ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -149,6 +150,29 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 
 ═══════════════════════════════════════════════════════════════════════════════════════════════
 
+                           MODUL 8: MASTER DATA
+┌────────────────────────────────────────────────┐
+│              mst_size (PK: id)                 │
+├────────────────────────────────────────────────┤
+│ company_id          VARCHAR(10) NN             │
+│ size_code           VARCHAR(40) NN             │
+│ size_name           VARCHAR(100) NN            │
+│ normalized_label    VARCHAR(100) NN            │
+│ size_national_code  VARCHAR(10)                │
+│ size_group          VARCHAR(10)                │
+│ sort_order          INT NN                     │
+│ is_active           BOOLEAN NN                 │
+│ memo                TEXT                       │
+│ + BaseEntity fields                            │
+├────────────────────────────────────────────────┤
+│ UQ(company_id, size_code)                      │
+│ UQ(company_id, normalized_label)               │
+└────────────────────────────────────────────────┘
+
+  Note: Dipakai oleh frontend size autocomplete/dropdown dan OCR ensure-size.
+
+═══════════════════════════════════════════════════════════════════════════════════════════════
+
                     MODUL 7: SALES ORDER — NORMALIZED (Aktif)
 
 ┌────────────────────────────────────────────────────────────────────────────────────┐
@@ -192,7 +216,7 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 │ file_hash           │ │ file_hash         │ │ file_hash          │ │ file_hash               │
 │ revision     NN     │ │ revision     NN   │ │ revision     NN    │ │ revision     NN         │
 │ scan_status  NN     │ │ scan_status  NN   │ │ scan_status  NN    │ │ scan_status  NN         │
-│ ocr_raw_jsonb TEXT  │ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT │ │ ocr_raw_jsonb TEXT      │
+│ ocr_raw_jsonb TEXT  │ │ ocr_raw_jsonb TEXT│ │ ocr_raw_jsonb TEXT │ │ ocr_raw_jsonb TEXT      │
 │ ocr_confidence      │ │ ocr_confidence    │ │ ocr_confidence     │ │ ocr_confidence          │
 │ page_count          │ │ page_count        │ │ page_count         │ │ page_count              │
 │ + JSON blob fields  │ │ + JSON blob fields│ │ bom_draft_json     │ │ + BaseEntity            │
@@ -450,6 +474,33 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_                      s
 
 ---
 
+## Detail Tabel — Modul 8 (Master Data)
+
+### `mst_size`
+| Column | Type | Constraint |
+|--------|------|------------|
+| id | BIGINT | PK |
+| company_id | VARCHAR(10) NN | Tenant/company code, default aplikasi `DSS` |
+| size_code | VARCHAR(40) NN | UQ bersama `company_id` |
+| size_name | VARCHAR(100) NN | Display label; mapped dari field entity `label` |
+| normalized_label | VARCHAR(100) NN | UQ bersama `company_id`; lookup/upsert key |
+| size_national_code | VARCHAR(10) | Default entity `GLOBAL` |
+| size_group | VARCHAR(10) | Default entity `OCR` |
+| sort_order | INT NN | Urutan dropdown/autocomplete |
+| is_active | BOOLEAN NN | Mapped dari field entity `active` |
+| memo | TEXT | |
+| + BaseEntity fields | | |
+
+**Constraints / Indexes**
+
+| Name | Definition |
+|------|------------|
+| `uq_mst_size_company_code` | UNIQUE (`company_id`, `size_code`) |
+| `uq_mst_size_company_normalized` | UNIQUE (`company_id`, `normalized_label`) |
+| `idx_mst_size_active_sort` | INDEX (`company_id`, `is_active`, `deleted`, `sort_order`) |
+
+---
+
 ## BaseEntity (Common Fields)
 
 Semua tabel mewarisi field berikut dari `BaseEntity`:
@@ -459,8 +510,8 @@ Semua tabel mewarisi field berikut dari `BaseEntity`:
 | id | BIGINT | PK, AUTO_INCREMENT | Primary key |
 | created_at | TIMESTAMP | | Waktu dibuat |
 | updated_at | TIMESTAMP | | Waktu terakhir diupdate |
-| created_by | VARCHAR(255) | | User yang membuat |
-| updated_by | VARCHAR(255) | | User yang mengupdate |
+| created_by | VARCHAR(50) | | User yang membuat |
+| updated_by | VARCHAR(50) | | User yang mengupdate |
 | deleted | BOOLEAN | DEFAULT false | Soft delete flag |
 | deleted_at | TIMESTAMP | | Waktu soft delete |
 
@@ -520,6 +571,7 @@ DRAFT_OCR → OCR_REVIEW → PRE_SO → SO_APPROVED → PRODUCTION → CLOSED
 | Sales Order List | `GET /api/v1/sales-orders` | so_header |
 | Journal Entry | `POST /api/v1/journal-entries` | journal_entries, journal_entry_lines |
 | Stock Management | `GET/POST /api/v1/stocks` | stocks |
+| Master Size | `GET/POST/PUT/DELETE /api/v1/master-sizes` | mst_size |
 | Auth Login | `POST /api/v1/auth/login` | users |
 
 ---
@@ -535,4 +587,5 @@ DRAFT_OCR → OCR_REVIEW → PRE_SO → SO_APPROVED → PRODUCTION → CLOSED
 | OCR Job | 1 |
 | Sales Prototype (Legacy) | 1 |
 | Sales Order (Normalized) | 17 |
-| **Total** | **25** |
+| Master Data | 1 |
+| **Total** | **26** |
