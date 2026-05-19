@@ -1056,12 +1056,11 @@ export function AllScanPage() {
         })),
         raw: data,
       };
-      return Promise.all([
-        salesOrderApi.saveDraft({ ...payload, documentType: 'purchase-order' }),
-        salesOrderApi.saveDraft({ ...payload, documentType: 'supplementary' }),
-        salesOrderApi.saveDraft({ ...payload, documentType: 'size-per-colour-breakdown' }),
-        salesOrderApi.saveDraft({ ...payload, documentType: 'total-country-breakdown' }),
-      ]);
+      const responses = [];
+      for (const documentType of ['purchase-order', 'supplementary', 'size-per-colour-breakdown', 'total-country-breakdown']) {
+        responses.push(await salesOrderApi.saveDraft({ ...payload, documentType }));
+      }
+      return responses;
     },
     onSuccess: (res) => {
       const soId = (res as any)?.[0]?.data?.soHeaderId;

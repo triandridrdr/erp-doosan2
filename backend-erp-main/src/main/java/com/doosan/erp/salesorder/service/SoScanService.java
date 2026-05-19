@@ -53,6 +53,7 @@ public class SoScanService {
 
         // 2. Merge header fields
         mergeHeaderFields(header, payload);
+        logPotentialHeaderLengthIssues(header);
         header = headerRepo.save(header);
         ensureMasterSizes(payload);
 
@@ -480,6 +481,37 @@ public class SoScanService {
                 setter.accept(c);
                 return;
             }
+        }
+    }
+
+    private void logPotentialHeaderLengthIssues(SoHeader header) {
+        logIfTooLong("so_number", header.getSoNumber(), 64);
+        logIfTooLong("workflow_status", header.getWorkflowStatus() == null ? null : header.getWorkflowStatus().name(), 32);
+        logIfTooLong("season", header.getSeason(), 255);
+        logIfTooLong("supplier_code", header.getSupplierCode(), 255);
+        logIfTooLong("supplier_name", header.getSupplierName(), 255);
+        logIfTooLong("product_no", header.getProductNo(), 255);
+        logIfTooLong("product_name", header.getProductName(), 255);
+        logIfTooLong("product_type", header.getProductType(), 255);
+        logIfTooLong("option_no", header.getOptionNo(), 255);
+        logIfTooLong("development_no", header.getDevelopmentNo(), 255);
+        logIfTooLong("customer_group", header.getCustomerGroup(), 255);
+        logIfTooLong("type_of_construction", header.getTypeOfConstruction(), 255);
+        logIfTooLong("country_of_production", header.getCountryOfProduction(), 255);
+        logIfTooLong("country_of_origin", header.getCountryOfOrigin(), 255);
+        logIfTooLong("country_of_delivery", header.getCountryOfDelivery(), 255);
+        logIfTooLong("terms_of_payment", header.getTermsOfPayment(), 255);
+        logIfTooLong("terms_of_delivery", header.getTermsOfDelivery(), 255);
+        logIfTooLong("time_of_delivery", header.getTimeOfDelivery(), 255);
+        logIfTooLong("no_of_pieces", header.getNoOfPieces(), 32);
+        logIfTooLong("sales_mode", header.getSalesMode(), 255);
+        logIfTooLong("pt_prod_no", header.getPtProdNo(), 255);
+    }
+
+    private void logIfTooLong(String column, String value, int maxLength) {
+        if (value != null && value.length() > maxLength) {
+            log.warn("[SO_HEADER][LENGTH] column={} length={} max={} preview='{}'",
+                    column, value.length(), maxLength, value.substring(0, Math.min(value.length(), 120)));
         }
     }
 

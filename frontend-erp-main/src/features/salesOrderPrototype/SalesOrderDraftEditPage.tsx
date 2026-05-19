@@ -554,11 +554,11 @@ export function SalesOrderDraftEditPage() {
         section2cColourSizeBreakdown: section2cDraftRows,
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
       };
-      return Promise.all([
-        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'supplementary' }),
-        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'size-per-colour-breakdown' }),
-        salesOrderApi.saveDraft({ ...nextPayload, documentType: 'total-country-breakdown' }),
-      ]);
+      const responses = [];
+      for (const documentType of ['supplementary', 'size-per-colour-breakdown', 'total-country-breakdown']) {
+        responses.push(await salesOrderApi.saveDraft({ ...nextPayload, documentType }));
+      }
+      return responses;
     },
     onSuccess: () => {
       setSuccessMessage('Successfully updated draft');
