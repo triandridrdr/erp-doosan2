@@ -294,6 +294,7 @@ export function SalesOrderDraftEditPage() {
   const [successMessage, setSuccessMessage] = useState('Successfully updated draft');
   const [activeCountryTabAssortment, setActiveCountryTabAssortment] = useState<string>('');
   const [activeCountryTabSolid, setActiveCountryTabSolid] = useState<string>('');
+  const [justSaved, setJustSaved] = useState(false);
 
   const ensureMasterSizes = useEnsureMasterSizesBatch();
 
@@ -577,7 +578,14 @@ export function SalesOrderDraftEditPage() {
   useEffect(() => {
     if (!data) return;
     hydrateFromPayload();
-  }, [data?.id, payload]);
+  }, [data?.id]);
+
+  useEffect(() => {
+    if (justSaved && payload) {
+      hydrateFromPayload();
+      setJustSaved(false);
+    }
+  }, [justSaved, payload]);
 
   const saveDraftMutation = useMutation({
     mutationFn: async () => {
@@ -612,15 +620,18 @@ export function SalesOrderDraftEditPage() {
         section2cColourSizeBreakdown: section2cDraftRows,
         section2cColourSizeBreakdownTotal: section2cTotalDraftRows,
       };
+      
       const responses = [];
-      for (const documentType of ['supplementary', 'size-per-colour-breakdown', 'total-country-breakdown']) {
+      for (const documentType of ['purchase-order', 'supplementary', 'size-per-colour-breakdown', 'total-country-breakdown']) {
         responses.push(await salesOrderApi.saveDraft({ ...nextPayload, documentType }));
       }
+      
       return responses;
     },
     onSuccess: () => {
       setSuccessMessage('Successfully updated draft');
       setSuccessOpen(true);
+      setJustSaved(true);
       refetch();
     },
     onError: (e: Error) => {

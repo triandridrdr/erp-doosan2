@@ -25,7 +25,10 @@ public class SoScanSizeBreakdownService {
 
     @Transactional
     public SaveDraftResponse saveSizeBreakdown(SoHeader header, String fileName, Map<String, Object> payload) {
+        log.info("[SB_SAVE] Starting saveSizeBreakdown, SO={}", header.getSoNumber());
+        
         int nextRevision = softDeletePrevScansSb(header.getId());
+        log.info("[SB_SAVE] Next revision: {}", nextRevision);
 
         SoScanSizeBreakdown scan = new SoScanSizeBreakdown();
         scan.setSoHeader(header);
@@ -36,6 +39,8 @@ public class SoScanSizeBreakdownService {
         scan.setBomDraftJson(helper.toJson(payload.get("bomDraftRows")));
 
         List<Map<String, Object>> rows = helper.getListOfMaps(payload, "salesOrderDetailSizeBreakdown");
+        log.info("[SB_SAVE] Number of rows to save: {}", rows.size());
+        
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
             String country = helper.str(row.get("countryOfDestination"));
@@ -46,6 +51,8 @@ public class SoScanSizeBreakdownService {
             String qty = helper.str(row.get("qty"));
             String total = helper.str(row.get("total"));
             String noOfAsst = helper.str(row.get("noOfAsst"));
+
+            log.debug("[SB_SAVE] Row {}: country={}, type={}, articleNo={}, color={}, size={}", i, country, type, articleNo, color, size);
 
             SoSizeBreakdown bd = new SoSizeBreakdown();
             bd.setScan(scan);
@@ -71,7 +78,7 @@ public class SoScanSizeBreakdownService {
         }
 
         scan = scanSbRepo.save(scan);
-        log.info("[SB_SAVE] SO={} scanId={} rev={} rows={}", header.getSoNumber(), scan.getId(), nextRevision, rows.size());
+        log.info("[SB_SAVE] SO={} scanId={} rev={} rows={} saved successfully!", header.getSoNumber(), scan.getId(), nextRevision, rows.size());
 
         return SaveDraftResponse.builder()
                 .soHeaderId(header.getId())

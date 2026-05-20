@@ -26,27 +26,37 @@ public class SoScanService {
 
     @Transactional
     public SaveDraftResponse saveDraft(String documentType, Map<String, Object> payload) {
+        log.info("[SO_SCAN_SAVE] Starting save draft, documentType={}", documentType);
+        log.info("[SO_SCAN_SAVE] Payload keys: {}", payload.keySet());
+        
         String soNumber = helper.extractSoNumber(payload);
         if (soNumber == null || soNumber.isBlank()) {
+            log.error("[SO_SCAN_SAVE] SO Number is blank!");
             throw new IllegalArgumentException("SO Number is required in formFields");
         }
 
+        log.info("[SO_SCAN_SAVE] SO Number found: {}", soNumber);
         String fileName = helper.str(payload.get("analyzedFileName"));
 
         SoHeader header = headerRepo.findBySoNumberAndDeletedFalse(soNumber)
                 .orElseGet(() -> {
+                    log.info("[SO_SCAN_SAVE] Creating new SO Header for: {}", soNumber);
                     SoHeader h = new SoHeader();
                     h.setSoNumber(soNumber);
                     h.setWorkflowStatus(com.doosan.erp.salesorder.entity.SoWorkflowStatus.DRAFT_OCR);
                     return h;
                 });
 
-        helper.mergeHeaderFields(header, payload);
+        log.info("[SO_SCAN_SAVE] Merging header fields...");
+        helper.mergeHeaderFields(header, payload, true);
         helper.logPotentialHeaderLengthIssues(header);
         header = headerRepo.save(header);
+        log.info("[SO_SCAN_SAVE] SO Header saved, id={}", header.getId());
+        
         helper.ensureMasterSizes(payload);
 
-        return switch (documentType) {
+        log.info("[SO_SCAN_SAVE] Processing documentType: {}", documentType);
+        SaveDraftResponse response = switch (documentType) {
             case "all" -> saveAll(header, fileName, payload);
             case "supplementary" -> supplementaryService.saveSupplementary(header, fileName, payload);
             case "purchase-order" -> purchaseOrderService.savePurchaseOrder(header, fileName, payload);
@@ -54,6 +64,9 @@ public class SoScanService {
             case "total-country-breakdown" -> countryBreakdownService.saveCountryBreakdown(header, fileName, payload);
             default -> throw new IllegalArgumentException("Unknown documentType: " + documentType);
         };
+        
+        log.info("[SO_SCAN_SAVE] Save completed successfully! scanId={}", response.getScanId());
+        return response;
     }
 
     private SaveDraftResponse saveAll(SoHeader header, String fileName, Map<String, Object> payload) {

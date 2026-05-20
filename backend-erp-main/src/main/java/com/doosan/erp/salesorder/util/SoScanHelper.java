@@ -53,31 +53,35 @@ public class SoScanHelper {
     }
 
     public void mergeHeaderFields(SoHeader header, Map<String, Object> payload) {
+        mergeHeaderFields(header, payload, false);
+    }
+
+    public void mergeHeaderFields(SoHeader header, Map<String, Object> payload, boolean forceUpdate) {
         @SuppressWarnings("unchecked")
         Map<String, Object> ff = (Map<String, Object>) payload.get("formFields");
         if (ff == null) return;
 
         mergeOrderDate(header, str(ff.get("Order Date")), str(ff.get("Date (ISO)")), str(ff.get("Date")));
-        mergeField(header::getSeason, header::setSeason, str(ff.get("Season")));
-        mergeField(header::getSupplierCode, header::setSupplierCode, str(ff.get("Supplier Code")));
-        mergeField(header::getSupplierName, header::setSupplierName, str(ff.get("Supplier")));
-        mergeField(header::getProductNo, header::setProductNo, str(ff.get("Product No")), str(ff.get("Article / Product No")));
-        mergeField(header::getProductName, header::setProductName, str(ff.get("Product Name")));
-        mergeField(header::getProductDesc, header::setProductDesc, str(ff.get("Product Desc")), str(ff.get("Product Description")));
-        mergeField(header::getProductType, header::setProductType, str(ff.get("Product Type")));
-        mergeField(header::getOptionNo, header::setOptionNo, str(ff.get("Option No")));
-        mergeField(header::getDevelopmentNo, header::setDevelopmentNo, str(ff.get("Development No")));
-        mergeField(header::getCustomerGroup, header::setCustomerGroup, str(ff.get("Customer Group")), str(ff.get("Customs Customer Group")));
-        mergeField(header::getTypeOfConstruction, header::setTypeOfConstruction, str(ff.get("Type of Construct")), str(ff.get("Type of Construction")));
-        mergeField(header::getCountryOfProduction, header::setCountryOfProduction, str(ff.get("Country of Production")));
-        mergeField(header::getCountryOfOrigin, header::setCountryOfOrigin, str(ff.get("Country of Origin")));
-        mergeField(header::getCountryOfDelivery, header::setCountryOfDelivery, str(ff.get("Country of Bakery")), str(ff.get("Country of Delivery")));
-        mergeField(header::getTermsOfPayment, header::setTermsOfPayment, str(ff.get("Term of Payment")), str(ff.get("Terms of Payment")));
-        mergeField(header::getTermsOfDelivery, header::setTermsOfDelivery, str(ff.get("Terms of Delivery")));
-        mergeField(header::getTimeOfDelivery, header::setTimeOfDelivery, str(ff.get("Time of Delivery")));
-        mergeField(header::getNoOfPieces, header::setNoOfPieces, str(ff.get("No of Pieces")));
-        mergeField(header::getSalesMode, header::setSalesMode, str(ff.get("Sales Models")), str(ff.get("Sales Mode")));
-        mergeField(header::getPtProdNo, header::setPtProdNo, str(ff.get("PT Prod No")));
+        mergeField(header::getSeason, header::setSeason, forceUpdate, str(ff.get("Season")));
+        mergeField(header::getSupplierCode, header::setSupplierCode, forceUpdate, str(ff.get("Supplier Code")));
+        mergeField(header::getSupplierName, header::setSupplierName, forceUpdate, str(ff.get("Supplier")));
+        mergeField(header::getProductNo, header::setProductNo, forceUpdate, str(ff.get("Product No")), str(ff.get("Article / Product No")));
+        mergeField(header::getProductName, header::setProductName, forceUpdate, str(ff.get("Product Name")));
+        mergeField(header::getProductDesc, header::setProductDesc, forceUpdate, str(ff.get("Product Desc")), str(ff.get("Product Description")));
+        mergeField(header::getProductType, header::setProductType, forceUpdate, str(ff.get("Product Type")));
+        mergeField(header::getOptionNo, header::setOptionNo, forceUpdate, str(ff.get("Option No")));
+        mergeField(header::getDevelopmentNo, header::setDevelopmentNo, forceUpdate, str(ff.get("Development No")));
+        mergeField(header::getCustomerGroup, header::setCustomerGroup, forceUpdate, str(ff.get("Customer Group")), str(ff.get("Customs Customer Group")));
+        mergeField(header::getTypeOfConstruction, header::setTypeOfConstruction, forceUpdate, str(ff.get("Type of Construct")), str(ff.get("Type of Construction")));
+        mergeField(header::getCountryOfProduction, header::setCountryOfProduction, forceUpdate, str(ff.get("Country of Production")));
+        mergeField(header::getCountryOfOrigin, header::setCountryOfOrigin, forceUpdate, str(ff.get("Country of Origin")));
+        mergeField(header::getCountryOfDelivery, header::setCountryOfDelivery, forceUpdate, str(ff.get("Country of Bakery")), str(ff.get("Country of Delivery")));
+        mergeField(header::getTermsOfPayment, header::setTermsOfPayment, forceUpdate, str(ff.get("Term of Payment")), str(ff.get("Terms of Payment")));
+        mergeField(header::getTermsOfDelivery, header::setTermsOfDelivery, forceUpdate, str(ff.get("Terms of Delivery")));
+        mergeField(header::getTimeOfDelivery, header::setTimeOfDelivery, forceUpdate, str(ff.get("Time of Delivery")));
+        mergeField(header::getNoOfPieces, header::setNoOfPieces, forceUpdate, str(ff.get("No of Pieces")));
+        mergeField(header::getSalesMode, header::setSalesMode, forceUpdate, str(ff.get("Sales Models")), str(ff.get("Sales Mode")));
+        mergeField(header::getPtProdNo, header::setPtProdNo, forceUpdate, str(ff.get("PT Prod No")));
     }
 
     public void logPotentialHeaderLengthIssues(SoHeader header) {
@@ -165,9 +169,10 @@ public class SoScanHelper {
 
     private void mergeField(Supplier<String> getter,
                             Consumer<String> setter,
+                            boolean forceUpdate,
                             String... candidates) {
         String current = getter.get();
-        if (current != null && !current.isBlank()) return;
+        if (!forceUpdate && current != null && !current.isBlank()) return;
         for (String c : candidates) {
             if (c != null && !c.isBlank()) {
                 setter.accept(c);
