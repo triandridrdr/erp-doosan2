@@ -233,8 +233,9 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_     mst_size          
    │  │  │  │  │            │  │  │  │  │  │so_header_id FK │  │so_header_id FK │ │so_header_id FK   │
    │  │  │  │  │            │  │  │  │  │  │country_of_dest │  │country NN      │ │article           │
    │  │  │  │  │            │  │  │  │  │  │type NN         │  │pm_code         │ │size_label NN     │
-   │  │  │  │  │            │  │  │  │  │  │color           │  │total           │ │quantity          │
-   │  │  │  │  │            │  │  │  │  │  │no_of_asst      │  │sort_order      │ │sort_order        │
+   │  │  │  │  │            │  │  │  │  │  │article_no      │  │total           │ │quantity          │
+   │  │  │  │  │            │  │  │  │  │  │color           │  │sort_order      │ │sort_order        │
+   │  │  │  │  │            │  │  │  │  │  │no_of_asst      │  │                │ │                  │
    │  │  │  │  │            │  │  │  │  │  │total           │  └────────────────┘ └──────────────────┘
    │  │  │  │  │            │  │  │  │  │  │sort_order      │
    │  │  │  │  │            │  │  │  │  │  └───────┬────────┘
@@ -428,6 +429,7 @@ users  stocks  sales_   journal_   ocr_new_  sales_order_     mst_size          
 | so_header_id | BIGINT | FK → so_header NN |
 | country_of_destination | VARCHAR(128) NN | |
 | type | VARCHAR(32) NN | Assortment / Solid / Total |
+| article_no | VARCHAR(128) | |
 | color | VARCHAR(64) | |
 | no_of_asst | VARCHAR(32) | |
 | total | VARCHAR(32) | |
