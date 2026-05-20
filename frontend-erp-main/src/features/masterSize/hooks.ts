@@ -19,6 +19,13 @@ export const CSB_META_KEYS: ReadonlySet<string> = new Set([
   'noofasst',
   'size',
   'qty',
+  'hmcolourcode',
+  'ptarticlenumber',
+  'ptarticleno',
+  'ptarticle',
+  'description',
+  'ptarticlenumber',
+  'optionno',
 ]);
 
 /** Extract cm value from a kids/baby size key like "1½-2Y(92)" → 92. Returns null for adult sizes. */

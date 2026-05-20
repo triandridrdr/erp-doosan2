@@ -329,31 +329,37 @@ export function SalesOrderDraftEditPage() {
   }, [section2TotalByCountryRows]);
 
   const uniqueCountriesAssortment = useMemo(() => {
-    const countries = new Set<string>();
+    const countries: string[] = [];
+    const seen = new Set<string>();
     for (const r of salesOrderDetailDraftRows ?? []) {
       if ((r?.type ?? '').toString().trim().toLowerCase() !== 'assortment') continue;
       const c = (r?.countryOfDestination ?? '').toString().trim();
-      if (c) countries.add(c);
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        countries.push(c);
+      }
     }
-    const sortedCountries = Array.from(countries).sort();
-    if (sortedCountries.length > 0 && !activeCountryTabAssortment) {
-      setActiveCountryTabAssortment(sortedCountries[0]);
+    if (countries.length > 0 && !activeCountryTabAssortment) {
+      setActiveCountryTabAssortment(countries[0]);
     }
-    return sortedCountries;
+    return countries;
   }, [salesOrderDetailDraftRows]);
 
   const uniqueCountriesSolid = useMemo(() => {
-    const countries = new Set<string>();
+    const countries: string[] = [];
+    const seen = new Set<string>();
     for (const r of salesOrderDetailDraftRows ?? []) {
       if ((r?.type ?? '').toString().trim().toLowerCase() !== 'solid') continue;
       const c = (r?.countryOfDestination ?? '').toString().trim();
-      if (c) countries.add(c);
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        countries.push(c);
+      }
     }
-    const sortedCountries = Array.from(countries).sort();
-    if (sortedCountries.length > 0 && !activeCountryTabSolid) {
-      setActiveCountryTabSolid(sortedCountries[0]);
+    if (countries.length > 0 && !activeCountryTabSolid) {
+      setActiveCountryTabSolid(countries[0]);
     }
-    return sortedCountries;
+    return countries;
   }, [salesOrderDetailDraftRows]);
 
   const { data, isLoading, error, refetch } = useQuery({
