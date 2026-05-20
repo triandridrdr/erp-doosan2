@@ -46,6 +46,7 @@ type BomDraftRow = {
 type DetailDraftRow = {
   countryOfDestination: string;
   type: string;
+  articleNo?: string;
   color: string;
   size: string;
   qty: string;
@@ -108,6 +109,20 @@ function pickSizeValue(m: Record<string, any>, sizeKey: string): string {
   return (m?.[target] ?? m?.[low] ?? '').toString();
 }
 
+function pickArticleNo(m: Record<string, any>): string {
+  const direct = m?.articleNo ?? m?.article ?? m?.articleNumber ?? m?.article_no ?? m?.article_no_ ?? m?.['Article No'] ?? m?.['Article No:'];
+  if (direct !== undefined && direct !== null && direct.toString().trim()) return direct.toString();
+  const keys = Object.keys(m ?? {});
+  const normalizedTarget = 'articleno';
+  for (const k of keys) {
+    const normalizedKey = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalizedKey === normalizedTarget || normalizedKey === 'articlenumber') {
+      return (m?.[k] ?? '').toString();
+    }
+  }
+  return '';
+}
+
 function pivotDetailRows(
   backendRows: Array<Record<string, any>>,
 ): Array<DetailDraftRow> {
@@ -118,6 +133,7 @@ function pivotDetailRows(
           {
             countryOfDestination: (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString(),
             type: (m?.type ?? '').toString(),
+            articleNo: pickArticleNo(m),
             color: (m?.color ?? m?.colour ?? '').toString(),
             size: (m?.size ?? '').toString(),
             qty: (m?.qty ?? '').toString(),
@@ -129,6 +145,7 @@ function pivotDetailRows(
       }
       const country = (m?.countryOfDestination ?? m?.destinationCountry ?? '').toString();
       const type = (m?.type ?? '').toString();
+      const articleNo = pickArticleNo(m);
       const color = (m?.color ?? m?.colour ?? '').toString();
       const total = (m?.total ?? m?.Total ?? '').toString();
       const noOfAsst = (m?.noOfAsst ?? '').toString();
@@ -139,6 +156,7 @@ function pivotDetailRows(
       return sizesToEmit.map((sz) => ({
         countryOfDestination: country,
         type,
+        articleNo,
         color,
         size: sz,
         qty: pickSizeValue(m, sz),
@@ -270,6 +288,7 @@ export function SalesOrderDraftEditPage() {
   const [section2cTotalDraftRows, setSection2cTotalDraftRows] = useState<Section2cTotalDraftRow[]>([]);
   const [successOpen, setSuccessOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState('Successfully updated draft');
+  const [activeCountryTab, setActiveCountryTab] = useState<string>('');
 
   const ensureMasterSizes = useEnsureMasterSizesBatch();
 
@@ -307,6 +326,19 @@ export function SalesOrderDraftEditPage() {
     }
     return m;
   }, [section2TotalByCountryRows]);
+
+  const uniqueCountries = useMemo(() => {
+    const countries = new Set<string>();
+    for (const r of salesOrderDetailDraftRows ?? []) {
+      const c = (r?.countryOfDestination ?? '').toString().trim();
+      if (c) countries.add(c);
+    }
+    const sortedCountries = Array.from(countries).sort();
+    if (sortedCountries.length > 0 && !activeCountryTab) {
+      setActiveCountryTab(sortedCountries[0]);
+    }
+    return sortedCountries;
+  }, [salesOrderDetailDraftRows]);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['sales-order-review', id],
@@ -723,7 +755,7 @@ export function SalesOrderDraftEditPage() {
               onClick={() => {
                 setSalesOrderDetailDraftRows((prev) => [
                   ...prev,
-                  { countryOfDestination: '', type: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                  { countryOfDestination: activeCountryTab, type: '', articleNo: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
                 ]);
               }}
             >
@@ -731,97 +763,225 @@ export function SalesOrderDraftEditPage() {
             </Button>
           </div>
         </div>
+
+        {uniqueCountries.length > 0 && (
+          <div className='px-6 py-3 border-b border-gray-200 flex items-center gap-2 overflow-x-auto'>
+            {uniqueCountries.map((country) => (
+              <button
+                key={country}
+                onClick={() => setActiveCountryTab(country)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                  activeCountryTab === country
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {country}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className='p-6'>
-          {section2NonTotalEntries.length === 0 ? (
-            <div className='text-sm text-gray-500 italic'>No detail rows.</div>
+          {!activeCountryTab ? (
+            <div className='text-sm text-gray-500 italic'>No countries available.</div>
           ) : (
-            <div className='w-full max-h-[60vh] overflow-auto'>
-              <table className='min-w-[1100px] w-full border border-gray-200 rounded-lg overflow-hidden'>
-                <thead className='bg-gray-50 sticky top-0 z-10'>
-                  <tr>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Type</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>No of Asst</th>
-                    <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
-                  </tr>
-                </thead>
-                <tbody className='bg-white'>
-                  {section2NonTotalEntries.map(({ row, idx }) => (
-                    <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.countryOfDestination}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.type}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, type: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={row.color}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <SizeAutocompleteInput
-                          value={row.size}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
-                          }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Input
-                          value={formatIdThousands(row.qty)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top whitespace-nowrap'>
-                        <Input
-                          value={formatIdThousands(row.noOfAsst ?? '')}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, noOfAsst: normalizeDigits(v) } : r)));
-                          }}
-                          style={{ textAlign: 'left' }}
-                        />
-                      </td>
-                      <td className='px-3 py-2 align-top'>
-                        <Button
-                          type='button'
-                          variant='danger'
-                          onClick={() => {
-                            setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
+              {/* Assortment Table */}
+              <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+                <div className='flex items-center justify-between mb-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Assortment</div>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    onClick={() => {
+                      setSalesOrderDetailDraftRows((prev) => [
+                        ...prev,
+                        { countryOfDestination: activeCountryTab, type: 'Assortment', articleNo: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                      ]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+                <div className='w-full max-h-[60vh] overflow-auto'>
+                  <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                    <thead className='bg-white sticky top-0 z-10'>
+                      <tr>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article No</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className='bg-white'>
+                      {section2NonTotalEntries
+                        .filter(({ row }) => (row?.countryOfDestination ?? '').toString() === activeCountryTab && (row?.type ?? '').toString().trim().toLowerCase() === 'assortment')
+                        .map(({ row, idx }) => (
+                          <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={row.countryOfDestination}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={(row as any).articleNo ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, articleNo: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={row.color}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <SizeAutocompleteInput
+                                value={row.size}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={formatIdThousands(row.qty)}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
+                                }}
+                                style={{ textAlign: 'left' }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                onClick={() => {
+                                  setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Solid Table */}
+              <div className='bg-gray-50 rounded-xl border border-gray-200 p-4'>
+                <div className='flex items-center justify-between mb-4'>
+                  <div className='text-sm font-semibold text-gray-900'>Solid</div>
+                  <Button
+                    type='button'
+                    variant='primary'
+                    onClick={() => {
+                      setSalesOrderDetailDraftRows((prev) => [
+                        ...prev,
+                        { countryOfDestination: activeCountryTab, type: 'Solid', articleNo: '', color: '', size: '', qty: '', total: '', noOfAsst: '', editable: true },
+                      ]);
+                    }}
+                  >
+                    Add row
+                  </Button>
+                </div>
+                <div className='w-full max-h-[60vh] overflow-auto'>
+                  <table className='min-w-[900px] w-full border border-gray-200 rounded-lg overflow-hidden'>
+                    <thead className='bg-white sticky top-0 z-10'>
+                      <tr>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Country of Destination</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap'>Article No</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Color</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Size</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Qty</th>
+                        <th className='px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200'>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className='bg-white'>
+                      {section2NonTotalEntries
+                        .filter(({ row }) => (row?.countryOfDestination ?? '').toString() === activeCountryTab && (row?.type ?? '').toString().trim().toLowerCase() === 'solid')
+                        .map(({ row, idx }) => (
+                          <tr key={idx} className='border-b border-gray-100 last:border-b-0'>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={row.countryOfDestination}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, countryOfDestination: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={(row as any).articleNo ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, articleNo: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={row.color}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, color: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <SizeAutocompleteInput
+                                value={row.size}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, size: v } : r)));
+                                }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Input
+                                value={formatIdThousands(row.qty)}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setSalesOrderDetailDraftRows((prev) => prev.map((r, i) => (i === idx ? { ...r, qty: normalizeDigits(v) } : r)));
+                                }}
+                                style={{ textAlign: 'left' }}
+                              />
+                            </td>
+                            <td className='px-3 py-2 align-top'>
+                              <Button
+                                type='button'
+                                variant='danger'
+                                onClick={() => {
+                                  setSalesOrderDetailDraftRows((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
         </div>
