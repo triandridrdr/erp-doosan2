@@ -682,7 +682,9 @@ export function SalesOrderDraftEditPage() {
               onChange={(e) => setTermsOfDeliveryByPageDraft((prev) => ({ ...prev, [activePage]: e.target.value }))}
             />
           </div>
-          <EditableObjectTable title='Time of Delivery' rows={timeOfDeliveryRows.filter((r) => (r?.page ?? '1').toString() === String(activePage))} onRowsChange={(rows) => setTimeOfDeliveryRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
+          {activePage === 1 && (
+            <EditableObjectTable title='Time of Delivery' rows={timeOfDeliveryRows.filter((r) => (r?.page ?? '1').toString() === String(activePage))} onRowsChange={(rows) => setTimeOfDeliveryRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
+          )}
           <EditableObjectTable title='Quantity per Article' rows={quantityPerArticleRowsForActivePage} onRowsChange={(rows) => setQuantityPerArticleRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
           <EditableObjectTable title='Invoice Average Price' rows={invoiceAvgPriceRowsForActivePage} onRowsChange={(rows) => setInvoiceAvgPriceRows((prev) => [...prev.filter((r) => (r?.page ?? '1').toString() !== String(activePage)), ...rows.map((r) => ({ ...r, page: String(activePage) }))])} />
         </div>
