@@ -193,7 +193,11 @@ function EditableObjectTable({
       if (Array.isArray(row)) {
         row.forEach((_, idx) => keys.add(String(idx)));
       } else if (row && typeof row === 'object') {
-        Object.keys(row).forEach((k) => keys.add(k));
+        Object.keys(row).forEach((k) => {
+          if (k.toLowerCase() !== 'page') {
+            keys.add(k);
+          }
+        });
       }
     }
     return Array.from(keys);
