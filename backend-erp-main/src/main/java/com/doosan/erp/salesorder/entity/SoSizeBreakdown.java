@@ -34,6 +34,9 @@ public class SoSizeBreakdown extends BaseEntity {
     @Column(name = "no_of_asst", length = 32)
     private String noOfAsst;
 
+    @Column(name = "article_no", length = 128)
+    private String articleNo;
+
     @Column(name = "total", length = 32)
     private String total;
 

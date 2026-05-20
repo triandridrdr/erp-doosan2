@@ -176,6 +176,7 @@ public class SoHeaderService {
                         .map(d -> mapOf(
                                 "countryOfDestination", b.getCountryOfDestination(),
                                 "type", b.getType(),
+                                "articleNo", b.getArticleNo(),
                                 "color", b.getColor(),
                                 "size", d.getSizeLabel(),
                                 "qty", d.getQuantity(),

@@ -40,6 +40,7 @@ public class SoScanSizeBreakdownService {
             Map<String, Object> row = rows.get(i);
             String country = helper.str(row.get("countryOfDestination"));
             String type = helper.str(row.get("type"));
+            String articleNo = helper.str(row.get("articleNo"));
             String color = helper.str(row.get("color"));
             String size = helper.str(row.get("size"));
             String qty = helper.str(row.get("qty"));
@@ -51,6 +52,7 @@ public class SoScanSizeBreakdownService {
             bd.setSoHeader(header);
             bd.setCountryOfDestination(country.isBlank() ? "N/A" : country);
             bd.setType(type.isBlank() ? "N/A" : type);
+            bd.setArticleNo(articleNo);
             bd.setColor(color);
             bd.setNoOfAsst(noOfAsst);
             bd.setTotal(total);
