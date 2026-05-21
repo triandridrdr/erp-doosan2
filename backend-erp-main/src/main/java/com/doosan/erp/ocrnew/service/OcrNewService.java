@@ -748,27 +748,45 @@ public class OcrNewService {
         Map<String, String> out = new LinkedHashMap<>();
         if (formFields == null || formFields.isEmpty()) return out;
 
-        String articleNo = "";
-        String hmColourCode = "";
+        String articleNoStr = "";
+        String hmColourCodeStr = "";
         for (Map.Entry<String, String> en : formFields.entrySet()) {
             String k = nvl(en.getKey()).trim().toLowerCase(Locale.ROOT);
             String v = nvl(en.getValue()).trim();
             if (v.isBlank()) continue;
-            if (articleNo.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
-                articleNo = v;
+            if (articleNoStr.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
+                articleNoStr = v;
             }
-            if (hmColourCode.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
-                hmColourCode = v;
+            if (hmColourCodeStr.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
+                hmColourCodeStr = v;
             }
         }
 
-        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNo);
-        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCode);
-        String a3 = am.find() ? am.group(1) : "";
-        String c23 = cm.find() ? cm.group(1) : "";
-        if (a3.isBlank() || c23.isBlank()) return out;
+        List<String> articleNos = new ArrayList<>();
+        List<String> colourCodes = new ArrayList<>();
 
-        out.put(a3, (a3 + " " + c23).trim());
+        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNoStr);
+        while (am.find()) {
+            articleNos.add(am.group(1));
+        }
+
+        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCodeStr);
+        while (cm.find()) {
+            colourCodes.add(cm.group(1));
+        }
+
+        if (articleNos.isEmpty() || colourCodes.isEmpty()) return out;
+
+        int maxLen = Math.min(articleNos.size(), colourCodes.size());
+        for (int i = 0; i < maxLen; i++) {
+            out.putIfAbsent(articleNos.get(i), articleNos.get(i) + " " + colourCodes.get(i));
+        }
+        if (maxLen > 0 && articleNos.size() > maxLen) {
+            for (int i = maxLen; i < articleNos.size(); i++) {
+                out.putIfAbsent(articleNos.get(i), articleNos.get(i) + " " + colourCodes.get(0));
+            }
+        }
+
         return out;
     }
 
@@ -7892,35 +7910,57 @@ public class OcrNewService {
         if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) return;
         if (formFields == null || formFields.isEmpty()) return;
 
-        String articleNo = "";
-        String hmColourCode = "";
+        String articleNoStr = "";
+        String hmColourCodeStr = "";
         for (Map.Entry<String, String> en : formFields.entrySet()) {
             String k = nvl(en.getKey()).trim().toLowerCase(Locale.ROOT);
             String v = nvl(en.getValue()).trim();
             if (v.isBlank()) continue;
-            if (articleNo.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
-                articleNo = v;
+            if (articleNoStr.isBlank() && (k.equals("article no") || k.equals("article") || k.equals("article / product no") || k.equals("article / product") || k.equals("product no"))) {
+                articleNoStr = v;
             }
-            if (hmColourCode.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
-                hmColourCode = v;
+            if (hmColourCodeStr.isBlank() && (k.equals("h&m colour code") || k.equals("h&m colour") || k.equals("h&m color code") || k.equals("h&m color"))) {
+                hmColourCodeStr = v;
             }
         }
 
-        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNo);
-        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCode);
-        String a3 = am.find() ? am.group(1) : "";
-        String c23 = cm.find() ? cm.group(1) : "";
-        if (a3.isBlank() || c23.isBlank()) return;
+        List<String> articleNos = new ArrayList<>();
+        List<String> colourCodes = new ArrayList<>();
 
-        String label = (a3 + " " + c23).trim();
+        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleNoStr);
+        while (am.find()) {
+            articleNos.add(am.group(1));
+        }
+
+        Matcher cm = Pattern.compile("\\b(\\d{2}-\\d{3})\\b").matcher(hmColourCodeStr);
+        while (cm.find()) {
+            colourCodes.add(cm.group(1));
+        }
+
+        if (articleNos.isEmpty() || colourCodes.isEmpty()) return;
+
+        Map<String, String> labelByArticleNo = new LinkedHashMap<>();
+        int maxLen = Math.min(articleNos.size(), colourCodes.size());
+        for (int i = 0; i < maxLen; i++) {
+            labelByArticleNo.put(articleNos.get(i), articleNos.get(i) + " " + colourCodes.get(i));
+        }
+        if (maxLen > 0 && articleNos.size() > maxLen) {
+            for (int i = maxLen; i < articleNos.size(); i++) {
+                labelByArticleNo.put(articleNos.get(i), articleNos.get(i) + " " + colourCodes.get(0));
+            }
+        }
+
         for (Map<String, String> r : colourSizeBreakdown) {
             if (r == null) continue;
             String a = nvl(r.get("article")).trim();
-            if (a.isBlank()) {
-                r.put("article", label);
-                continue;
-            }
-            // Only replace weak forms like "001" or "Article:001"; keep already-rich labels.
+            if (a.isBlank()) continue;
+
+            Matcher m = Pattern.compile("\\b(\\d{3})\\b").matcher(a);
+            if (!m.find()) continue;
+            String a3 = m.group(1);
+            String label = nvl(labelByArticleNo.get(a3)).trim();
+            if (label.isBlank()) continue;
+
             if (a.matches("^\\d{3}$") || a.matches("(?i)^article\\s*[:#-]?\\s*\\d{3}$")) {
                 r.put("article", label);
             }
