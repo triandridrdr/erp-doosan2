@@ -52,7 +52,7 @@ public class SoScanSizeBreakdownService {
             String total = helper.str(row.get("total"));
             String noOfAsst = helper.str(row.get("noOfAsst"));
 
-            log.debug("[SB_SAVE] Row {}: country={}, type={}, articleNo={}, color={}, size={}", i, country, type, articleNo, color, size);
+            log.info("[SB_SAVE] Row {}: country={}, type={}, articleNo={}, color={}, size={}, noOfAsst={}", i, country, type, articleNo, color, size, noOfAsst);
 
             SoSizeBreakdown bd = new SoSizeBreakdown();
             bd.setScan(scan);

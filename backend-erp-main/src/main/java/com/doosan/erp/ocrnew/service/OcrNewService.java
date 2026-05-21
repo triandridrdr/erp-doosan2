@@ -4999,13 +4999,42 @@ public class OcrNewService {
                             }
                         } else {
                             // If the Assortment row was already emitted (e.g., upon 'Quantity:'),
-                            // backfill into the last Assortment row for this page.
-                            String v = vals.get(0);
-                            for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
-                                Map<String, String> r = out.get(ri);
-                                if ("Assortment".equals(r.getOrDefault("type", ""))) {
-                                    r.put("noOfAsst", v);
-                                    break;
+                            // backfill into Assortment rows for this page.
+                            if (vals.size() == articleNos.size() && articleNos.size() > 1) {
+                                // Multi values: map each value to the corresponding article
+                                for (int ai = 0; ai < articleNos.size(); ai++) {
+                                    String targetArticleNo = nvl(articleNos.get(ai));
+                                    String targetNoOfAsst = vals.get(ai);
+                                    for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                        Map<String, String> r = out.get(ri);
+                                        if ("Assortment".equals(r.getOrDefault("type", ""))) {
+                                            String rowArticleNo = nvl(r.get("articleNo"));
+                                            if (rowArticleNo.equals(targetArticleNo)) {
+                                                r.put("noOfAsst", targetNoOfAsst);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Single value: apply to all Assortment rows (or first one if none)
+                                String v = vals.get(0);
+                                boolean anyApplied = false;
+                                for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                    Map<String, String> r = out.get(ri);
+                                    if ("Assortment".equals(r.getOrDefault("type", ""))) {
+                                        r.put("noOfAsst", v);
+                                        anyApplied = true;
+                                    }
+                                }
+                                if (!anyApplied) {
+                                    // If no Assortment rows found, apply to last one
+                                    for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
+                                        Map<String, String> r = out.get(ri);
+                                        if ("Assortment".equals(r.getOrDefault("type", ""))) {
+                                            r.put("noOfAsst", v);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }

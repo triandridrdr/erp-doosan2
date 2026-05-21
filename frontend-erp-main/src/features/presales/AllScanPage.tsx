@@ -243,6 +243,8 @@ export function AllScanPage() {
       editable: boolean;
     }> = [];
 
+    console.log('[DEBUG] pivotDetailRows called with backendDetail:', backendDetail);
+
     for (const row of backendDetail ?? []) {
       const type = (row?.type ?? '').toString();
       const countryOfDestination = (row?.countryOfDestination ?? row?.destinationCountry ?? '').toString();

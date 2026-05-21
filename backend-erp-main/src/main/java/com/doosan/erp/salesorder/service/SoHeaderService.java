@@ -169,7 +169,8 @@ public class SoHeaderService {
                     .toList());
         });
 
-        latestSizeBreakdown(h.getId()).ifPresent(scan -> payload.put("salesOrderDetailSizeBreakdown", scan.getBreakdowns().stream()
+        latestSizeBreakdown(h.getId()).ifPresent(scan -> {
+            var list = scan.getBreakdowns().stream()
                 .sorted(Comparator.comparing(SoSizeBreakdown::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
                 .flatMap(b -> b.getDetails().stream()
                         .sorted(Comparator.comparing(SoSizeBreakdownDetail::getSortOrder, Comparator.nullsLast(Integer::compareTo)))
@@ -183,7 +184,11 @@ public class SoHeaderService {
                                 "total", b.getTotal(),
                                 "noOfAsst", b.getNoOfAsst()
                         )))
-                .toList()));
+                .toList();
+            log.info("[SO_HEADER_REVIEW] SO={} salesOrderDetailSizeBreakdown count={}", h.getSoNumber(), list.size());
+            list.forEach(item -> log.info("[SO_HEADER_REVIEW] Row: articleNo={}, noOfAsst={}", item.get("articleNo"), item.get("noOfAsst")));
+            payload.put("salesOrderDetailSizeBreakdown", list);
+        });
 
         latestCountryBreakdown(h.getId()).ifPresent(scan -> {
             payload.put("totalCountryBreakdown", scan.getCountryBreakdowns().stream()
