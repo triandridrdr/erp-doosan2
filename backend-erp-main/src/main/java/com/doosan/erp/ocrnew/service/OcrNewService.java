@@ -4809,8 +4809,27 @@ public class OcrNewService {
             pageLines.sort(Comparator.comparingInt(OcrNewLine::getTop).thenComparingInt(OcrNewLine::getLeft));
 
             List<String> texts = mergeLinesByVisualRow(pageLines, 25);
+            
+            log.info("[SALES-ORDER-DETAIL] page={} texts count={}, first 20 lines:", e.getKey(), texts.size());
+            for (int ti = 0; ti < Math.min(texts.size(), 20); ti++) {
+                log.info("[SALES-ORDER-DETAIL] page={} text[{}] = '{}'", e.getKey(), ti, truncate(oneLine(texts.get(ti)), 200));
+            }
 
-            int idxHeader = indexOfLineContaining(texts, "size / colour breakdown");
+            // Find the correct Size / Colour breakdown header (skip lines containing "- Online")
+            int idxHeader = -1;
+            for (int ti = 0; ti < texts.size(); ti++) {
+                String t = oneLine(texts.get(ti)).toLowerCase(Locale.ROOT);
+                if (t.contains("size") && t.contains("colour") && t.contains("breakdown") && !t.contains("online")) {
+                    idxHeader = ti;
+                    log.info("[SALES-ORDER-DETAIL] page={} Found correct idxHeader={}, line='{}'", e.getKey(), idxHeader, truncate(oneLine(texts.get(ti)), 200));
+                    break;
+                }
+            }
+            // Fallback to original method if not found
+            if (idxHeader < 0) {
+                idxHeader = indexOfLineContaining(texts, "size / colour breakdown");
+                log.info("[SALES-ORDER-DETAIL] page={} Using fallback idxHeader={}", e.getKey(), idxHeader);
+            }
             if (idxHeader < 0) continue;
 
             if (log.isDebugEnabled()) {
@@ -4899,22 +4918,58 @@ public class OcrNewService {
             // Detect article numbers so we can split size rows into one output row per article.
             List<String> articleNos = new ArrayList<>();
             {
-                Pattern articleHdr = Pattern.compile("(?i)^\\s*article\\s*no\\s*[:#]?\\s*(.+?)\\s*$");
-                for (int i = Math.max(0, idxHeader - 40); i < Math.min(texts.size(), idxHeader + 5); i++) {
-                    String t = oneLine(texts.get(i));
-                    if (t.isBlank()) continue;
-                    Matcher ah = articleHdr.matcher(t);
-                    if (!ah.matches()) continue;
-                    String tail = nvl(ah.group(1));
-                    Matcher am = Pattern.compile("\\b\\d{3}\\b").matcher(tail);
-                    while (am.find()) {
-                        String a = am.group().trim();
-                        if (!a.isBlank() && !articleNos.contains(a)) articleNos.add(a);
+                log.info("[ARTICLE-NO-EXTRACT] Starting extraction, idxHeader={}", idxHeader);
+                
+                // FIRST: Try formFields (header fields)
+                if (formFields != null) {
+                    String articleFromForm = firstNonBlank(
+                        formFields.get("Article No"),
+                        formFields.get("Article No."),
+                        formFields.get("ArticleNumber"),
+                        formFields.get("Article Number")
+                    );
+                    if (articleFromForm != null && !articleFromForm.isBlank()) {
+                        log.info("[ARTICLE-NO-EXTRACT] Found article from formFields: '{}'", articleFromForm);
+                        Matcher am = Pattern.compile("\\b\\d{3}\\b").matcher(articleFromForm);
+                        while (am.find()) {
+                            String a = am.group().trim();
+                            if (!a.isBlank() && !articleNos.contains(a)) {
+                                articleNos.add(a);
+                                log.info("[ARTICLE-NO-EXTRACT] Extracted article number from formFields: '{}'", a);
+                            }
+                        }
                     }
-                    if (!articleNos.isEmpty()) break;
                 }
+                
+                // SECOND: Try all lines in the page
                 if (articleNos.isEmpty()) {
+                    Pattern articleHdr = Pattern.compile("(?i)article\\s*no\\s*[:#]?\\s*(.+?)(?:$|\\s)");
+                    log.info("[ARTICLE-NO-EXTRACT] No article from formFields, scanning all {} lines in page", texts.size());
+                    for (int i = 0; i < texts.size(); i++) {
+                        String t = oneLine(texts.get(i));
+                        if (t.isBlank()) continue;
+                        Matcher ah = articleHdr.matcher(t);
+                        if (ah.find()) {
+                            log.info("[ARTICLE-NO-EXTRACT] Line idx={} matched article header pattern, tail='{}'", i, truncate(nvl(ah.group(1)), 200));
+                            String tail = nvl(ah.group(1));
+                            Matcher am = Pattern.compile("\\b\\d{3}\\b").matcher(tail);
+                            while (am.find()) {
+                                String a = am.group().trim();
+                                if (!a.isBlank() && !articleNos.contains(a)) {
+                                    articleNos.add(a);
+                                    log.info("[ARTICLE-NO-EXTRACT] Found article number: '{}'", a);
+                                }
+                            }
+                            if (!articleNos.isEmpty()) break;
+                        }
+                    }
+                }
+                
+                if (articleNos.isEmpty()) {
+                    log.info("[ARTICLE-NO-EXTRACT] No article numbers found, adding empty string");
                     articleNos.add("");
+                } else {
+                    log.info("[ARTICLE-NO-EXTRACT] Final article numbers: {}", articleNos);
                 }
             }
 
@@ -5085,7 +5140,7 @@ public class OcrNewService {
                                 log.info("[LINE-BACKFILL] SKIPPED: Solid row already has values, not overwriting size={}", size);
                             } else {
                                 String existing = lastRow.get(size);
-                                if ((existing == null || "0".equals(existing)) && canBackfillSizeValue(lastRow, size, v)) {
+                                if ((existing == null || existing.isBlank()) && canBackfillSizeValue(lastRow, size, v)) {
                                     log.info("[LINE-BACKFILL] SUCCESS: size={} value={} into row type={}", size, v, rowType);
                                     lastRow.put(size, v);
                                     // Recalculate total if needed
@@ -5107,7 +5162,7 @@ public class OcrNewService {
                                     log.info("[LINE-BACKFILL] KIDS SKIPPED: Solid row already has values, not overwriting size={}", kidsKey);
                                 } else {
                                     String existing = r.get(kidsKey);
-                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, kidsKey, kv)) {
+                                    if ((existing == null || existing.isBlank()) && canBackfillSizeValue(r, kidsKey, kv)) {
                                         log.info("[LINE-BACKFILL] KIDS size={} value={} into row[{}] type={}", kidsKey, kv, ri, rowType);
                                         r.put(kidsKey, kv);
                                     }
@@ -5130,7 +5185,7 @@ public class OcrNewService {
                                     log.info("[LINE-BACKFILL] NUMERIC_CM SKIPPED: Solid row already has values, not overwriting size={}", numKey2);
                                 } else {
                                     String existing = r.get(numKey2);
-                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, numKey2, nv2)) {
+                                    if ((existing == null || existing.isBlank()) && canBackfillSizeValue(r, numKey2, nv2)) {
                                         log.info("[LINE-BACKFILL] NUMERIC_CM size={} value={} into row[{}] type={}", numKey2, nv2, ri, rowType);
                                         r.put(numKey2, nv2);
                                     }
@@ -5151,7 +5206,7 @@ public class OcrNewService {
                                     log.info("[LINE-BACKFILL] ANY SKIPPED: Solid row already has values, not overwriting size={}", anyKey2);
                                 } else {
                                     String existing = r.get(anyKey2);
-                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, anyKey2, av2)) {
+                                    if ((existing == null || existing.isBlank()) && canBackfillSizeValue(r, anyKey2, av2)) {
                                         log.info("[LINE-BACKFILL] ANY size={} value={} into row[{}] type={}", anyKey2, av2, ri, rowType);
                                         r.put(anyKey2, av2);
                                     }
@@ -6470,36 +6525,19 @@ public class OcrNewService {
             List<OcrNewLine> rawLinesForDetail = new ArrayList<>();
             List<OcrNewLine> rawLinesForTables = useHocr ? new ArrayList<>() : allLines;
             List<BufferedImage> cleanedPageImages = new ArrayList<>();
-            for (int i = 0; i < pageImages.size(); i++) {
-                BufferedImage pageImage = removeColoredBorders(pageImages.get(i));
-                cleanedPageImages.add(pageImage);
-                List<OcrNewLine> hocrPageLines = null;
-                List<OcrNewLine> rawPageLines = ocrEngine.extractLinesFromImage(pageImage, i);
-
-                if (useHocr || compareModes) {
-                    hocrPageLines = ocrEngine.extractLinesWithHocr(pageImage, i);
-                }
-
-                if (compareModes && effectiveDebug) {
-                    logComparisonForPage(i + 1, hocrPageLines, rawPageLines);
-                }
-
-                rawLinesForDetail.addAll(rawPageLines == null ? List.of() : rawPageLines);
-                if (useHocr) {
-                    allLines.addAll(hocrPageLines == null ? List.of() : hocrPageLines);
-                    rawLinesForTables.addAll(rawPageLines == null ? List.of() : rawPageLines);
-                } else {
-                    allLines.addAll(rawPageLines == null ? List.of() : rawPageLines);
-                }
-            }
-
-            // ── Supplementary: PDFBox native text for lines Tesseract missed ───
+            
             String fname = file.getOriginalFilename();
-            if (isPdf(file)) {
+            boolean isPdfFile = isPdf(file);
+            
+            // If it's a PDF file: ONLY use PDFBox native text (for speed!)
+            // We'll improve article no extraction to work with PDFBox lines too
+            if (isPdfFile) {
                 try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(fileBytes))) {
                     PDFTextStripper stripper = new PDFTextStripper();
                     stripper.setSortByPosition(true);
                     int totalPages = doc.getNumberOfPages();
+                    log.info("[OCR-NEW] Using PDFBox native text extraction for PDF file: {}, pages={}", fname, totalPages);
+                    
                     for (int p = 0; p < totalPages; p++) {
                         int pageNum = p + 1; // 1-indexed
                         stripper.setStartPage(pageNum);
@@ -6507,49 +6545,118 @@ public class OcrNewService {
                         String pageText = stripper.getText(doc);
                         if (pageText == null || pageText.isBlank()) continue;
 
-                        // Collect existing Tesseract line texts for this page (lowered, trimmed) for dedup
-                        Set<String> existingTexts = new HashSet<>();
-                        for (OcrNewLine ol : allLines) {
-                            if (ol.getPage() == pageNum) {
-                                existingTexts.add(oneLine(ol.getText()).toLowerCase(Locale.ROOT).trim());
-                            }
-                        }
-
                         String[] nativeLines = pageText.split("\\r?\\n");
                         int syntheticTop = 5000;
                         for (String nl : nativeLines) {
                             String trimmed = nl.trim();
                             if (trimmed.isBlank()) continue;
-                            String key = trimmed.toLowerCase(Locale.ROOT);
-                            // Skip if Tesseract already captured a line containing this text
-                            boolean alreadyPresent = false;
-                            for (String et : existingTexts) {
-                                if (et.contains(key) || key.contains(et)) {
-                                    alreadyPresent = true;
-                                    break;
-                                }
-                            }
-                            if (alreadyPresent) continue;
 
-                            // Add as supplementary line with synthetic bounding box
+                            // Add as line with synthetic bounding box
                             syntheticTop += 100;
-                            OcrNewLine suppl = OcrNewLine.builder()
+                            OcrNewLine line = OcrNewLine.builder()
                                     .page(pageNum)
                                     .text(trimmed)
                                     .left(0).top(syntheticTop).right(1000).bottom(syntheticTop + 20)
                                     .confidence(99f)
                                     .words(List.of())
                                     .build();
-                            allLines.add(suppl);
-                            rawLinesForDetail.add(suppl);
+                            allLines.add(line);
+                            rawLinesForDetail.add(line);
                             if (rawLinesForTables != null && rawLinesForTables != allLines) {
-                                rawLinesForTables.add(suppl);
+                                rawLinesForTables.add(line);
                             }
-                            log.info("[OCR-PDFBOX-SUPPLEMENT] file={} page={} added: {}", fname, pageNum, truncate(trimmed, 300));
+                            log.info("[OCR-PDFBOX-NATIVE] file={} page={} line: {}", fname, pageNum, truncate(trimmed, 300));
                         }
                     }
                 } catch (IOException ex) {
-                    log.warn("[OCR-PDFBOX-SUPPLEMENT] failed: {}", ex.getMessage());
+                    log.warn("[OCR-PDFBOX-NATIVE] failed, falling back to Tesseract: {}", ex.getMessage());
+                    // Fallback to Tesseract if PDFBox fails
+                    isPdfFile = false;
+                }
+            }
+            
+            // If it's NOT a PDF file OR PDFBox failed, use Tesseract
+            if (!isPdfFile) {
+                for (int i = 0; i < pageImages.size(); i++) {
+                    BufferedImage pageImage = removeColoredBorders(pageImages.get(i));
+                    cleanedPageImages.add(pageImage);
+                    List<OcrNewLine> hocrPageLines = null;
+                    List<OcrNewLine> rawPageLines = ocrEngine.extractLinesFromImage(pageImage, i);
+
+                    if (useHocr || compareModes) {
+                        hocrPageLines = ocrEngine.extractLinesWithHocr(pageImage, i);
+                    }
+
+                    if (compareModes && effectiveDebug) {
+                        logComparisonForPage(i + 1, hocrPageLines, rawPageLines);
+                    }
+
+                    rawLinesForDetail.addAll(rawPageLines == null ? List.of() : rawPageLines);
+                    if (useHocr) {
+                        allLines.addAll(hocrPageLines == null ? List.of() : hocrPageLines);
+                        rawLinesForTables.addAll(rawPageLines == null ? List.of() : rawPageLines);
+                    } else {
+                        allLines.addAll(rawPageLines == null ? List.of() : rawPageLines);
+                    }
+                }
+                
+                // ── Supplementary: PDFBox native text for lines Tesseract missed (only if we used Tesseract) ───
+                if (isPdf(file)) {
+                    try (PDDocument doc = PDDocument.load(new ByteArrayInputStream(fileBytes))) {
+                        PDFTextStripper stripper = new PDFTextStripper();
+                        stripper.setSortByPosition(true);
+                        int totalPages = doc.getNumberOfPages();
+                        for (int p = 0; p < totalPages; p++) {
+                            int pageNum = p + 1; // 1-indexed
+                            stripper.setStartPage(pageNum);
+                            stripper.setEndPage(pageNum);
+                            String pageText = stripper.getText(doc);
+                            if (pageText == null || pageText.isBlank()) continue;
+
+                            // Collect existing Tesseract line texts for this page (lowered, trimmed) for dedup
+                            Set<String> existingTexts = new HashSet<>();
+                            for (OcrNewLine ol : allLines) {
+                                if (ol.getPage() == pageNum) {
+                                    existingTexts.add(oneLine(ol.getText()).toLowerCase(Locale.ROOT).trim());
+                                }
+                            }
+
+                            String[] nativeLines = pageText.split("\\r?\\n");
+                            int syntheticTop = 5000;
+                            for (String nl : nativeLines) {
+                                String trimmed = nl.trim();
+                                if (trimmed.isBlank()) continue;
+                                String key = trimmed.toLowerCase(Locale.ROOT);
+                                // Skip if Tesseract already captured a line containing this text
+                                boolean alreadyPresent = false;
+                                for (String et : existingTexts) {
+                                    if (et.contains(key) || key.contains(et)) {
+                                        alreadyPresent = true;
+                                        break;
+                                    }
+                                }
+                                if (alreadyPresent) continue;
+
+                                // Add as supplementary line with synthetic bounding box
+                                syntheticTop += 100;
+                                OcrNewLine suppl = OcrNewLine.builder()
+                                        .page(pageNum)
+                                        .text(trimmed)
+                                        .left(0).top(syntheticTop).right(1000).bottom(syntheticTop + 20)
+                                        .confidence(99f)
+                                        .words(List.of())
+                                        .build();
+                                allLines.add(suppl);
+                                rawLinesForDetail.add(suppl);
+                                if (rawLinesForTables != null && rawLinesForTables != allLines) {
+                                    rawLinesForTables.add(suppl);
+                                }
+                                log.info("[OCR-PDFBOX-SUPPLEMENT] file={} page={} added: {}", fname, pageNum, truncate(trimmed, 300));
+                            }
+                        }
+                    } catch (IOException ex) {
+                        log.warn("[OCR-PDFBOX-SUPPLEMENT] failed: {}", ex.getMessage());
+                    }
                 }
             }
 
