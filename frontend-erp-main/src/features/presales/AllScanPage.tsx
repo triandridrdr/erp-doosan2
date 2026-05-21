@@ -1700,16 +1700,56 @@ export function AllScanPage() {
                               timeOfDeliveryRows.map((row, rIdx) => (
                                 <tr key={rIdx}>
                                   <td className='px-3 py-2 border-b border-gray-100'>
-                                    <Input value={row.timeOfDelivery ?? ''} onChange={() => {}} />
+                                    <Input
+                                      value={row.timeOfDelivery ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setTimeOfDeliveryRows((prev) => {
+                                          const next = [...(prev ?? [])];
+                                          next[rIdx] = { ...next[rIdx], timeOfDelivery: v };
+                                          return next;
+                                        });
+                                      }}
+                                    />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
-                                    <Input value={row.planningMarkets ?? ''} onChange={() => {}} />
+                                    <Input
+                                      value={row.planningMarkets ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setTimeOfDeliveryRows((prev) => {
+                                          const next = [...(prev ?? [])];
+                                          next[rIdx] = { ...next[rIdx], planningMarkets: v };
+                                          return next;
+                                        });
+                                      }}
+                                    />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
-                                    <Input value={row.quantity ?? ''} onChange={() => {}} />
+                                    <Input
+                                      value={row.quantity ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setTimeOfDeliveryRows((prev) => {
+                                          const next = [...(prev ?? [])];
+                                          next[rIdx] = { ...next[rIdx], quantity: v };
+                                          return next;
+                                        });
+                                      }}
+                                    />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
-                                    <Input value={row.percentTotalQty ?? ''} onChange={() => {}} />
+                                    <Input
+                                      value={row.percentTotalQty ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setTimeOfDeliveryRows((prev) => {
+                                          const next = [...(prev ?? [])];
+                                          next[rIdx] = { ...next[rIdx], percentTotalQty: v };
+                                          return next;
+                                        });
+                                      }}
+                                    />
                                   </td>
                                   <td className='px-3 py-2 border-b border-gray-100'>
                                     <Button
