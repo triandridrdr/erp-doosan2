@@ -56,11 +56,11 @@ public class OcrNewService {
     private static final String PDF_CONTENT_TYPE = "application/pdf";
 
     // Allow trailing ) or other chars after the number (OCR artifacts)
-    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,3})\\s*(?:\\(|\\b).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
-    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,3}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b(\\d[\\d\\s]{0,12})\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE = Pattern.compile("^\\s*([A-Za-z]{1,3})\\s*(?:\\(|\\b).*?\\b([0-9\\s]+)\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE_PARENS = Pattern.compile("^.*?\\(\\s*([A-Za-z]{1,3}(?:\\s*\\/\\s*P)?)\\s*\\).*?\\b([0-9\\s]+)\\s*\\)?\\s*$");
     // Flexible fallback: finds size label followed by parenthetical size format and a number
     // Matches patterns like "XL (XL/P)* 41" even with OCR artifacts
-    private static final Pattern SIZE_VALUE_LINE_FLEX = Pattern.compile("(?i)\\b(X[SL]|S|M|L)\\s*\\([^)]+\\)[^\\d]*(\\d+)\\s*\\)?\\s*$");
+    private static final Pattern SIZE_VALUE_LINE_FLEX = Pattern.compile("(?i)\\b(X[SL]|S|M|L)\\s*\\([^)]+\\)(.*?)$");
     // Pattern for XL lines where OCR misreads numbers as letters (e.g., "41" -> "A" or "4l")
     private static final Pattern SIZE_VALUE_LINE_OCR_FIX = Pattern.compile("(?i)^\\s*(X[SL]|XS)\\s*\\([^)]+\\)\\*?\\s*([A-Za-z0-9]+)\\)?\\s*$");
     /**
@@ -5078,14 +5078,19 @@ public class OcrNewService {
                             }
                         }
                         if (size != null && v != null && !v.isBlank() && out.size() > pageOutStart) {
-                            // Backfill into the last emitted row for this page
+                            // Backfill into the last emitted row for this page, but NOT if it's Solid (we trust Solid more)
                             Map<String, String> lastRow = out.get(out.size() - 1);
-                            String existing = lastRow.get(size);
-                            if ((existing == null || "0".equals(existing)) && canBackfillSizeValue(lastRow, size, v)) {
-                                log.info("[LINE-BACKFILL] SUCCESS: size={} value={} into row type={}", size, v, lastRow.get("type"));
-                                lastRow.put(size, v);
-                                // Recalculate total if needed
-                                recalculateTotalIfNeeded(lastRow);
+                            String rowType = lastRow.getOrDefault("type", "");
+                            if ("Solid".equals(rowType)) {
+                                log.info("[LINE-BACKFILL] SKIPPED: Solid row already has values, not overwriting size={}", size);
+                            } else {
+                                String existing = lastRow.get(size);
+                                if ((existing == null || "0".equals(existing)) && canBackfillSizeValue(lastRow, size, v)) {
+                                    log.info("[LINE-BACKFILL] SUCCESS: size={} value={} into row type={}", size, v, rowType);
+                                    lastRow.put(size, v);
+                                    // Recalculate total if needed
+                                    recalculateTotalIfNeeded(lastRow);
+                                }
                             }
                         }
                     }
@@ -5097,10 +5102,15 @@ public class OcrNewService {
                         if (kidsKey != null && !kv.isBlank() && out.size() > pageOutStart) {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
-                                String existing = r.get(kidsKey);
-                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, kidsKey, kv)) {
-                                    log.info("[LINE-BACKFILL] KIDS size={} value={} into row[{}] type={}", kidsKey, kv, ri, r.get("type"));
-                                    r.put(kidsKey, kv);
+                                String rowType = r.getOrDefault("type", "");
+                                if ("Solid".equals(rowType)) {
+                                    log.info("[LINE-BACKFILL] KIDS SKIPPED: Solid row already has values, not overwriting size={}", kidsKey);
+                                } else {
+                                    String existing = r.get(kidsKey);
+                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, kidsKey, kv)) {
+                                        log.info("[LINE-BACKFILL] KIDS size={} value={} into row[{}] type={}", kidsKey, kv, ri, rowType);
+                                        r.put(kidsKey, kv);
+                                    }
                                 }
                             }
                         }
@@ -5115,10 +5125,15 @@ public class OcrNewService {
                         if (!nv2.isBlank() && out.size() > pageOutStart) {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
-                                String existing = r.get(numKey2);
-                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, numKey2, nv2)) {
-                                    log.info("[LINE-BACKFILL] NUMERIC_CM size={} value={} into row[{}] type={}", numKey2, nv2, ri, r.get("type"));
-                                    r.put(numKey2, nv2);
+                                String rowType = r.getOrDefault("type", "");
+                                if ("Solid".equals(rowType)) {
+                                    log.info("[LINE-BACKFILL] NUMERIC_CM SKIPPED: Solid row already has values, not overwriting size={}", numKey2);
+                                } else {
+                                    String existing = r.get(numKey2);
+                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, numKey2, nv2)) {
+                                        log.info("[LINE-BACKFILL] NUMERIC_CM size={} value={} into row[{}] type={}", numKey2, nv2, ri, rowType);
+                                        r.put(numKey2, nv2);
+                                    }
                                 }
                             }
                         }
@@ -5131,10 +5146,15 @@ public class OcrNewService {
                         if (anyKey2 != null && !av2.isBlank() && out.size() > pageOutStart) {
                             for (int ri = out.size() - 1; ri >= pageOutStart; ri--) {
                                 Map<String, String> r = out.get(ri);
-                                String existing = r.get(anyKey2);
-                                if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, anyKey2, av2)) {
-                                    log.info("[LINE-BACKFILL] ANY size={} value={} into row[{}] type={}", anyKey2, av2, ri, r.get("type"));
-                                    r.put(anyKey2, av2);
+                                String rowType = r.getOrDefault("type", "");
+                                if ("Solid".equals(rowType)) {
+                                    log.info("[LINE-BACKFILL] ANY SKIPPED: Solid row already has values, not overwriting size={}", anyKey2);
+                                } else {
+                                    String existing = r.get(anyKey2);
+                                    if ((existing == null || existing.isBlank() || "0".equals(existing)) && canBackfillSizeValue(r, anyKey2, av2)) {
+                                        log.info("[LINE-BACKFILL] ANY size={} value={} into row[{}] type={}", anyKey2, av2, ri, rowType);
+                                        r.put(anyKey2, av2);
+                                    }
                                 }
                             }
                         }
@@ -5245,25 +5265,24 @@ public class OcrNewService {
                     }
                 }
 
-                // Lines like: "XS (XS)* 236", "L(L)y* 622"
+                // Lines like: "XS (XS)* 236", "L(L)y* 622", "M (M)* 52 52 M1"
                 Matcher sm = SIZE_VALUE_LINE.matcher(t);
                 if (sm.matches()) {
-                    String sizeRaw = sm.group(1);
-                    String size = normalizeDisplayedSizeKey(sizeRaw, t);
+                    String s = normalizeDisplayedSizeKey(sm.group(1), t);
                     List<String> vals = splitMultiArticleNumbers(sm.group(2), articleNos.size());
 
-                    if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                    if (s != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
                         if (vals.size() == articleNos.size() && articleNos.size() > 1) {
                             for (int ai = 0; ai < articleNos.size(); ai++) {
                                 Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
-                                if (r != null) r.put(size, vals.get(ai));
+                                if (r != null) r.put(s, vals.get(ai));
                             }
-                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE multi matched: line='{}' -> size={} valuesCount={}", t, s, vals.size());
                         } else {
                             String v = vals.get(0);
-                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE matched: line='{}' -> size={} value={}", t, size, v);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE matched: line='{}' -> size={} value={}", t, s, v);
                             for (Map<String, String> r : currentRowsByArticle[0].values()) {
-                                if (r != null) r.put(size, v);
+                                if (r != null) r.put(s, v);
                             }
                         }
                         sawAnySize[0] = true;
@@ -5274,21 +5293,21 @@ public class OcrNewService {
                 // Some countries use numeric size labels at the start, e.g. "155/80A (XS/P)* 30"
                 Matcher sp = SIZE_VALUE_LINE_PARENS.matcher(t);
                 if (sp.matches()) {
-                    String size = normalizeDisplayedSizeKey(null, t);
+                    String s = normalizeDisplayedSizeKey(null, t);
                     List<String> vals = splitMultiArticleNumbers(sp.group(2), articleNos.size());
 
-                    if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                    if (s != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
                         if (vals.size() == articleNos.size() && articleNos.size() > 1) {
                             for (int ai = 0; ai < articleNos.size(); ai++) {
                                 Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
-                                if (r != null) r.put(size, vals.get(ai));
+                                if (r != null) r.put(s, vals.get(ai));
                             }
-                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS multi matched: line='{}' -> size={} valuesCount={}", t, s, vals.size());
                         } else {
                             String v = vals.get(0);
-                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS matched: line='{}' -> size={} value={}", t, size, v);
+                            log.info("[SIZE-PARSE] SIZE_VALUE_LINE_PARENS matched: line='{}' -> size={} value={}", t, s, v);
                             for (Map<String, String> r : currentRowsByArticle[0].values()) {
-                                if (r != null) r.put(size, v);
+                                if (r != null) r.put(s, v);
                             }
                         }
                         sawAnySize[0] = true;
@@ -5297,22 +5316,22 @@ public class OcrNewService {
                     // Third fallback: flexible pattern for size lines that don't match strict patterns
                     Matcher sf = SIZE_VALUE_LINE_FLEX.matcher(t);
                     if (sf.find()) {
-                        String sizeRaw = sf.group(1);
-                        String size = normalizeSizeKey(sizeRaw);
+                        String sr = sf.group(1);
+                        String s = normalizeSizeKey(sr);
                         List<String> vals = splitMultiArticleNumbers(sf.group(2), articleNos.size());
 
-                        if (size != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
+                        if (s != null && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty() && !vals.isEmpty()) {
                             if (vals.size() == articleNos.size() && articleNos.size() > 1) {
                                 for (int ai = 0; ai < articleNos.size(); ai++) {
                                     Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
-                                    if (r != null) r.put(size, vals.get(ai));
+                                    if (r != null) r.put(s, vals.get(ai));
                                 }
-                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX multi matched: line='{}' -> size={} valuesCount={}", t, size, vals.size());
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX multi matched: line='{}' -> size={} valuesCount={}", t, s, vals.size());
                             } else {
                                 String v = vals.get(0);
-                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX matched: line='{}' -> size={} value={}", t, size, v);
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_FLEX matched: line='{}' -> size={} value={}", t, s, v);
                                 for (Map<String, String> r : currentRowsByArticle[0].values()) {
-                                    if (r != null) r.put(size, v);
+                                    if (r != null) r.put(s, v);
                                 }
                             }
                             sawAnySize[0] = true;
@@ -5321,14 +5340,14 @@ public class OcrNewService {
                         // Fourth fallback: OCR fix pattern for misread numbers (e.g., "A" for "41")
                         Matcher so = SIZE_VALUE_LINE_OCR_FIX.matcher(t);
                         if (so.matches()) {
-                            String sizeRaw = so.group(1);
-                            String rawVal = so.group(2);
-                            String v = fixOcrNumber(rawVal);
-                            String size = normalizeDisplayedSizeKey(sizeRaw, t);
-                            if (size != null && v != null && !v.isBlank()) {
-                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_OCR_FIX matched: line='{}' -> size={} rawVal='{}' fixedVal={}", t, size, rawVal, v);
+                            String sr = so.group(1);
+                            String rv = so.group(2);
+                            String v = fixOcrNumber(rv);
+                            String s = normalizeDisplayedSizeKey(sr, t);
+                            if (s != null && v != null && !v.isBlank()) {
+                                log.info("[SIZE-PARSE] SIZE_VALUE_LINE_OCR_FIX matched: line='{}' -> size={} rawVal='{}' fixedVal={}", t, s, rv, v);
                                 for (Map<String, String> r : currentRowsByArticle[0].values()) {
-                                    if (r != null) r.put(size, v);
+                                    if (r != null) r.put(s, v);
                                 }
                                 sawAnySize[0] = true;
                             }
@@ -5336,20 +5355,20 @@ public class OcrNewService {
                             // Fifth fallback: universal pattern — any "label (value)* qty" line in valid section
                             Matcher ua = SIZE_VALUE_LINE_ANY.matcher(t);
                             if (ua.matches() && currentRowsByArticle[0] != null && !currentRowsByArticle[0].isEmpty()) {
-                                String anyKey = normalizeGenericSizeKey(ua.group(1), ua.group(2));
+                                String ak = normalizeGenericSizeKey(ua.group(1), ua.group(2));
                                 List<String> avals = splitMultiArticleNumbers(ua.group(3), articleNos.size());
-                                if (anyKey != null && !avals.isEmpty()) {
+                                if (ak != null && !avals.isEmpty()) {
                                     if (avals.size() == articleNos.size() && articleNos.size() > 1) {
                                         for (int ai = 0; ai < articleNos.size(); ai++) {
                                             Map<String, String> r = currentRowsByArticle[0].get(nvl(articleNos.get(ai)));
-                                            if (r != null) r.put(anyKey, avals.get(ai));
+                                            if (r != null) r.put(ak, avals.get(ai));
                                         }
-                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY multi matched: line='{}' -> size={} valuesCount={}", t, anyKey, avals.size());
+                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY multi matched: line='{}' -> size={} valuesCount={}", t, ak, avals.size());
                                     } else {
                                         String av = avals.get(0);
-                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY matched: line='{}' -> size={} value={}", t, anyKey, av);
+                                        log.info("[SIZE-PARSE] SIZE_VALUE_LINE_ANY matched: line='{}' -> size={} value={}", t, ak, av);
                                         for (Map<String, String> r : currentRowsByArticle[0].values()) {
-                                            if (r != null) r.put(anyKey, av);
+                                            if (r != null) r.put(ak, av);
                                         }
                                     }
                                     sawAnySize[0] = true;
@@ -5866,7 +5885,25 @@ public class OcrNewService {
     private static List<String> splitMultiArticleNumbers(String raw, int expectedCount) {
         List<String> out = new ArrayList<>();
         if (raw == null) return out;
-        String s = raw.trim();
+        
+        // First, clean each token with fixOcrNumber
+        String s = raw;
+        if (expectedCount > 1) {
+            String[] tempToks = raw.split("\\s+");
+            StringBuilder sb = new StringBuilder();
+            for (String t : tempToks) {
+                String cleaned = fixOcrNumber(t);
+                if (cleaned != null && !cleaned.isBlank()) {
+                    if (sb.length() > 0) sb.append(" ");
+                    sb.append(cleaned);
+                }
+            }
+            s = sb.toString();
+            log.info("[SPLIT-MULTI] Raw: '{}', Cleaned: '{}'", raw, s);
+        } else {
+            s = cleanQtyValue(raw);
+        }
+        
         if (s.isBlank()) return out;
 
         if (expectedCount <= 1) {
@@ -6103,7 +6140,7 @@ public class OcrNewService {
                 case 'l': case 'I': case 'i': sb.append('1'); break;
                 case 'S': case 's': sb.append('5'); break;
                 case 'B': sb.append('8'); break;
-                case 'A': sb.append('4'); break;  // Common OCR misread
+                case 'A': case 'M': case 'm': sb.append('4'); break;  // Common OCR misread: M looks like 4
                 case 'Z': case 'z': sb.append('2'); break;
                 case 'G': case 'g': sb.append('6'); break;
                 case 'T': case 't': sb.append('7'); break;
@@ -6293,6 +6330,14 @@ public class OcrNewService {
     private static String normalizeNumber(String raw) {
         if (raw == null) return "";
         return raw.replaceAll("\\s+", "").trim();
+    }
+
+    private static String cleanQtyValue(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.isBlank()) return "";
+        s = s.replaceAll("[^0-9\\s]", "");
+        return s.trim();
     }
 
     private static List<String> mergeLinesByVisualRow(List<OcrNewLine> sortedLines, int yTolerance) {
