@@ -4786,7 +4786,8 @@ public class OcrNewService {
 
     private static List<Map<String, String>> extractSalesOrderDetailSizeBreakdownFromLines(
             List<OcrNewLine> lines,
-            Map<String, String> formFields
+            Map<String, String> formFields,
+            List<String> csbArticleNos
     ) {
         List<Map<String, String>> out = new ArrayList<>();
         if (lines == null || lines.isEmpty()) return out;
@@ -4920,8 +4921,14 @@ public class OcrNewService {
             {
                 log.info("[ARTICLE-NO-EXTRACT] Starting extraction, idxHeader={}", idxHeader);
                 
-                // FIRST: Try formFields (header fields)
-                if (formFields != null) {
+                // FIRST: Use CSB article nos if available!
+                if (csbArticleNos != null && !csbArticleNos.isEmpty()) {
+                    articleNos.addAll(csbArticleNos);
+                    log.info("[ARTICLE-NO-EXTRACT] Using articles from csbArticleNos: {}", articleNos);
+                }
+                
+                // SECOND: Try formFields (header fields)
+                if (articleNos.isEmpty() && formFields != null) {
                     String articleFromForm = firstNonBlank(
                         formFields.get("Article No"),
                         formFields.get("Article No."),
@@ -4941,18 +4948,15 @@ public class OcrNewService {
                     }
                 }
                 
-                // SECOND: Try all lines in the page
+                // THIRD: Try all lines in the page
                 if (articleNos.isEmpty()) {
-                    Pattern articleHdr = Pattern.compile("(?i)article\\s*no\\s*[:#]?\\s*(.+?)(?:$|\\s)");
                     log.info("[ARTICLE-NO-EXTRACT] No article from formFields, scanning all {} lines in page", texts.size());
                     for (int i = 0; i < texts.size(); i++) {
                         String t = oneLine(texts.get(i));
                         if (t.isBlank()) continue;
-                        Matcher ah = articleHdr.matcher(t);
-                        if (ah.find()) {
-                            log.info("[ARTICLE-NO-EXTRACT] Line idx={} matched article header pattern, tail='{}'", i, truncate(nvl(ah.group(1)), 200));
-                            String tail = nvl(ah.group(1));
-                            Matcher am = Pattern.compile("\\b\\d{3}\\b").matcher(tail);
+                        if (t.toLowerCase(Locale.ROOT).contains("article no")) {
+                            log.info("[ARTICLE-NO-EXTRACT] Line idx={} contains article no: '{}'", i, truncate(t, 200));
+                            Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(t);
                             while (am.find()) {
                                 String a = am.group().trim();
                                 if (!a.isBlank() && !articleNos.contains(a)) {
@@ -6745,11 +6749,143 @@ public class OcrNewService {
             // Final hard guard: sanitize hanger loop Description and strip supplier noise before returning
             tables = sanitizeBomDescriptions(tables);
 
+            // Extract the smaller "Colour / Size breakdown" sub-table that lives at the
+            // bottom of TotalCountryBreakdown PDFs (Article + per-size qty).
+            // Prefer the PDFBox-based native-text extractor for PDF uploads!
+            List<Map<String, String>> colourSizeBreakdown = List.of();
+            if (isPdf(file)) {
+                colourSizeBreakdown = extractColourSizeBreakdownFromPdfBytes(fileBytes);
+            }
+            if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) {
+                colourSizeBreakdown = extractColourSizeBreakdownFromLines(allLines);
+            }
+
+            // FIRST: Try to use Colour Size Breakdown (from PDFBox) to get article list first!
+            List<String> csbArticleNos = new ArrayList<>();
+            if (isPdf(file) && colourSizeBreakdown != null && !colourSizeBreakdown.isEmpty()) {
+                for (Map<String, String> csbRow : colourSizeBreakdown) {
+                    String articleFull = csbRow.get("article");
+                    if (articleFull != null && !articleFull.isBlank()) {
+                        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleFull);
+                        if (am.find()) {
+                            String a3 = am.group(1);
+                            if (!csbArticleNos.contains(a3)) {
+                                csbArticleNos.add(a3);
+                            }
+                        }
+                    }
+                }
+                log.info("[ARTICLE-NO-EXTRACT] Got articles from colourSizeBreakdown: {}", csbArticleNos);
+            }
+
+            // SECOND: Try to get article list from allLines (native PDF text)!
+            if (csbArticleNos.isEmpty() && allLines != null && !allLines.isEmpty()) {
+                for (OcrNewLine line : allLines) {
+                    if (line == null) continue;
+                    String t = oneLine(line.getText());
+                    if (t.isBlank()) continue;
+                    if (t.toLowerCase(Locale.ROOT).contains("article no")) {
+                        log.info("[ARTICLE-NO-EXTRACT] Found article no in allLines: '{}'", truncate(t, 200));
+                        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(t);
+                        while (am.find()) {
+                            String a = am.group().trim();
+                            if (!a.isBlank() && !csbArticleNos.contains(a)) {
+                                csbArticleNos.add(a);
+                            }
+                        }
+                        if (!csbArticleNos.isEmpty()) break;
+                    }
+                }
+                if (!csbArticleNos.isEmpty()) {
+                    log.info("[ARTICLE-NO-EXTRACT] Got articles from allLines: {}", csbArticleNos);
+                }
+            }
+
             // Extract using both methods; prefer the raw PNG OCR line pass for sales-order detail
             // because it is more stable than hOCR for the destination country row.
             List<Map<String, String>> tableDetail = extractSalesOrderDetailSizeBreakdown(tables);
-            List<Map<String, String>> lineDetail = extractSalesOrderDetailSizeBreakdownFromLines(rawLinesForDetail, formFields);
+            // If rawLinesForDetail is empty (no OCR run), use allLines (native PDF text) instead!
+            List<OcrNewLine> linesForDetail = (rawLinesForDetail != null && !rawLinesForDetail.isEmpty()) ? rawLinesForDetail : allLines;
+            List<Map<String, String>> lineDetail = extractSalesOrderDetailSizeBreakdownFromLines(linesForDetail, formFields, csbArticleNos);
             List<Map<String, String>> salesOrderDetailSizeBreakdown = !lineDetail.isEmpty() ? lineDetail : tableDetail;
+
+            // FIRST: Try to use Colour Size Breakdown (from PDFBox) directly for multi-article support AND QTY accuracy!
+            if (isPdf(file) && colourSizeBreakdown != null && !colourSizeBreakdown.isEmpty()) {
+                log.info("[SALES-ORDER-DETAIL] Found colourSizeBreakdown from PDFBox, converting to salesOrderDetailSizeBreakdown");
+                List<Map<String, String>> csbDetail = new ArrayList<>();
+                String destinationCountry = firstNonBlank(
+                    formFields == null ? null : formFields.get("Country of Destination"),
+                    formFields == null ? null : formFields.get("Destination Country")
+                );
+                String color = firstNonBlank(
+                    formFields == null ? null : formFields.get("Colour Name"),
+                    formFields == null ? null : formFields.get("Color Name"),
+                    formFields == null ? null : formFields.get("Description")
+                );
+
+                // Pre-detect type labels (Assortment/Solid/Total) from original detail
+                List<String> typeLabels = new ArrayList<>();
+                if (!salesOrderDetailSizeBreakdown.isEmpty()) {
+                    for (Map<String, String> r : salesOrderDetailSizeBreakdown) {
+                        String type = r.get("type");
+                        if (type != null && !type.isBlank() && !typeLabels.contains(type)) {
+                            typeLabels.add(type);
+                        }
+                    }
+                }
+                // If no type labels found, use default
+                if (typeLabels.isEmpty()) {
+                    typeLabels.add("Assortment");
+                    typeLabels.add("Solid");
+                }
+
+                int csbIdx = 0;
+                for (Map<String, String> csbRow : colourSizeBreakdown) {
+                    String articleFull = csbRow.get("article");
+                    String articleNo = "";
+                    if (articleFull != null && !articleFull.isBlank()) {
+                        Matcher am = Pattern.compile("\\b(\\d{3})\\b").matcher(articleFull);
+                        if (am.find()) {
+                            articleNo = am.group(1);
+                        }
+                    }
+
+                    String typeForRow = "";
+                    if (!typeLabels.isEmpty()) {
+                        typeForRow = typeLabels.get(csbIdx % typeLabels.size());
+                    }
+
+                    // Create size rows for each size in CSB row
+                    for (String key : csbRow.keySet()) {
+                        if (key.equals("article") || key.equals("total")) continue;
+                        String qty = csbRow.get(key);
+                        if (qty == null || qty.isBlank()) continue;
+
+                        Map<String, String> detailRow = new LinkedHashMap<>();
+                        if (!typeForRow.isBlank()) detailRow.put("type", typeForRow);
+                        if (color != null && !color.isBlank()) detailRow.put("color", color);
+                        if (destinationCountry != null && !destinationCountry.isBlank()) {
+                            detailRow.put("destinationCountry", destinationCountry);
+                            detailRow.put("countryOfDestination", destinationCountry);
+                        }
+                        if (articleFull != null && !articleFull.isBlank()) {
+                            detailRow.put("articleNo", articleFull);
+                        } else if (!articleNo.isBlank()) {
+                            detailRow.put("articleNo", articleNo);
+                        }
+                        detailRow.put(key, qty);
+                        ensureSizeDefaults(detailRow);
+                        csbDetail.add(detailRow);
+                    }
+
+                    csbIdx++;
+                }
+
+                if (!csbDetail.isEmpty()) {
+                    log.info("[SALES-ORDER-DETAIL] Using converted colourSizeBreakdown: {} rows", csbDetail.size());
+                    salesOrderDetailSizeBreakdown = csbDetail;
+                }
+            }
 
             // Enrich the detail rows so Section 2C shows the PDF-visible article label
             // (Article No + H&M Colour Code), e.g. "001 22-216".
@@ -6810,21 +6946,6 @@ public class OcrNewService {
             if (totalCountryBreakdown == null || totalCountryBreakdown.isEmpty()) {
                 // Fallback: try line-based extraction around 'Colour / Country Breakdown' section
                 totalCountryBreakdown = extractTotalCountryBreakdownFromLines(allLines);
-            }
-
-            // Extract the smaller "Colour / Size breakdown" sub-table that lives at the
-            // bottom of TotalCountryBreakdown PDFs (Article + per-size qty).
-            //
-            // Prefer the PDFBox-based native-text extractor for PDF uploads: Tesseract
-            // tends to drop this dense table on H&M docs even when the rest of the page
-            // OCRs fine. The OCR/line-based extractor remains a fallback for image
-            // uploads or PDFs without an embedded text layer.
-            List<Map<String, String>> colourSizeBreakdown = List.of();
-            if (isPdf(file)) {
-                colourSizeBreakdown = extractColourSizeBreakdownFromPdfBytes(fileBytes);
-            }
-            if (colourSizeBreakdown == null || colourSizeBreakdown.isEmpty()) {
-                colourSizeBreakdown = extractColourSizeBreakdownFromLines(allLines);
             }
 
             // If the CSB extractor only captured the 3-digit article number (e.g. "001"),
@@ -7837,6 +7958,12 @@ public class OcrNewService {
             if (r == null) continue;
             String a0 = nvl(r.get("articleNo")).trim();
             if (a0.isBlank()) continue;
+            
+            // Skip if articleNo is already a full label (contains space or is longer than just 3 digits)
+            if (a0.contains(" ") || a0.length() > 3) {
+                continue;
+            }
+            
             Matcher m = aPat.matcher(a0);
             if (!m.find()) continue;
             String a = m.group(1);
